@@ -60,6 +60,12 @@ async function login(phone: string, audience = 'staff') {
   const v = await api('POST', '/api/v1/auth/otp/verify', { phone, audience, code: r.devCode });
   assert.ok(v.accessToken, JSON.stringify(v)); return v.accessToken as string;
 }
+async function upload(token: string, type = 'application/pdf') {
+  const slot = await api('POST', '/api/v1/uploads', { contentType: type, size: 4 }, token);
+  const r = await fetch(base + slot.uploadUrl, { method: 'PUT', body: Buffer.from([37, 80, 68, 70]) }); assert.equal(r.status, 200);
+  return slot.ref as string;
+}
+const SPEC = { size: '3200 × 850 × 560', carcass: 'BWP plywood 18 mm', shutter: 'HDHMR 18 mm', finish: 'Acrylic gloss white', hardware: 'Hettich soft-close' };
 const drain = async () => { while (await M.jobs.runDueJobs(50) > 0) { /* run all queued jobs */ } };
 const q1 = async (sql: string, p: unknown[] = []) => (await M.db.pool.query(sql, p)).rows[0];
 const phoneOf = (i: number) => '+9190000000' + String(i + 1).padStart(2, '0');
@@ -157,7 +163,14 @@ test('5. site survey: check-in, draft, incomplete blocked, submit creates items'
 test('6. drawing gate + customer login approves in the customer app', async () => {
   const designer = (await api('GET', '/api/v1/state', undefined, T.owner)).erp.items.find((i: any) => i.id === T.kit).designer;
   const dt = designer === 'deepa' ? T.deepa : T.arjun;
-  await api('POST', `/api/v1/items/${T.kit}/drawings`, {}, dt);
+  assert.equal((await api('POST', `/api/v1/items/${T.kit}/drawings`, {}, dt)).status, 400, 'a drawing needs a real file');
+  const noSpec = await api('POST', `/api/v1/items/${T.kit}/drawings`, { file: await upload(dt) }, dt);
+  assert.equal(noSpec.ok, true);
+  const b1 = await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next' }, dt);
+  assert.equal(b1.status, 409); assert.match(b1.message, /Material specification/);
+  const up = await api('POST', `/api/v1/items/${T.kit}/drawings`, { file: await upload(dt), spec: SPEC, boxes: ['Base carcass', 'Wall carcass', 'Shutters', 'Hardware kit'], notes: 'R1 with tall unit' }, dt);
+  const kitNow = up.state.erp.items.find((i: any) => i.id === T.kit);
+  assert.equal(kitNow.drawings.at(-1).rev, 'R1'); assert.ok(kitNow.drawings.at(-1).url.startsWith('/api/v1/files/')); assert.equal(kitNow.spec.carcass, 'BWP plywood 18 mm'); assert.equal(kitNow.boxes.length, 4);
   const blocked = await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next' }, dt);
   assert.equal(blocked.status, 409); assert.match(blocked.message, /Customer approved/);
   assert.equal((await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next', reason: 'trust me' }, dt)).status, 409, 'designer cannot override');
@@ -177,7 +190,8 @@ test('6. drawing gate + customer login approves in the customer app', async () =
 });
 
 test('7. pipeline: payment gate, PO, dispatch, site-ready gate, install task', async () => {
-  await api('PATCH', `/api/v1/items/${T.kit}`, { hwPI: true, prodPI: true }, T.manish);
+  assert.equal((await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next' }, T.manish)).status, 409, 'factory PI number needed');
+  await api('PATCH', `/api/v1/items/${T.kit}`, { prodPiNo: 'FPI-9001', prodPiAmount: 145000, prodPiDoc: await upload(T.manish) }, T.manish);
   const pay = await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next' }, T.manish);
   assert.equal(pay.status, 409); assert.match(pay.message, /Payment received/);
   const st = await api('GET', '/api/v1/state', undefined, T.vikram);
@@ -185,7 +199,10 @@ test('7. pipeline: payment gate, PO, dispatch, site-ready gate, install task', a
   assert.equal((await api('POST', `/api/v1/projects/${T.pid}/payments/${m.id}`, { received: true }, T.manish)).status, 403, 'purchase cannot mark payments');
   await api('POST', `/api/v1/projects/${T.pid}/payments/${m.id}`, { received: true }, T.vikram);
   assert.equal((await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next' }, T.manish)).to, 'order');
-  await api('PATCH', `/api/v1/items/${T.kit}`, { po: 'PO-9001' }, T.manish);
+  await api('PATCH', `/api/v1/items/${T.kit}`, { po: 'PO-9001', hwVendor: 'Hettich dealer' }, T.manish);
+  const hw = await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next' }, T.manish);
+  assert.equal(hw.status, 409); assert.match(hw.message, /Hardware received/);
+  await api('PATCH', `/api/v1/items/${T.kit}`, { hwReceived: true, productionDone: true }, T.manish);
   assert.equal((await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next' }, T.manish)).to, 'dispatch');
   await api('PATCH', `/api/v1/items/${T.kit}`, { dispatch: { vehicle: 'CG04 AB 1234', boxes: 12, date: '2099-01-05' }, delivered: true }, T.vikram);
   const site = await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next' }, T.vikram);
@@ -227,7 +244,7 @@ test('9. snag closed, handover, completion, owner override with audit', async ()
   for (let i = 0; i < 3; i++) await api('POST', `/api/v1/snags/${sid}/advance`, {}, T.vikram);
   assert.equal((await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next' }, T.vikram)).to, 'handover');
   assert.equal((await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next' }, T.vikram)).to, 'closed');
-  await api('POST', `/api/v1/items/${T.cu}/drawings`, {}, T.owner);
+  await api('POST', `/api/v1/items/${T.cu}/drawings`, { file: await upload(T.owner), spec: SPEC }, T.owner);
   assert.equal((await api('POST', `/api/v1/items/${T.cu}/transition`, { direction: 'next', reason: '' }, T.owner)).status, 409);
   const o = await api('POST', `/api/v1/items/${T.cu}/transition`, { direction: 'next', reason: 'Approved on call' }, T.owner);
   assert.equal(o.to, 'pi');
@@ -350,4 +367,22 @@ test('15. security basics: logout revokes, refresh rotation, headers', async () 
   assert.equal((await api('GET', '/api/v1/state', undefined, ref1.accessToken)).status, 401);
   const h = await fetch(base + '/api/health');
   assert.equal(h.headers.get('x-content-type-options'), 'nosniff'); assert.equal(h.headers.get('x-frame-options'), 'DENY');
+});
+
+test('16. project documents: floor plan and production drawings, customer sees only shared ones', async () => {
+  const fp = await api('POST', `/api/v1/projects/${T.pid}/documents`, { category: 'floor_plan', title: 'Final floor plan', file: await upload(T.deepa) }, T.deepa);
+  assert.equal(fp.ok, true, JSON.stringify(fp));
+  await api('POST', `/api/v1/projects/${T.pid}/documents`, { category: 'production', title: 'Kitchen production set', file: await upload(T.deepa), itemId: T.kit }, T.deepa);
+  await api('POST', `/api/v1/projects/${T.pid}/documents`, { category: 'pi', title: 'Factory PI FPI-9001', file: await upload(T.manish) }, T.manish);
+  const again = await api('POST', `/api/v1/projects/${T.pid}/documents`, { category: 'floor_plan', title: 'Final floor plan', file: await upload(T.deepa) }, T.deepa);
+  const docs = again.state.erp.projects.find((p: any) => p.id === T.pid).docs;
+  assert.deepEqual(docs.filter((d: any) => d.category === 'floor_plan').map((d: any) => d.rev).sort(), ['R0', 'R1'], 'revisions are kept, not overwritten');
+  assert.equal((await api('POST', `/api/v1/projects/${T.pid}/documents`, { category: 'floor_plan', title: 'x', file: 'upload:nothing.pdf' }, T.deepa)).status, 400);
+  assert.equal((await api('POST', `/api/v1/projects/${T.pid}/documents`, { category: 'floor_plan', title: 'Plan', file: await upload(T.ravi) }, T.ravi)).status, 403, 'installers cannot upload project documents');
+  const cs = await api('GET', '/api/v1/customer/state', undefined, T.cust);
+  const cats = cs.state.projects[0].docs.map((d: any) => d.category);
+  assert.ok(cats.includes('floor_plan') && !cats.includes('production') && !cats.includes('pi'), 'customer sees the floor plan but not internal production or PI files');
+  const id = docs.find((d: any) => d.category === 'pi').id;
+  assert.equal((await api('DELETE', `/api/v1/documents/${id}`, undefined, T.deepa)).status, 403, 'only the uploader or an admin removes a file');
+  assert.equal((await api('DELETE', `/api/v1/documents/${id}`, undefined, T.manish)).ok, true);
 });

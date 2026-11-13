@@ -41,6 +41,13 @@ const USERS: [string, string, string, string][] = [
   ['sana', 'Sana', 'surveyor', ''], ['deepa', 'Deepa', 'designer', ''], ['arjun', 'Arjun', 'designer', ''], ['manish', 'Manish', 'purchase', ''], ['kiran', 'Kiran', 'production', ''],
   ['ravi', 'Ravi', 'installer', 'Installation lead · team of 3'], ['suresh', 'Suresh', 'installer', 'Installation lead · team of 2'], ['imran', 'Imran', 'installer', 'Installation lead · team of 2']];
 const CREW: Record<string, { members: string[]; skills: string[] }> = { ravi: { members: ['Raju', 'Mohan'], skills: ['WR', 'TV', 'DR', 'ST', 'SR', 'CU', 'VN', 'OT'] }, suresh: { members: ['Ajay'], skills: [] }, imran: { members: ['Salim'], skills: ['KT', 'CU', 'VN', 'OT'] } };
+const SAMPLE_SPEC: Record<string, Record<string, string>> = {
+  WR: { size: '2400 × 2400 × 600', carcass: 'BWP plywood 18 mm', shutter: 'HDHMR 18 mm', finish: 'Laminate 1 mm, Merino 22001 SUD', hardware: 'Hettich soft-close hinges and channels', inner: 'Frosty white 0.8 mm', edge: '2 mm PVC, matching' },
+  TV: { size: '2400 × 500 × 400', carcass: 'BWP plywood 18 mm', shutter: 'HDHMR 18 mm', finish: 'Acrylic gloss, Rehau RAUVISIO white', hardware: 'Hettich push-to-open', edge: '2 mm PVC, matching' },
+  VN: { size: '900 × 600 × 500', carcass: 'BWP plywood 18 mm (waterproof)', shutter: 'HDHMR 18 mm', finish: 'Laminate 1 mm, Greenlam anti-fingerprint', hardware: 'Hettich soft-close hinges' },
+  KT: { size: 'L-shape 3200 + 2400, base 850 × 560, wall 700 × 350', carcass: 'BWP plywood 18 mm', shutter: 'HDHMR 18 mm', finish: 'Acrylic gloss, Rehau RAUVISIO', hardware: 'Hettich InnoTech drawers, soft-close hinges', accessories: 'Tall pull-out, corner carousel, cutlery tray', edge: '2 mm PVC, matching' },
+  OT: { size: 'As per drawing', carcass: 'BWP plywood 18 mm', shutter: 'HDHMR 18 mm', finish: 'Laminate 1 mm', hardware: 'Hettich soft-close' }
+};
 export const demoPhone = (i: number) => '+9190000000' + String(i + 1).padStart(2, '0');
 
 const PARTNERS = [['p1', 'Ar. Neha Agrawal', 'Studio Kaya', 'architect', 'Gold', 5, 'priya'], ['p2', 'Rohit Sahu', 'Sahu Constructions', 'contractor', 'Silver', 3, 'rahul'], ['p3', 'Vikas Jain', 'Jain Realty', 'agent', 'Silver', 2, 'ankit'],
@@ -156,6 +163,9 @@ async function seedOps(q: Q, now: number) {
       [id, code, pid, rc, rn, type, wall, x.desc || '', stage, owner, designer, x.installer || null, addDays(x.target), k > 2 || !!x.hwPI, k > 2 || !!x.prodPI, k > 3 ? 'PO-' + (2400 + iseq) : '',
        k > 4 || x.dispatched ? 'CG04 MK ' + (2200 + iseq) : null, k > 4 || x.dispatched ? (BOXES[type] || BOXES.OT).length : null, k > 4 || x.dispatched ? new Date(logIn(Math.min(4, k)) + DAY).toISOString().slice(0, 10) : null,
        k > 4 || !!x.delivered, k > 5, k > 5, k > 5 ? 'sample' : null, k > 5 ? new Date(instAt + DAY + 6 * HR) : null, k > 5 ? Object.fromEntries(CHECKLIST.map(c => [c, true])) : {}, new Date(pc + 4 * DAY)]);
+    if (k >= 2 || x.drawn) await q.query('update items set spec = $2 where id = $1', [id, JSON.stringify(SAMPLE_SPEC[type] || SAMPLE_SPEC.OT)]);
+    if (k > 2) await q.query(`update items set prod_pi_no = $2, prod_pi_amount = $3 where id = $1`, [id, 'FPI-' + (5100 + iseq), 18000 + iseq * 2500]);
+    if (k > 3) await q.query(`update items set hw_vendor = 'Hettich (Raipur dealer)', hw_received = true, production_done = true where id = $1`, [id]);
     for (let i = 0; i <= k; i++) {
       const st = STAGES[i].id;
       const by = i < k ? (st === 'install' ? x.installer : st === 'survey' ? 'sana' : st === 'drawing' ? designer : st === 'handover' ? 'vikram' : ({ pi: 'manish', order: 'manish', dispatch: 'kiran' } as Record<string, string>)[st]) : null;

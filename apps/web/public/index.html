@@ -645,10 +645,10 @@ const DESIGNERS = [];
 
 const PSTAGES = [
   {id:'survey', name:'Site survey', short:'Survey', owner:'sana', days:2, color:'rgba(26,26,26,.14)'},
-  {id:'drawing', name:'Production drawing', short:'Drawing', owner:'deepa', days:4, color:'rgba(26,26,26,.24)'},
-  {id:'pi', name:'Hardware + production PI', short:'PI', owner:'manish', days:2, color:'rgba(26,26,26,.34)'},
-  {id:'order', name:'Order placed', short:'Order', owner:'manish', days:1, color:'rgba(26,26,26,.44)'},
-  {id:'dispatch', name:'Dispatch tracking', short:'Dispatch', owner:'kiran', days:12, color:'rgba(26,26,26,.56)'},
+  {id:'drawing', name:'Production drawing and client approval', short:'Drawing', owner:'deepa', days:4, color:'rgba(26,26,26,.24)'},
+  {id:'pi', name:'Production PI (factory)', short:'Factory PI', owner:'manish', days:2, color:'rgba(26,26,26,.34)'},
+  {id:'order', name:'Hardware procurement and production', short:'Hardware', owner:'manish', days:10, color:'rgba(26,26,26,.44)'},
+  {id:'dispatch', name:'Dispatch and delivery', short:'Dispatch', owner:'kiran', days:3, color:'rgba(26,26,26,.56)'},
   {id:'install', name:'Installation', short:'Install', owner:null, days:3, color:'rgba(26,26,26,.70)'},
   {id:'handover', name:'Completion and handover', short:'Handover', owner:'vikram', days:2, color:'rgba(26,26,26,.84)'},
   {id:'closed', name:'Completed', short:'Done', owner:null, days:0, color:'#1A1A1A'}];
@@ -707,7 +707,7 @@ const room = (name, code, w, d) => ({id:'R' + code + Math.random().toString(36).
 /* ---------- Login (team or customer) ---------- */
 function LoginScreen({audience = 'staff', onLogin, title = 'Team login'}){
   const [phone, setPhone] = useState(''), [step, setStep] = useState(1), [code, setCode] = useState(''), [err, setErr] = useState(''), [info, setInfo] = useState(null), [busy, setBusy] = useState(false), [demo, setDemo] = useState([]);
-  useEffect(() => { if (SERVER.demoMode || true) API.call('GET', '/auth/demo-users?audience=' + audience).then(r => setDemo(r.users || [])).catch(() => {}); }, []);
+  useEffect(() => { API.call('GET', '/auth/demo-users?audience=' + audience).then(r => setDemo(r.users || [])).catch(() => {}); }, []);
   const next = async e => { e.preventDefault(); setErr('');
     if (phone.replace(/\D/g,'').length < 10) return setErr('Enter your 10-digit mobile number.');
     setBusy(true);
@@ -844,15 +844,21 @@ function CustomerApp({erp, toast: toastIn, live}){
       ${toApprove.length > 0 && html`<button className="mcard" style=${{borderColor:'var(--accent)'}} onClick=${() => setView('approve')}><div className="card-row"><b>${toApprove.length} drawing${toApprove.length > 1 ? 's' : ''} waiting for your approval</b><span className="pill acc">Action</span></div><span className="meta">Tap to review and approve</span></button>`}
       ${nextInst && html`<div className="mcard"><b>Next installation</b><span>${typeById[nextInst.type].name} in ${nextInst.roomName} · ${fmtDate(nextInst.target)}</span><span className="meta">Team ${staffBy(nextInst.installer).name || ''} · ${staffBy(nextInst.installer).phone || ''}</span></div>`}
       <button className="mcard" onClick=${() => setView('items')}><div className="card-row"><b>Your furniture</b><span className="meta">${its.length} piece${its.length === 1 ? '' : 's'} ›</span></div></button>
+      <button className="mcard" onClick=${() => setView('docs')}><div className="card-row"><b>Documents</b><span className="meta">${(p.docs || []).length ? (p.docs || []).length + ' ›' : 'Floor plan, drawings ›'}</span></div></button>
       <button className="mcard" onClick=${() => setView('pay')}><div className="card-row"><b>Payments</b><span className="meta">${due.length ? due.length + ' pending ›' : 'All paid ›'}</span></div></button>
       <div className="inline"><button className="big" onClick=${() => setSheet({n:'complaint', text:''})}>Raise a complaint</button>${its.length && its.every(i => i.stage === 'closed') && !p.feedback ? html`<button className="big pri" onClick=${() => setSheet({n:'rate', r:5, text:''})}>Rate us</button>` : null}</div>
       ${p.feedback && html`<div className="banner good">Thank you for rating us ${p.feedback.rating}/5.</div>`}
       <span className="meta" style=${{fontSize:12,color:'var(--muted)'}}>Project manager: ${staffBy(p.pm).name || ''} · ${staffBy(p.pm).phone || ''}</span>
     <//>`;
     else if (view === 'items') screen = html`<${Phone} title="Your furniture" sub=${p.customer} back=${back}>${its.map(i => html`<div key=${i.id} className="mcard"><div className="card-row"><b>${typeById[i.type].name}</b><span className=${'pill ' + (PIDX(i.stage) >= PIDX('handover') ? 'good' : '')}>${i.customerStage || CUST_STAGE[i.stage]}</span></div><span className="meta">${i.roomName}${i.desc ? ' · ' + i.desc : ''}</span></div>`)}${!its.length && html`<p className="meta">Pieces appear here after the site measurement.</p>`}<//>`;
+    else if (view === 'docs') screen = html`<${Phone} title="Documents" sub=${p.customer} back=${back}>
+      ${(p.docs || []).map(d => html`<div key=${d.id} className="mcard"><div className="card-row"><b>${d.title}</b><span className="meta">${d.rev}</span></div><span className="meta">${docCat(d.category).name} · ${dayLabel(d.at)}</span>${d.url && html`<a className="btn small" href=${d.url} target="_blank" rel="noopener">Open</a>`}</div>`)}
+      ${its.filter(i => i.drawings.some(x => x.url && x.approved)).map(i => { const d = [...i.drawings].reverse().find(x => x.url && x.approved); return html`<div key=${i.id} className="mcard"><div className="card-row"><b>${typeById[i.type].name} · ${i.roomName}</b><span className="meta">${d.rev} · approved</span></div><a className="btn small" href=${d.url} target="_blank" rel="noopener">Open drawing</a></div>`; })}
+      ${!(p.docs || []).length && !its.some(i => i.drawings.some(x => x.url && x.approved)) && html`<p className="meta">Your floor plan, approved drawings, quotation and handover papers will appear here.</p>`}<//>`;
     else if (view === 'pay') screen = html`<${Phone} title="Payments" sub=${p.customer} back=${back}>${p.payments.map(m => html`<div key=${m.id} className="mcard"><div className="card-row"><b>${m.label}</b><span className=${'pill ' + (m.received ? 'good' : 'warn')}>${m.received ? 'Received' : 'Pending'}</span></div><span className="meta">${inr(m.amount)} · ${m.pct}%</span></div>`)}<span className="meta" style=${{fontSize:12}}>For payment details, please contact ${staffBy(p.pm).name || 'your project manager'}.</span><//>`;
     else if (view === 'approve') screen = html`<${Phone} title="Approve drawings" sub=${p.customer} back=${back}>
-      ${toApprove.map(i => { const wall = p.survey.rooms.find(r => r.code === i.room)?.walls.find(w => w.label === i.wall); return html`<div key=${i.id} className="mcard"><b>${typeById[i.type].name} · ${i.roomName}</b><span className="meta">Drawing ${latestDrawing(i).rev}${i.desc ? ' · ' + i.desc : ''}</span>${latestDrawing(i).url ? html`<a className="btn small" href=${latestDrawing(i).url} target="_blank" rel="noopener">Open drawing PDF</a>` : html`<${Elevation} it=${i} wall=${wall}/>`}
+      ${toApprove.map(i => { const wall = p.survey.rooms.find(r => r.code === i.room)?.walls.find(w => w.label === i.wall); return html`<div key=${i.id} className="mcard"><b>${typeById[i.type].name} · ${i.roomName}</b><span className="meta">Drawing ${latestDrawing(i).rev}${i.desc ? ' · ' + i.desc : ''}</span>${latestDrawing(i).url ? html`<a className="btn small" href=${latestDrawing(i).url} target="_blank" rel="noopener">Open drawing</a>` : html`<${Elevation} it=${i} wall=${wall}/>`}
+        ${['size','carcass','shutter','finish','hardware','accessories'].some(k => (i.spec || {})[k]) && html`<div style=${{fontSize:13}}><span className="meta" style=${{display:'block',marginBottom:4}}>Materials you are approving</span>${['size','finish','carcass','shutter','hardware','accessories'].filter(k => (i.spec || {})[k]).map(k => html`<div key=${k}><span className="meta">${MATERIAL_FIELDS.find(m => m.id === k).label}:</span> ${i.spec[k]}</div>`)}</div>`}
         <div className="inline"><button className="big" onClick=${() => setSheet({n:'change', id:i.id, text:''})}>Ask for a change</button><button className="big go" onClick=${() => act(`/customer/items/${i.id}/approve`, {}, 'Approved. Your designer has been notified.')}>Approve</button></div></div>`; })}
       ${!toApprove.length && html`<div className="banner good">Nothing waiting for approval.</div>`}<//>`;
     if (sheet){
@@ -967,19 +973,19 @@ function InstallerMgmt({erp, ui, ops, toast}){
 const digits10 = s => String(s || '').replace(/\D/g,'').slice(-10);
 /* ---------- Installation team form ---------- */
 /* ---------- Customer app (preview of the customer login) ---------- */
-const CUST_STAGE = {survey:'Measurement', drawing:'Design', pi:'Ordering', order:'In production', dispatch:'On the way', install:'Installing', handover:'Installed', closed:'Completed'};
+const CUST_STAGE = {survey:'Measurement', drawing:'Design', pi:'In production', order:'In production', dispatch:'On the way', install:'Installing', handover:'Installed', closed:'Completed'};
 /* ---------- gates: what must be true before an item leaves its stage ---------- */
 function gatesFor(it, p){
   const g = [], add = (ok, text, hard) => g.push({ok:!!ok, text, hard});
   if (!it || !p) return g;
   switch (it.stage){
     case 'survey': add(p.survey.status === 'submitted', 'Site survey submitted with every wall measured', false); break;
-    case 'drawing': { const d = latestDrawing(it); add(d, 'Production drawing and packing list uploaded', true); add(d && d.approved, 'Customer approved the latest drawing', true); break; }
-    case 'pi': { add(it.hwPI, 'Hardware PI raised', false); add(it.prodPI, 'Production PI raised', false); const m = p.payments.find(x => x.gate === 'order'); add(m && m.received, `Payment received · ${m ? m.label + ' (' + m.pct + '%)' : 'before order'}`, true); break; }
-    case 'order': add(it.po, 'PO number entered', false); break;
+    case 'drawing': { const d = latestDrawing(it), miss = specMissing(it.spec); add(d && d.url, 'Production drawing file uploaded (PDF or image)', true); add(!miss.length, 'Material specification complete' + (miss.length ? ' (missing: ' + miss.join(', ') + ')' : ''), true); add(it.boxes.length > 0, 'Packing list made', true); add(d && d.approved, 'Customer approved the latest drawing', true); break; }
+    case 'pi': { add(it.prodPiNo || it.prodPI, 'Production PI raised with the factory (PI number)', true); const m = p.payments.find(x => x.gate === 'order'); add(!p.payments.length || (m && m.received), `Payment received · ${m ? m.label + ' (' + m.pct + '%)' : 'before order'}`, true); break; }
+    case 'order': add(it.po, 'Hardware PO number entered', true); add(it.hwReceived, 'Hardware received', true); add(it.productionDone, 'Factory production complete', true); break;
     case 'dispatch': add(it.dispatch, 'Dispatch details entered (vehicle, boxes, date)', false); add(it.delivered, 'Material delivered at site', true); add(p.siteReady, 'Site ready: civil, electrical, painting, flooring done', true); break;
     case 'install': add(it.installDone, 'Installation completed with photos and checklist', true); add(!openSnags(it).length, 'No open snags', true); add(it.signedOff, 'Customer sign-off by WhatsApp OTP', true); break;
-    case 'handover': add(true, 'Handover photos and documents shared', false); break;
+    case 'handover': add((p.docs || []).some(d => d.category === 'handover'), 'Handover documents uploaded (warranty card, care guide, photos)', false); break;
   }
   return g;
 }
@@ -1038,6 +1044,43 @@ async function uploadDataUrl(dataUrl){
   if (!r.ok) throw new Error('Upload failed');
   return slot; // {ref, viewUrl}
 }
+const MATERIAL_FIELDS = [
+  {id:'size', label:'Overall size W × H × D (mm)', req:true, hint:'2400 × 2400 × 600'},
+  {id:'carcass', label:'Carcass board and thickness', req:true, hint:'BWP plywood 18 mm / HDHMR 18 mm'},
+  {id:'shutter', label:'Shutter board and thickness', req:true, hint:'HDHMR 18 mm'},
+  {id:'finish', label:'Shutter finish, brand and code', req:true, hint:'Laminate 1 mm, Merino 22001 SUD'},
+  {id:'hardware', label:'Hardware brand and range', req:true, hint:'Hettich soft-close hinges and channels'},
+  {id:'inner', label:'Inner laminate', req:false, hint:'Frosty white 0.8 mm'},
+  {id:'edge', label:'Edge banding', req:false, hint:'2 mm PVC, matching'},
+  {id:'back', label:'Back panel', req:false, hint:'8 mm plywood'},
+  {id:'handles', label:'Handles / profiles', req:false, hint:'G-profile, black'},
+  {id:'accessories', label:'Accessories', req:false, hint:'Pull-out basket, loft, mirror'},
+  {id:'notes', label:'Production notes', req:false, hint:'Grain direction, special cuts'}];
+const specMissing = spec => MATERIAL_FIELDS.filter(f => f.req && !String((spec || {})[f.id] || '').trim()).map(f => f.label.split(/[ ,(]/)[0].toLowerCase());
+const DOC_CATEGORIES = [
+  {id:'floor_plan', name:'Final floor plan', customer:true}, {id:'furniture', name:'Furniture drawings', customer:true},
+  {id:'production', name:'Final production drawings with materials', customer:false}, {id:'quotation', name:'Quotation / BOQ', customer:true},
+  {id:'pi', name:'Factory PI', customer:false}, {id:'po', name:'Hardware PO', customer:false},
+  {id:'handover', name:'Handover: warranty card, care guide, photos', customer:true}, {id:'other', name:'Other', customer:false}];
+const docCat = id => DOC_CATEGORIES.find(c => c.id === id) || {name:id};
+async function uploadFile(file){
+  const ok = ['application/pdf','image/jpeg','image/png','image/webp'];
+  if (!ok.includes(file.type)) throw new Error('Use a PDF, JPG or PNG file.');
+  if (file.size > 25 * 1024 * 1024) throw new Error('That file is larger than 25 MB.');
+  const slot = await API.call('POST', '/uploads', {contentType:file.type, size:file.size});
+  const r = await fetch(slot.uploadUrl, {method:'PUT', body:file, headers:{'Content-Type':file.type}});
+  if (!r.ok) throw new Error('Upload failed. Check the internet and try again.');
+  return slot;
+}
+function FilePick({label, onFile, busy, small=true}){
+  return html`<label className=${'btn' + (small ? ' small' : '')} style=${{position:'relative',overflow:'hidden'}} aria-busy=${busy ? 'true' : 'false'}>${busy ? 'Uploading…' : label}<input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" disabled=${busy} style=${{position:'absolute',inset:0,opacity:0,cursor:'pointer'}} onChange=${e => { const f = e.target.files[0]; e.target.value = ''; if (f) onFile(f); }}/></label>`;
+}
+const FileLink = ({url, label='Open'}) => url ? html`<a className="linkbtn" style=${{marginTop:0,color:'var(--ink)'}} href=${url} target="_blank" rel="noopener">${label}</a>` : null;
+function SpecTable({spec}){
+  const rows = MATERIAL_FIELDS.filter(f => (spec || {})[f.id]);
+  if (!rows.length) return html`<span className="sub" style=${{color:'var(--muted)'}}>No material specification yet.</span>`;
+  return html`<table style=${{minWidth:0}}><tbody>${rows.map(f => html`<tr key=${f.id}><td className="sub" style=${{width:'38%',color:'var(--muted)'}}>${f.label}</td><td>${spec[f.id]}</td></tr>`)}</tbody></table>`;
+}
 const photoSrc = (photo, url) => photo && String(photo).startsWith('upload:') ? url : photo;
 function useQueueCount(){
   const [n, setN] = useState(API.pending());
@@ -1091,6 +1134,10 @@ function makeOps(erp, setErp, toast, leads, crm, app){
       after.boxes.forEach((b, i) => { if (before.boxes[i] && before.boxes[i].got !== b.got) run('POST', `/items/${id}/boxes/${b.n}`, {got:b.got}, null, {queue:true, dedupe:`box:${id}:${b.n}`}); });
     },
     sendDrawing: id => run('POST', `/items/${id}/drawings/send`, {}, 'Sent to the customer on WhatsApp with an Approve button.'),
+    patchItem: (id, patch, msg) => run('PATCH', `/items/${id}`, patch, msg || null),
+    uploadDrawing: (id, body) => run('POST', `/items/${id}/drawings`, body, 'Production drawing uploaded with material specification and packing list.'),
+    addDoc: (pid, body) => run('POST', `/projects/${pid}/documents`, body, `${docCat(body.category).name}: "${body.title}" uploaded.${docCat(body.category).customer ? ' The customer can see it.' : ''}`),
+    removeDoc: id => run('DELETE', `/documents/${id}`, undefined, 'Document removed.'),
     updProject(id, fn){
       const before = E().projects.find(p => p.id === id); if (!before) return;
       const after = clone(before); fn(after, E());
@@ -1277,7 +1324,7 @@ function ProjectDrawer({p, erp, ui, ops, leads, close, tab, setTab}){
         <div className="inline" style=${{fontSize:13}}><span>PM <b>${uname(p.pm)}</b></span>${p.value ? html`<span>·</span><span className="num">${inr(p.value)}</span>` : null}<span>·</span><span>Target <b>${fmtDate(p.target)}</b></span><span>·</span><span>${its.length ? `${done} of ${its.length} items installed` : 'Survey pending'}</span></div>
         ${its.length ? html`<${StageBar} items=${its}/>` : null}
       </div>
-      <div className="tabs" role="tablist">${[['items','Items'],['survey','Survey'],['payments','Payments & site'],['activity','Activity']].map(([id,n]) => html`<button key=${id} role="tab" aria-selected=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
+      <div className="tabs" role="tablist">${[['items','Items'],['docs','Documents'],['survey','Survey'],['payments','Payments & site'],['activity','Activity']].map(([id,n]) => html`<button key=${id} role="tab" aria-selected=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
       <div className="d-body">
         ${tab === 'items' && html`<div className="details">
           ${!its.length && html`<div className="banner">Items are created automatically when Sana submits the site survey. Survey ${p.survey.status === 'scheduled' ? 'is scheduled for ' + fmtDT(p.survey.scheduled) : 'is in progress'}.</div>`}
@@ -1309,6 +1356,7 @@ function ProjectDrawer({p, erp, ui, ops, leads, close, tab, setTab}){
             <span style=${{fontSize:12,color:'var(--muted)'}}>Hard gate: items cannot move from Dispatch to Installation until this is ticked.</span></div>
           <div className="box"><h4>Notes for the installation team</h4><textarea className="inp" rows="3" value=${p.notes} onInput=${e => ops.updProject(p.id, x => { x.notes = e.target.value; })} aria-label="Notes"></textarea></div>
         </div>`}
+        ${tab === 'docs' && html`<${ProjectDocs} p=${p} erp=${erp} ops=${ops}/>`}
         ${tab === 'activity' && html`<ol className="timeline">${[...p.activity].reverse().map((e,i) => html`<li key=${i}><span>${e.text}</span><time>${fmtDT(e.t)}</time></li>`)}</ol>`}
       </div>
     </aside>
@@ -1341,6 +1389,98 @@ function SurveyView({p}){
   </div>`;
 }
 
+/* ---------- Item detail: drawings, materials, factory PI, hardware ---------- */
+function DrawingWork({it, erp, ops, wall, edit}){
+  const [f, setF] = useState(null);
+  const open = () => setF({file:null, spec:{...(it.spec || {})}, boxes:it.boxes.map(b => b.label).join('\n'), notes:'', busy:false, err:''});
+  const d = latestDrawing(it), miss = specMissing(f ? f.spec : it.spec);
+  const submit = async () => {
+    if (!f.file) return setF({...f, err:'Choose the drawing file (PDF or image).'});
+    const boxes = f.boxes.split('\n').map(x => x.trim()).filter(Boolean);
+    if (!boxes.length) return setF({...f, err:'Add at least one box to the packing list.'});
+    setF({...f, busy:true, err:''});
+    try { const slot = await uploadFile(f.file); const r = await ops.uploadDrawing(it.id, {file:slot.ref, spec:f.spec, boxes, notes:f.notes}); if (r) setF(null); else setF(x => ({...x, busy:false})); }
+    catch(e){ setF(x => ({...x, busy:false, err:e.message})); }
+  };
+  return html`<div style=${{display:'grid',gap:10}}>
+    <div className="inline">${it.drawings.length ? it.drawings.map(x => html`<span key=${x.rev} className=${'pill ' + (x.approved ? 'good' : '')}>${x.rev} · ${uname(x.by)} · ${dayLabel(x.at)}${x.approved ? ' · approved' : ''}${x.url ? '' : ' · no file'}</span>`) : html`<span className="sub">No drawing uploaded yet.</span>`}
+      ${d && d.url && html`<${FileLink} url=${d.url} label=${'Open ' + d.rev}/>`}</div>
+    ${d && d.notes ? html`<span className="sub" style=${{fontSize:12.5}}>${d.rev} note: ${d.notes}</span>` : null}
+    ${!f && html`<div><h4 style=${{margin:'4px 0 6px',fontSize:11,letterSpacing:'.16em',textTransform:'uppercase'}}>Material specification</h4><${SpecTable} spec=${it.spec}/></div>`}
+    ${edit && !f && html`<div className="row-btns">
+      <button className="btn small primary" onClick=${open}><${Icon} n="plus" s=${14}/>Upload drawing ${'R' + it.drawings.length}</button>
+      <button className="btn small wa" disabled=${!d || !d.url || d.approved || miss.length > 0} title=${miss.length ? 'Complete the material specification first' : ''} onClick=${() => ops.sendDrawing(it.id)}><${Icon} n="send" s=${14}/>Send for client approval</button>
+      <button className="btn small ghost" disabled=${!d || d.approved} onClick=${() => ops.updItem(it.id, x => { x.drawings[x.drawings.length-1].approved = true; })}><${Icon} n="check" s=${14}/>Client approved (on call / in person)</button></div>`}
+    ${f && html`<div className="box" style=${{borderTopColor:'var(--red)'}}>
+      <h4>Upload production drawing ${'R' + it.drawings.length}</h4>
+      <div className="inline"><${FilePick} label=${f.file ? 'Change file' : 'Choose drawing (PDF / image)'} busy=${false} onFile=${file => setF({...f, file, err:''})}/><span className="sub">${f.file ? f.file.name + ' · ' + (f.file.size / 1048576).toFixed(1) + ' MB' : 'Up to 25 MB'}</span></div>
+      <div className="form" style=${{padding:0}}>
+        ${MATERIAL_FIELDS.map(m => html`<label key=${m.id} className=${m.id === 'notes' || m.id === 'accessories' ? 'full' : ''}>${m.label}${m.req ? html` <span className="req">*</span>` : ''}<input value=${f.spec[m.id] || ''} placeholder=${m.hint} onInput=${e => setF({...f, spec:{...f.spec, [m.id]:e.target.value}})}/></label>`)}
+        <label className="full">Packing list · one box per line (installers tick these on site)<textarea className="inp" rows="5" value=${f.boxes} onInput=${e => setF({...f, boxes:e.target.value})}></textarea></label>
+        <label className="full">Note for this revision<input value=${f.notes} placeholder="e.g. Loft added, shutter finish changed to walnut" onInput=${e => setF({...f, notes:e.target.value})}/></label>
+      </div>
+      ${miss.length ? html`<span className="sub" style=${{fontSize:12.5}}>Required before client approval: ${miss.join(', ')}.</span>` : null}
+      ${f.err && html`<span className="err">${f.err}</span>`}
+      <div className="inline"><button className="btn small ghost" onClick=${() => setF(null)} disabled=${f.busy}>Cancel</button>
+        <button className="btn small ghost" disabled=${f.busy} onClick=${async () => { const r = await ops.patchItem(it.id, {spec:f.spec}, 'Material specification saved.'); if (r) setF(null); }}>Save materials only</button>
+        <button className="btn small primary" style=${{marginLeft:'auto'}} disabled=${f.busy} onClick=${submit}>${f.busy ? 'Uploading…' : 'Upload ' + 'R' + it.drawings.length}</button></div>
+    </div>`}
+    ${it.drawings.length > 0 && !d?.url && html`<${Elevation} it=${it} wall=${wall}/>`}
+  </div>`;
+}
+function FactoryPiWork({it, p, ops, edit}){
+  const [busy, setBusy] = useState(false), [err, setErr] = useState('');
+  const m = p.payments.find(x => x.gate === 'order');
+  return html`<div style=${{display:'grid',gap:8}}>
+    <div className="inline">
+      <label className="inline" style=${{gap:6}}>Factory PI no. <input className="inp" style=${{width:130}} disabled=${!edit} defaultValue=${it.prodPiNo} placeholder="FPI-5123" onBlur=${e => e.target.value.trim() !== it.prodPiNo && ops.patchItem(it.id, {prodPiNo:e.target.value.trim()}, 'Factory PI saved.')}/></label>
+      <label className="inline" style=${{gap:6}}>Amount ₹ <input className="inp num" type="number" style=${{width:120}} disabled=${!edit} defaultValue=${it.prodPiAmount ?? ''} onBlur=${e => ops.patchItem(it.id, {prodPiAmount:e.target.value === '' ? null : Number(e.target.value)})}/></label>
+      ${edit && html`<${FilePick} label=${it.prodPiDoc ? 'Replace PI copy' : 'Upload PI copy'} busy=${busy} onFile=${async file => { setErr(''); setBusy(true); try { const sl = await uploadFile(file); await ops.patchItem(it.id, {prodPiDoc:sl.ref}, 'Factory PI copy uploaded.'); } catch(e){ setErr(e.message); } setBusy(false); }}/>`}
+      <${FileLink} url=${it.prodPiDoc} label="Open PI"/></div>
+    ${err && html`<span className="err">${err}</span>`}
+    <span className="sub" style=${{fontSize:12.5,color:'var(--muted)'}}>The factory makes it from the approved production drawing and material specification. ${m ? (m.received ? 'Payment “' + m.label + '” is received.' : 'Payment “' + m.label + '” is not received yet (project → Payments & site).') : ''}</span></div>`;
+}
+function HardwareWork({it, ops, edit}){
+  const [busy, setBusy] = useState(false), [err, setErr] = useState('');
+  return html`<div style=${{display:'grid',gap:8}}>
+    <div className="inline">
+      <label className="inline" style=${{gap:6}}>Hardware PO no. <input className="inp" style=${{width:130}} disabled=${!edit} defaultValue=${it.po} placeholder="PO-2431" onBlur=${e => e.target.value.trim() !== it.po && ops.patchItem(it.id, {po:e.target.value.trim()}, 'Hardware PO saved.')}/></label>
+      <label className="inline" style=${{gap:6}}>Vendor <input className="inp" style=${{width:180}} disabled=${!edit} defaultValue=${it.hwVendor} placeholder="Hettich dealer, Raipur" onBlur=${e => e.target.value.trim() !== it.hwVendor && ops.patchItem(it.id, {hwVendor:e.target.value.trim()})}/></label>
+      ${edit && html`<${FilePick} label=${it.hwPoDoc ? 'Replace PO copy' : 'Upload PO copy'} busy=${busy} onFile=${async file => { setErr(''); setBusy(true); try { const sl = await uploadFile(file); await ops.patchItem(it.id, {hwPoDoc:sl.ref}, 'Hardware PO copy uploaded.'); } catch(e){ setErr(e.message); } setBusy(false); }}/>`}
+      <${FileLink} url=${it.hwPoDoc} label="Open PO"/></div>
+    ${err && html`<span className="err">${err}</span>`}
+    <div className="inline">
+      <label className="check"><input type="checkbox" disabled=${!edit} checked=${it.hwReceived} onChange=${() => ops.patchItem(it.id, {hwReceived:!it.hwReceived})}/>Hardware received</label>
+      <label className="check"><input type="checkbox" disabled=${!edit} checked=${it.productionDone} onChange=${() => ops.patchItem(it.id, {productionDone:!it.productionDone})}/>Factory production complete</label></div>
+    ${it.prodPiNo ? html`<span className="sub" style=${{fontSize:12.5,color:'var(--muted)'}}>Factory PI ${it.prodPiNo}${it.prodPiAmount ? ' · ₹' + Number(it.prodPiAmount).toLocaleString('en-IN') : ''}. Dispatch is allowed once hardware is in and the factory has finished.</span>` : null}</div>`;
+}
+function ProjectDocs({p, erp, ops}){
+  const its = erp.items.filter(i => i.projectId === p.id);
+  const [f, setF] = useState({category:'floor_plan', title:'Final floor plan', itemId:'', notes:''});
+  const [busy, setBusy] = useState(false), [err, setErr] = useState('');
+  const canEdit = can(erp, 'edit'), admin = can(erp, 'admin');
+  const docs = p.docs || [];
+  const pick = async file => { setErr(''); if (f.title.trim().length < 2) return setErr('Give the document a title.'); setBusy(true);
+    try { const sl = await uploadFile(file); await ops.addDoc(p.id, {category:f.category, title:f.title.trim(), file:sl.ref, notes:f.notes, itemId:f.itemId || null}); setF({...f, notes:''}); } catch(e){ setErr(e.message); } setBusy(false); };
+  const drawingsOf = its.filter(i => i.drawings.some(d => d.url));
+  return html`<div className="details">
+    ${canEdit && html`<div className="box"><h4>Upload a document</h4>
+      <div className="form" style=${{padding:0}}>
+        <label>Category<select value=${f.category} onChange=${e => setF({...f, category:e.target.value, title:docCat(e.target.value).name.split(':')[0]})}>${DOC_CATEGORIES.map(c => html`<option key=${c.id} value=${c.id}>${c.name}${c.customer ? ' · customer sees it' : ''}</option>`)}</select></label>
+        <label>Title<input value=${f.title} onInput=${e => setF({...f, title:e.target.value})}/></label>
+        <label>For item (optional)<select value=${f.itemId} onChange=${e => setF({...f, itemId:e.target.value})}><option value="">Whole project</option>${its.map(i => html`<option key=${i.id} value=${i.id}>${i.code} · ${typeById[i.type].name}</option>`)}</select></label>
+        <label>Note<input value=${f.notes} placeholder="Optional" onInput=${e => setF({...f, notes:e.target.value})}/></label>
+      </div>
+      <div className="inline"><${FilePick} label="Choose file and upload" busy=${busy} onFile=${pick}/><span className="sub">PDF, JPG or PNG up to 25 MB. Uploading the same title again keeps the old one as an earlier revision.</span></div>
+      ${err && html`<span className="err">${err}</span>`}</div>`}
+    ${DOC_CATEGORIES.map(c => { const list = docs.filter(d => d.category === c.id); if (!list.length) return null;
+      return html`<div className="box" key=${c.id}><h4>${c.name}${c.customer ? html` <span className="pill" style=${{marginLeft:6,letterSpacing:0,textTransform:'none'}}>customer sees</span>` : ''}</h4>
+        ${list.map(d => html`<div key=${d.id} className="inline" style=${{fontSize:13.5,justifyContent:'space-between'}}><span><b>${d.title}</b> <span className="mono">${d.rev}</span>${d.itemId ? ' · ' + (its.find(i => i.id === d.itemId)?.code || '') : ''}<span className="sub" style=${{color:'var(--muted)'}}> · ${uname(d.by)} · ${dayLabel(d.at)}${d.notes ? ' · ' + d.notes : ''}</span></span>
+          <span className="inline"><${FileLink} url=${d.url}/>${(d.by === erp.me || admin) && html`<button className="linkbtn" style=${{marginTop:0}} onClick=${() => confirm('Remove "' + d.title + ' ' + d.rev + '"?') && ops.removeDoc(d.id)}>Remove</button>`}</span></div>`)}</div>`; })}
+    ${drawingsOf.length > 0 && html`<div className="box"><h4>Item production drawings</h4>${drawingsOf.map(i => { const d = [...i.drawings].reverse().find(x => x.url); return html`<div key=${i.id} className="inline" style=${{fontSize:13.5,justifyContent:'space-between'}}><span><span className="mono">${i.code}</span> · ${typeById[i.type].name} · ${d.rev}${d.approved ? ' · approved' : ' · awaiting approval'}</span><${FileLink} url=${d.url}/></div>`; })}</div>`}
+    ${!docs.length && !drawingsOf.length && html`<div className="banner">No documents yet. Designers upload the final floor plan, furniture drawings and final production drawings here.</div>`}
+  </div>`;
+}
 /* ---------- Item detail ---------- */
 function Elevation({it, wall}){
   const W = wall ? wall.w : 2400, H = wall ? wall.h : 2900, sc = 300 / Math.max(W, H);
@@ -1382,19 +1522,9 @@ function ItemModal({it, erp, ops, close, ui}){
 
       <div className="sec"><h4>Work in this stage</h4>
         ${it.stage === 'survey' && html`<span>Survey status: <b>${p.survey.status}</b>. Items normally skip this stage because the survey creates them.</span>`}
-        ${(it.stage === 'drawing' || it.drawings.length > 0) && html`<div style=${{display:'grid',gap:8}}>
-          <div className="inline">${it.drawings.length ? it.drawings.map(d => html`<span key=${d.rev} className=${'pill ' + (d.approved ? 'good' : '')}>${d.rev} · ${uname(d.by)} · ${dayLabel(d.at)}${d.approved ? ' · approved' : ''}</span>`) : html`<span className="sub">No drawing uploaded yet.</span>`}</div>
-          ${it.stage === 'drawing' && html`<div className="row-btns">
-            <button className="btn small" onClick=${() => up(x => { x.drawings.push({rev:'R' + x.drawings.length, at:Date.now(), by:erp.me, approved:false}); }, `drawing R${it.drawings.length} uploaded with packing list`)}><${Icon} n="plus" s=${14}/>Upload ${'R' + it.drawings.length} + packing list</button>
-            <button className="btn small wa" disabled=${!it.drawings.length || latestDrawing(it).approved} onClick=${() => ops.sendDrawing(it.id)}><${Icon} n="send" s=${14}/>Send for approval</button>
-            <button className="btn small" disabled=${!it.drawings.length || latestDrawing(it).approved} onClick=${() => up(x => { x.drawings[x.drawings.length-1].approved = true; }, `customer approved R${it.drawings.length - 1} on WhatsApp`)}><${Icon} n="check" s=${14}/>Customer approved</button></div>`}
-          ${it.drawings.length > 0 && html`<${Elevation} it=${it} wall=${wall}/>`}
-        </div>`}
-        ${it.stage === 'pi' && html`<div style=${{display:'grid',gap:6}}>
-          <label className="check"><input type="checkbox" checked=${it.hwPI} onChange=${() => up(x => { x.hwPI = !x.hwPI; }, it.hwPI ? 'hardware PI unmarked' : 'hardware PI raised')}/>Hardware PI raised</label>
-          <label className="check"><input type="checkbox" checked=${it.prodPI} onChange=${() => up(x => { x.prodPI = !x.prodPI; }, it.prodPI ? 'production PI unmarked' : 'production PI raised')}/>Production PI raised</label>
-          <span className="sub" style=${{fontSize:12,color:'var(--muted)'}}>Both PIs run in parallel. Payment status is set on the project's Payments tab.</span></div>`}
-        ${it.stage === 'order' && html`<label className="inline">PO number <input className="inp" value=${it.po} placeholder="PO-2431" onInput=${e => ops.updItem(it.id, x => { x.po = e.target.value; })}/></label>`}
+        ${(it.stage === 'drawing' || it.drawings.length > 0) && html`<${DrawingWork} it=${it} erp=${erp} ops=${ops} wall=${wall} edit=${edit && it.stage === 'drawing'}/>`}
+        ${it.stage === 'pi' && html`<${FactoryPiWork} it=${it} p=${p} ops=${ops} edit=${edit}/>`}
+        ${it.stage === 'order' && html`<${HardwareWork} it=${it} ops=${ops} edit=${edit}/>`}
         ${it.stage === 'dispatch' && html`<div style=${{display:'grid',gap:8}}>
           <div className="inline"><input className="inp" placeholder="Vehicle no." value=${it.dispatch?.vehicle || ''} onInput=${e => ops.updItem(it.id, x => { x.dispatch = {...(x.dispatch || {boxes:x.boxes.length, date:addDays(0)}), vehicle:e.target.value}; })} aria-label="Vehicle"/>
             <input className="inp" type="number" style=${{width:90}} value=${it.dispatch?.boxes ?? it.boxes.length} onInput=${e => ops.updItem(it.id, x => { x.dispatch = {...(x.dispatch || {vehicle:'', date:addDays(0)}), boxes:Number(e.target.value)}; })} aria-label="Boxes"/>
@@ -1404,7 +1534,7 @@ function ItemModal({it, erp, ops, close, ui}){
         ${(it.stage === 'install' || it.installDone) && html`<div style=${{display:'grid',gap:6}}>
           <div className="inline" style=${{fontSize:13}}><span>Work time <b>${hrs(work)}</b> vs standard ${std} h</span><span>·</span><span>${it.sessions.length} sessions</span>${running(it) ? html`<span className="pill good">Working now</span>` : null}${it.signedOff ? html`<span className="pill good">Customer signed off</span>` : null}</div>
           <div className="sub" style=${{fontSize:12,color:'var(--muted)'}}>Boxes received ${it.boxes.filter(b => b.got).length} of ${it.boxes.length}. Installers record start, pause and completion in the Installer app.</div></div>`}
-        ${it.stage === 'handover' && html`<span style=${{fontSize:13}}>Installed ${it.installedAt ? fmtDT(it.installedAt) : ''}. Share handover photos and warranty card, then complete.</span>`}
+        ${it.stage === 'handover' && html`<span style=${{fontSize:13}}>Installed ${it.installedAt ? fmtDT(it.installedAt) : ''}. Upload the warranty card, care guide and handover photos in the project's <b>Documents</b> tab (category: Handover), then complete. The customer sees them in their app.</span>`}
         ${it.stage === 'closed' && html`<span style=${{fontSize:13}}>Completed.</span>`}
       </div>
 
@@ -1675,7 +1805,7 @@ function SurveyApp({erp, ops}){
     screen = html`<${Phone} title=${`${r.name} · Wall ${w.label}`} sub=${wi === 0 ? 'Wall with the entry door' : 'Clockwise from wall A'} back=${() => setScr({n:'room', pid:p.id, rid:r.id})} right=${html`<span className="wall-letter sm">${w.label}</span>`}
       foot=${html`<button className="big" disabled=${wi === 0} onClick=${() => setScr({...scr, label:r.walls[wi-1].label})}>‹ ${wi > 0 ? r.walls[wi-1].label : ''}</button><button className="big pri" onClick=${() => wi < r.walls.length - 1 ? setScr({...scr, label:r.walls[wi+1].label}) : setScr({n:'room', pid:p.id, rid:r.id})}>${wi < r.walls.length - 1 ? 'Next: wall ' + r.walls[wi+1].label : 'Done'}</button>`}>
       <${PhotoBox} src=${photoSrc(w.photo, w.photoUrl)} label=${'Wide photo of wall ' + w.label} onPick=${d => { setW('photo', d); uploadDataUrl(d).then(sl => updRoom(y => { const ww = y.walls.find(z => z.label === w.label); if (ww && ww.photo === d){ ww.photo = sl.ref; ww.photoUrl = sl.viewUrl; } })).catch(() => {}); }}/>
-      ${!w.photo && !done && html`<button className="linkbtn" style=${{color:'var(--muted)',marginTop:-4}} onClick=${() => setW('photo', 'sample')}>Demo: use a sample photo</button>`}
+      ${SERVER.demoMode && !w.photo && !done && html`<button className="linkbtn" style=${{color:'var(--muted)',marginTop:-4}} onClick=${() => setW('photo', 'sample')}>Demo: use a sample photo</button>`}
       <div className="mm">
         <label>Width (mm)<input inputMode="numeric" value=${w.w} onInput=${e => setW('w', e.target.value.replace(/\D/g,''))} placeholder="e.g. 3600" disabled=${done}/></label>
         <label>Height (mm)<input inputMode="numeric" value=${w.h} onInput=${e => setW('h', e.target.value.replace(/\D/g,''))} placeholder="2900" disabled=${done}/></label>
@@ -1787,7 +1917,8 @@ function InstallApp({erp, ops}){
         <div className="inline"><a className="btn small" href=${'tel:' + p.phone.replace(/\s/g,'')}><${Icon} n="phone" s=${14}/>${p.phone}</a><a className="btn small" target="_blank" rel="noopener" href=${'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(p.address)}>Open map</a></div>
         ${p.notes && html`<span className="meta" style=${{color:'var(--ink)',borderLeft:'3px solid var(--red)',paddingLeft:10}}>${p.notes}</span>`}</div>
       <div className="mcard"><div className="card-row"><b>Production drawing</b>${d ? html`<span className="pill good">${d.rev} · latest approved</span>` : html`<span className="pill">None</span>`}</div>
-        ${d && html`<${Elevation} it=${it} wall=${wall}/>`}<span className="meta">${it.roomName}, wall ${it.wall}${wall ? ` · ${wall.w} × ${wall.h} mm` : ''}. Older revisions are hidden.</span></div>
+        ${d && d.url ? html`<a className="big" style=${{textDecoration:'none'}} href=${d.url} target="_blank" rel="noopener">Open drawing ${d.rev}</a>` : d && html`<${Elevation} it=${it} wall=${wall}/>`}<span className="meta">${it.roomName}, wall ${it.wall}${wall ? ` · ${wall.w} × ${wall.h} mm` : ''}. Older revisions are hidden.</span>
+        ${Object.keys(it.spec || {}).length > 0 && html`<${SpecTable} spec=${it.spec}/>`}</div>
       <div className="mcard"><div className="card-row"><b>Packing list</b><span className="meta">${got}/${it.boxes.length} received</span></div>
         ${it.boxes.map(b => html`<div key=${b.n} className="mrow" style=${{fontSize:13}}><span className="mono" style=${{width:28,color:'var(--muted)'}}>#${b.n}</span><span className="grow">${b.label}</span>
           ${it.stage === 'install' && !it.installDone ? html`<button className=${'btn small' + (b.got === true ? ' primary' : '')} onClick=${() => ops.updItem(it.id, x => { x.boxes.find(y => y.n === b.n).got = true; })}>${b.got === true ? '✓ Got' : 'Got'}</button><button className="btn small ghost" onClick=${() => { ops.updItem(it.id, x => { x.boxes.find(y => y.n === b.n).got = false; }); setSheet({n:'snag', type:'Missing part', part:'Box #' + b.n + ' ' + b.label, note:''}); }}>Missing</button>` : html`<span className="sub">${b.got ? '✓' : '—'}</span>`}</div>`)}</div>
@@ -1811,7 +1942,7 @@ function InstallApp({erp, ops}){
       overlay = sheet.step === 1 ? wrap(html`<h3>Complete ${it.code}</h3>
         ${CHECKLIST.map(c => html`<label key=${c} className="check" style=${{fontSize:15,padding:'4px 0'}}><input type="checkbox" checked=${!!sheet.checks[c]} onChange=${() => setSheet({...sheet, checks:{...sheet.checks, [c]:!sheet.checks[c]}})}/>${c}</label>`)}
         <${PhotoBox} src=${sheet.photo} label="After photo of the finished unit" onPick=${d => setSheet({...sheet, photo:d})}/>
-        ${!sheet.photo && html`<button className="linkbtn" style=${{color:'var(--muted)'}} onClick=${() => setSheet({...sheet, photo:'sample'})}>Demo: use a sample photo</button>`}
+        ${SERVER.demoMode && !sheet.photo && html`<button className="linkbtn" style=${{color:'var(--muted)'}} onClick=${() => setSheet({...sheet, photo:'sample'})}>Demo: use a sample photo</button>`}
         <div className="inline"><button className="big" onClick=${close}>Cancel</button><button className="big pri" disabled=${!allChecked || !sheet.photo || sheet.busy} onClick=${async () => { setSheet({...sheet, busy:true}); const r = await ops.requestSignoff(it.id, sheet.checks, sheet.photo); setSheet(r ? {...sheet, busy:false, step:2, otp:r.devCode || null} : {...sheet, busy:false}); }}>${sheet.busy ? 'Sending…' : 'Send OTP to customer'}</button></div>`)
       : wrap(html`<h3>Customer sign-off</h3><div className="banner">OTP sent to ${erp.projects.find(p => p.id === it.projectId).customer} on WhatsApp. Ask them for the 4 digits.</div>
         ${sheet.otp && html`<div className="banner warn">Demo only: the OTP is ${sheet.otp}</div>`}

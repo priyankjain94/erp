@@ -9,7 +9,8 @@ import { bad, HttpError, notFound, randomId } from '../core/util.js';
 import { authenticate } from '../modules/auth.js';
 
 /* Files (photos, drawings) are private. The API hands out short-lived signed URLs.
-   STORAGE_DRIVER=local keeps files on disk (single server); s3 works with AWS S3, Cloudflare R2, MinIO, Hostinger object storage. */
+   STORAGE_DRIVER=local keeps files on disk (single server); db keeps them inside PostgreSQL (hosts with a temporary disk, e.g. Render free);
+   s3 works with AWS S3, Cloudflare R2, MinIO, Hostinger object storage. */
 const ALLOWED = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 const sign = (s: string) => crypto.createHmac('sha256', config.JWT_SECRET).update(s).digest('base64url').slice(0, 32);
 
@@ -50,10 +51,14 @@ export function storageRoutes(r: Router) {
     return { ref: 'upload:' + id, uploadUrl, method: 'PUT', viewUrl: signedFileUrl('upload:' + id) };
   });
   r.put('/api/v1/uploads/local/:id', async ctx => {
-    if (config.STORAGE_DRIVER !== 'local') throw notFound();
+    if (config.STORAGE_DRIVER === 's3') throw notFound();
     if (ctx.query.get('sig') !== sign(ctx.params.id + ':put') || Number(ctx.query.get('exp')) < Date.now() / 1000) throw new HttpError(403, 'Upload link expired', 'forbidden');
     const u = await one(db, 'select * from uploads where id = $1', [ctx.params.id]); if (!u) throw notFound();
     if (ctx.rawBody.length > u.size + 1024 || !ctx.rawBody.length) throw bad('File size does not match');
+    if (config.STORAGE_DRIVER === 'db') {
+      await db.query(`insert into upload_blobs(id, data) values ($1, decode($2, 'hex')) on conflict (id) do update set data = excluded.data`, [u.id, ctx.rawBody.toString('hex')]);
+      return { ok: true };
+    }
     const file = path.resolve(config.STORAGE_LOCAL_DIR, u.path);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, ctx.rawBody);
@@ -64,6 +69,12 @@ export function storageRoutes(r: Router) {
     if (ctx.query.get('sig') !== sign(id + ':' + exp) || exp < Date.now() / 1000) throw new HttpError(403, 'Link expired', 'forbidden');
     const u = await one(db, 'select * from uploads where id = $1', [id]); if (!u) throw notFound();
     if (config.STORAGE_DRIVER === 's3') { ctx.res.writeHead(302, { Location: s3Presign('GET', u.path, 3600) }); ctx.res.end(); return; }
+    if (config.STORAGE_DRIVER === 'db') {
+      const blob = await one(db, `select encode(data, 'base64') b64 from upload_blobs where id = $1`, [id]); if (!blob) throw notFound();
+      const data = Buffer.from(String(blob.b64).replace(/\s/g, ''), 'base64');
+      ctx.res.writeHead(200, { 'Content-Type': u.content_type, 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff', 'Content-Length': String(data.length) });
+      ctx.res.end(data); return;
+    }
     const file = path.resolve(config.STORAGE_LOCAL_DIR, u.path);
     if (!fs.existsSync(file)) throw notFound();
     ctx.res.writeHead(200, { 'Content-Type': u.content_type, 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff' });

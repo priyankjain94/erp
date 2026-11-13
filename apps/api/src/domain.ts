@@ -25,10 +25,10 @@ export const DEFAULT_ROLES: Record<Role, Record<Perm, boolean>> = {
 
 export const STAGES = [
   { id: 'survey', name: 'Site survey', short: 'Survey', owner: 'surveyor', days: 2 },
-  { id: 'drawing', name: 'Production drawing', short: 'Drawing', owner: 'designer', days: 4 },
-  { id: 'pi', name: 'Hardware + production PI', short: 'PI', owner: 'purchase', days: 2 },
-  { id: 'order', name: 'Order placed', short: 'Order', owner: 'purchase', days: 1 },
-  { id: 'dispatch', name: 'Dispatch tracking', short: 'Dispatch', owner: 'production', days: 12 },
+  { id: 'drawing', name: 'Production drawing and client approval', short: 'Drawing', owner: 'designer', days: 4 },
+  { id: 'pi', name: 'Production PI (factory)', short: 'Factory PI', owner: 'purchase', days: 2 },
+  { id: 'order', name: 'Hardware procurement and production', short: 'Hardware', owner: 'purchase', days: 10 },
+  { id: 'dispatch', name: 'Dispatch and delivery', short: 'Dispatch', owner: 'production', days: 3 },
   { id: 'install', name: 'Installation', short: 'Install', owner: 'installer', days: 3 },
   { id: 'handover', name: 'Completion and handover', short: 'Handover', owner: 'pm', days: 2 },
   { id: 'closed', name: 'Completed', short: 'Done', owner: null, days: 0 }
@@ -37,7 +37,7 @@ export type Stage = typeof STAGES[number]['id'];
 export const STAGE_IDS = STAGES.map(s => s.id) as [Stage, ...Stage[]];
 export const stageIdx = (s: string) => STAGES.findIndex(x => x.id === s);
 export const stageById = Object.fromEntries(STAGES.map(s => [s.id, s])) as Record<Stage, typeof STAGES[number]>;
-export const CUSTOMER_STAGE: Record<Stage, string> = { survey: 'Measurement', drawing: 'Design', pi: 'Ordering', order: 'In production', dispatch: 'On the way', install: 'Installing', handover: 'Installed', closed: 'Completed' };
+export const CUSTOMER_STAGE: Record<Stage, string> = { survey: 'Measurement', drawing: 'Design', pi: 'In production', order: 'In production', dispatch: 'On the way', install: 'Installing', handover: 'Installed', closed: 'Completed' };
 
 export const ITEM_TYPES = [
   { id: 'WR', name: 'Wardrobe', std: 8 }, { id: 'TV', name: 'TV unit', std: 5 }, { id: 'VN', name: 'Vanity', std: 3 },
@@ -63,13 +63,13 @@ export const OBSTRUCTIONS = ['Window', 'Door', 'Switchboard', 'AC point', 'Plumb
 export const DEFAULT_PAYMENTS: [string, number, string][] = [['Advance (booking)', 10, ''], ['Before order', 40, 'order'], ['Before dispatch', 40, ''], ['On handover', 10, '']];
 
 export function stageTaskTitle(stage: string, code: string) {
-  const t: Record<string, string> = { survey: 'Site survey', drawing: `Production drawing · ${code}`, pi: `Raise hardware + production PI · ${code}`, order: `Place order · ${code}`, dispatch: `Track dispatch and delivery · ${code}`, install: `Install ${code}`, handover: `Handover and sign-off · ${code}` };
+  const t: Record<string, string> = { survey: 'Site survey', drawing: `Production drawing · ${code}`, pi: `Raise production PI with factory · ${code}`, order: `Procure hardware, track production · ${code}`, dispatch: `Dispatch and deliver · ${code}`, install: `Install ${code}`, handover: `Handover and sign-off · ${code}` };
   return t[stage] || code;
 }
 export const stageProof = (stage: string) => stage === 'drawing' ? 'file' : stage === 'install' ? 'photo' : '';
 
 /* ---------- gates ---------- */
-export interface GateItem { stage: string; drawings: { approved: boolean }[]; hwPI: boolean; prodPI: boolean; po: string; dispatch: unknown; delivered: boolean; installDone: boolean; signedOff: boolean; openSnags: number }
+export interface GateItem { stage: string; drawings: { approved: boolean; file?: boolean }[]; spec?: Record<string, string>; boxes?: number; prodPiNo?: string; productionDone?: boolean; hwReceived?: boolean; handoverDocs?: number; hwPI: boolean; prodPI: boolean; po: string; dispatch: unknown; delivered: boolean; installDone: boolean; signedOff: boolean; openSnags: number }
 export interface GateProject { surveyStatus: string; siteReady: boolean; orderPayment?: { label: string; pct: number; received: boolean } }
 export interface Gate { ok: boolean; text: string; hard: boolean }
 export function gatesFor(it: GateItem, p: GateProject): Gate[] {
@@ -77,13 +77,15 @@ export function gatesFor(it: GateItem, p: GateProject): Gate[] {
   const last = it.drawings[it.drawings.length - 1];
   switch (it.stage) {
     case 'survey': add(p.surveyStatus === 'submitted', 'Site survey submitted with every wall measured', false); break;
-    case 'drawing': add(last, 'Production drawing and packing list uploaded', true); add(last && last.approved, 'Customer approved the latest drawing', true); break;
-    case 'pi': add(it.hwPI, 'Hardware PI raised', false); add(it.prodPI, 'Production PI raised', false);
+    case 'drawing': add(last && last.file !== false, 'Production drawing file uploaded (PDF or image)', true);
+      add(specMissing(it.spec).length === 0, 'Material specification complete' + (specMissing(it.spec).length ? ` (missing: ${specMissing(it.spec).join(', ')})` : ''), true);
+      add((it.boxes ?? 1) > 0, 'Packing list made', true); add(last && last.approved, 'Customer approved the latest drawing', true); break;
+    case 'pi': add(it.prodPiNo || it.prodPI, 'Production PI raised with the factory (PI number)', true);
       add(p.orderPayment && p.orderPayment.received, `Payment received · ${p.orderPayment ? p.orderPayment.label + ' (' + p.orderPayment.pct + '%)' : 'before order'}`, true); break;
-    case 'order': add(it.po, 'PO number entered', false); break;
+    case 'order': add(it.po, 'Hardware PO number entered', true); add(it.hwReceived, 'Hardware received', true); add(it.productionDone, 'Factory production complete', true); break;
     case 'dispatch': add(it.dispatch, 'Dispatch details entered (vehicle, boxes, date)', false); add(it.delivered, 'Material delivered at site', true); add(p.siteReady, 'Site ready: civil, electrical, painting, flooring done', true); break;
     case 'install': add(it.installDone, 'Installation completed with photos and checklist', true); add(!it.openSnags, 'No open snags', true); add(it.signedOff, 'Customer sign-off by WhatsApp OTP', true); break;
-    case 'handover': add(true, 'Handover photos and documents shared', false); break;
+    case 'handover': add((it.handoverDocs ?? 0) > 0, 'Handover documents uploaded (warranty card, care guide, photos)', false); break;
   }
   return g;
 }
@@ -150,3 +152,34 @@ export function renderTemplate(name: string, params: string[]) {
   const t = WA_TEMPLATES[name];
   return t ? t.body.replace(/\{\{(\d+)\}\}/g, (_m, i) => params[Number(i) - 1] ?? '') : params.join(' ');
 }
+
+/* ---------- materials and documents ---------- */
+/** Material specification the designer fills for every item; the first five are required before client approval. */
+export const MATERIAL_FIELDS = [
+  { id: 'size', label: 'Overall size W × H × D (mm)', req: true, hint: '2400 × 2400 × 600' },
+  { id: 'carcass', label: 'Carcass board and thickness', req: true, hint: 'BWP plywood 18 mm / HDHMR 18 mm' },
+  { id: 'shutter', label: 'Shutter board and thickness', req: true, hint: 'HDHMR 18 mm' },
+  { id: 'finish', label: 'Shutter finish, brand and code', req: true, hint: 'Laminate 1 mm, Merino 22001 SUD' },
+  { id: 'hardware', label: 'Hardware brand and range', req: true, hint: 'Hettich soft-close hinges and channels' },
+  { id: 'inner', label: 'Inner laminate', req: false, hint: 'Frosty white 0.8 mm' },
+  { id: 'edge', label: 'Edge banding', req: false, hint: '2 mm PVC, matching' },
+  { id: 'back', label: 'Back panel', req: false, hint: '8 mm plywood' },
+  { id: 'handles', label: 'Handles / profiles', req: false, hint: 'G-profile, black' },
+  { id: 'accessories', label: 'Accessories', req: false, hint: 'Pull-out basket, loft, mirror' },
+  { id: 'notes', label: 'Production notes', req: false, hint: 'Grain direction, special cuts' }
+] as const;
+export function specMissing(spec?: Record<string, string>) {
+  return MATERIAL_FIELDS.filter(f => f.req && !String(spec?.[f.id] || '').trim()).map(f => f.label.split(/[ ,(]/)[0].toLowerCase());
+}
+/** Project document categories. `customer: true` ones are visible in the customer app. */
+export const DOC_CATEGORIES = [
+  { id: 'floor_plan', name: 'Final floor plan', customer: true },
+  { id: 'furniture', name: 'Furniture drawings', customer: true },
+  { id: 'production', name: 'Final production drawings with materials', customer: false },
+  { id: 'quotation', name: 'Quotation / BOQ', customer: true },
+  { id: 'pi', name: 'Factory PI', customer: false },
+  { id: 'po', name: 'Hardware PO', customer: false },
+  { id: 'handover', name: 'Handover: warranty card, care guide, photos', customer: true },
+  { id: 'other', name: 'Other', customer: false }
+] as const;
+export const DOC_CATEGORY_IDS = DOC_CATEGORIES.map(c => c.id) as unknown as [string, ...string[]];

@@ -9,21 +9,22 @@ const group = <T extends Record<string, any>>(rows: T[], key: string) => {
   const m = new Map<any, T[]>(); for (const r of rows) { const k = r[key]; if (!m.has(k)) m.set(k, []); m.get(k)!.push(r); } return m;
 };
 
-async function loadProjects(q: Q, ids: string[] | null, opts: { money: boolean }) {
+async function loadProjects(q: Q, ids: string[] | null, opts: { money: boolean; customer?: boolean }) {
   const where = ids ? 'where p.id = any($1::text[])' : '';
   const projects = await many(q, `select p.*, c.name customer, c.phone from projects p join customers c on c.id = p.customer_id ${where} order by p.created_at desc`, ids ? [ids] : []);
   if (!projects.length) return [];
   const pids = projects.map(p => p.id);
-  const [pays, acts, surveys, rooms, walls, obs, ritems] = await Promise.all([
+  const [pays, acts, surveys, rooms, walls, obs, ritems, pdocs] = await Promise.all([
     many(q, 'select * from payment_milestones where project_id = any($1::text[]) order by sort, id', [pids]),
     many(q, 'select project_id, text, created_at from project_activity where project_id = any($1::text[]) order by created_at, id', [pids]),
     many(q, 'select * from surveys where project_id = any($1::text[])', [pids]),
     many(q, 'select * from rooms where project_id = any($1::text[]) order by sort, name', [pids]),
     many(q, 'select w.* from walls w join rooms r on r.id = w.room_id where r.project_id = any($1::text[]) order by w.label', [pids]),
     many(q, 'select o.* from wall_obstructions o join walls w on w.id = o.wall_id join rooms r on r.id = w.room_id where r.project_id = any($1::text[]) order by o.id', [pids]),
-    many(q, 'select ri.* from room_items ri join rooms r on r.id = ri.room_id where r.project_id = any($1::text[]) order by ri.id', [pids])
+    many(q, 'select ri.* from room_items ri join rooms r on r.id = ri.room_id where r.project_id = any($1::text[]) order by ri.id', [pids]),
+    many(q, `select * from project_docs where project_id = any($1::text[]) ${opts.customer ? 'and shared' : ''} ${opts.money ? '' : "and category not in ('pi','po','quotation')"} order by created_at desc, id desc`, [pids])
   ]);
-  const payBy = group(pays, 'project_id'), actBy = group(acts, 'project_id'), roomBy = group(rooms, 'project_id'), wallBy = group(walls, 'room_id'), obsBy = group(obs, 'wall_id'), riBy = group(ritems, 'room_id');
+  const docBy = group(pdocs, 'project_id'), payBy = group(pays, 'project_id'), actBy = group(acts, 'project_id'), roomBy = group(rooms, 'project_id'), wallBy = group(walls, 'room_id'), obsBy = group(obs, 'wall_id'), riBy = group(ritems, 'room_id');
   const survBy = new Map(surveys.map(s => [s.project_id, s]));
   return projects.map(p => {
     const s = survBy.get(p.id) || {};
@@ -33,6 +34,7 @@ async function loadProjects(q: Q, ids: string[] | null, opts: { money: boolean }
       feedback: p.feedback_rating ? { rating: p.feedback_rating, comment: p.feedback_comment || '', at: ms(p.feedback_at) } : null,
       payments: opts.money ? (payBy.get(p.id) || []).map(m => ({ id: m.id, label: m.label, pct: m.pct, amount: m.amount, gate: m.gate, received: !!m.received_at })) : [],
       activity: (actBy.get(p.id) || []).map(a => ({ t: ms(a.created_at), text: a.text })),
+      docs: (docBy.get(p.id) || []).map(d => ({ id: d.id, category: d.category, title: d.title, rev: d.rev, notes: d.notes, itemId: d.item_id, by: d.by_id, at: ms(d.created_at), url: signedFileUrl(d.file), shared: d.shared })),
       survey: {
         status: s.status || 'scheduled', assignee: s.assignee_id || null, scheduled: ms(s.scheduled_at), checkIn: ms(s.check_in_at), at: ms(s.submitted_at), mins: s.minutes ?? null, signed: !!s.signed,
         rooms: (roomBy.get(p.id) || []).map(r => ({
@@ -61,7 +63,8 @@ async function loadItems(q: Q, where: string, params: unknown[]) {
   return items.map(i => ({
     id: i.id, code: i.code, projectId: i.project_id, room: i.room_code, roomName: i.room_name, type: i.type, wall: i.wall, desc: i.descr,
     stage: i.stage, owner: i.owner_id, target: i.target, installer: i.installer_id, designer: i.designer_id,
-    drawings: (d.get(i.id) || []).map(x => ({ rev: x.rev, at: ms(x.created_at), by: x.by_id, approved: !!x.approved_at, url: signedFileUrl(x.url) })),
+    drawings: (d.get(i.id) || []).map(x => ({ rev: x.rev, at: ms(x.created_at), by: x.by_id, approved: !!x.approved_at, url: signedFileUrl(x.url), notes: x.notes || '', spec: x.spec || null })),
+    spec: i.spec || {}, prodPiNo: i.prod_pi_no || '', prodPiAmount: i.prod_pi_amount === null ? null : Number(i.prod_pi_amount), prodPiDoc: signedFileUrl(i.prod_pi_doc), hwVendor: i.hw_vendor || '', hwPoDoc: signedFileUrl(i.hw_po_doc), hwReceived: !!i.hw_received, productionDone: !!i.production_done,
     hwPI: i.hw_pi, prodPI: i.prod_pi, po: i.po,
     dispatch: i.dispatch_vehicle !== null || i.dispatch_date ? { vehicle: i.dispatch_vehicle || '', boxes: i.dispatch_boxes, date: i.dispatch_date } : null,
     delivered: i.delivered, boxes: (b.get(i.id) || []).map(x => ({ n: x.n, label: x.label, got: x.got })),
@@ -133,13 +136,13 @@ export async function staffState(p: Extract<Principal, { type: 'user' }>, q: Q =
 /** What a customer sees: only their own projects, in customer-friendly terms. */
 export async function customerState(customerId: number, q: Q = db) {
   const pids = (await many(q, 'select id from projects where customer_id = $1', [customerId])).map(r => r.id);
-  const projects = await loadProjects(q, pids, { money: true });
+  const projects = await loadProjects(q, pids, { money: true, customer: true });
   const items = await loadItems(q, 'where project_id = any($1::text[])', [pids]);
   const staffIds = [...new Set([...projects.map(p => p.pm), ...items.map(i => i.installer)].filter(Boolean))];
   const staff = await many(q, 'select id, name, phone from users where id = any($1::text[])', [staffIds]);
   return {
     projects: projects.map(p => ({ ...p, activity: [], notes: '' })),
-    items: items.map(i => ({ ...i, customerStage: CUSTOMER_STAGE[i.stage as keyof typeof CUSTOMER_STAGE], sessions: [], log: [], boxes: [], flags: [] })),
+    items: items.map(i => ({ ...i, customerStage: CUSTOMER_STAGE[i.stage as keyof typeof CUSTOMER_STAGE], sessions: [], log: [], boxes: [], flags: [], prodPiNo: '', prodPiAmount: null, prodPiDoc: null, hwVendor: '', hwPoDoc: null })),
     staff: staff.map(s => ({ id: s.id, name: s.name, phone: prettyPhone(s.phone) }))
   };
 }

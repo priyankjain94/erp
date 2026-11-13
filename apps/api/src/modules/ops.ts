@@ -3,7 +3,7 @@ import { config } from '../core/config.js';
 import { db, many, one, tx, type Q } from '../core/db.js';
 import { parse, type Ctx, type Router } from '../core/http.js';
 import { addDays, bad, conflict, first, fmtDate, forbidden, HttpError, normPhone, notFound, prettyPhone } from '../core/util.js';
-import { BOXES, CHECKLIST, DEFAULT_PAYMENTS, gatesFor, ITEM_TYPES, OBSTRUCTIONS, PAUSE_REASONS, SNAG_FLOW, SNAG_TYPES, stageById, stageIdx, stageProof, STAGES, stageTaskTitle, typeName, TYPE_IDS } from '../domain.js';
+import { BOXES, CHECKLIST, DEFAULT_PAYMENTS, DOC_CATEGORIES, DOC_CATEGORY_IDS, gatesFor, MATERIAL_FIELDS, ITEM_TYPES, OBSTRUCTIONS, PAUSE_REASONS, SNAG_FLOW, SNAG_TYPES, stageById, stageIdx, stageProof, STAGES, stageTaskTitle, typeName, TYPE_IDS } from '../domain.js';
 import { sendTemplate } from '../integrations/whatsapp.js';
 import { audit, can, checkOtp, issueOtp, staff, userOf, type Principal } from './auth.js';
 import { staffState } from './state.js';
@@ -43,14 +43,16 @@ export async function createProject(q: Q, by: U, f: NewProject) {
 async function gateInput(q: Q, itemId: string) {
   const it = await one(q, 'select * from items where id = $1', [itemId]);
   if (!it) throw notFound('Item not found');
-  const drawings = await many(q, `select approved_at from documents where item_id = $1 and kind = 'drawing' order by id`, [itemId]);
+  const drawings = await many(q, `select approved_at, url from documents where item_id = $1 and kind = 'drawing' order by id`, [itemId]);
+  const boxes = Number((await one(q, 'select count(*) n from item_boxes where item_id = $1', [itemId]))!.n);
+  const handoverDocs = Number((await one(q, `select count(*) n from project_docs where project_id = $1 and category = 'handover' and (item_id is null or item_id = $2)`, [it.project_id, itemId]))!.n);
   const openSnags = Number((await one(q, `select count(*) n from snags where item_id = $1 and status <> 'fixed'`, [itemId]))!.n);
   const p = await one(q, 'select site_ready from projects where id = $1', [it.project_id]);
   const s = await one(q, 'select status from surveys where project_id = $1', [it.project_id]);
   const pay = await one(q, `select label, pct, received_at from payment_milestones where project_id = $1 and gate = 'order' limit 1`, [it.project_id]);
   return {
     it,
-    gi: { stage: it.stage, drawings: drawings.map(d => ({ approved: !!d.approved_at })), hwPI: it.hw_pi, prodPI: it.prod_pi, po: it.po, dispatch: it.dispatch_vehicle || it.dispatch_date, delivered: it.delivered, installDone: it.install_done, signedOff: it.signed_off, openSnags },
+    gi: { stage: it.stage, drawings: drawings.map(d => ({ approved: !!d.approved_at, file: !!d.url })), spec: it.spec || {}, boxes, prodPiNo: it.prod_pi_no, productionDone: it.production_done, hwReceived: it.hw_received, handoverDocs, hwPI: it.hw_pi, prodPI: it.prod_pi, po: it.po, dispatch: it.dispatch_vehicle || it.dispatch_date, delivered: it.delivered, installDone: it.install_done, signedOff: it.signed_off, openSnags },
     gp: { surveyStatus: s?.status || 'scheduled', siteReady: p!.site_ready, orderPayment: pay ? { label: pay.label, pct: pay.pct, received: !!pay.received_at } : undefined }
   };
 }
@@ -189,7 +191,8 @@ async function itemForInstaller(q: Q, p: U, id: string) {
 
 const ProjectZ = z.object({ leadId: z.string().optional().nullable(), customer: z.string().trim().min(2).max(120), phone: z.string(), address: z.string().trim().min(2).max(300), value: z.coerce.number().min(0).max(1e9).default(0),
   pm: z.string(), target: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), surveyDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), advance: z.boolean().default(false) });
-const ItemPatchZ = z.object({ owner: z.string().optional(), target: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), hwPI: z.boolean().optional(), prodPI: z.boolean().optional(), po: z.string().max(60).optional(),
+const fileRef = z.string().regex(/^upload:[A-Za-z0-9_-]+\.(pdf|jpg|png|webp)$/, 'Upload the file first');
+const ItemPatchZ = z.object({ prodPiNo: z.string().trim().max(60).optional(), prodPiAmount: z.coerce.number().min(0).max(1e9).nullable().optional(), prodPiDoc: fileRef.nullable().optional(), hwVendor: z.string().trim().max(80).optional(), hwPoDoc: fileRef.nullable().optional(), hwReceived: z.boolean().optional(), productionDone: z.boolean().optional(), spec: z.record(z.string(), z.string().max(300)).optional(), owner: z.string().optional(), target: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), hwPI: z.boolean().optional(), prodPI: z.boolean().optional(), po: z.string().max(60).optional(),
   dispatch: z.object({ vehicle: z.string().max(40).default(''), boxes: z.coerce.number().int().min(0).max(500).nullable().default(null), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null) }).optional(), delivered: z.boolean().optional() }).strict();
 
 export function opsRoutes(r: Router) {
@@ -240,6 +243,17 @@ export function opsRoutes(r: Router) {
       if (b.hwPI !== undefined) { await q.query('update items set hw_pi = $2 where id = $1', [it.id, b.hwPI]); logs.push(b.hwPI ? 'hardware PI raised' : 'hardware PI unmarked'); }
       if (b.prodPI !== undefined) { await q.query('update items set prod_pi = $2 where id = $1', [it.id, b.prodPI]); logs.push(b.prodPI ? 'production PI raised' : 'production PI unmarked'); }
       if (b.po !== undefined) await q.query('update items set po = $2 where id = $1', [it.id, b.po.trim()]);
+      if (b.prodPiNo !== undefined) { await q.query('update items set prod_pi_no = $2, prod_pi = $3 where id = $1', [it.id, b.prodPiNo, !!b.prodPiNo]); if (b.prodPiNo && b.prodPiNo !== it.prod_pi_no) logs.push(`factory PI ${b.prodPiNo} raised`); }
+      if (b.prodPiAmount !== undefined) await q.query('update items set prod_pi_amount = $2 where id = $1', [it.id, b.prodPiAmount]);
+      if (b.prodPiDoc !== undefined) { await q.query('update items set prod_pi_doc = $2 where id = $1', [it.id, b.prodPiDoc]); if (b.prodPiDoc) logs.push('factory PI copy uploaded'); }
+      if (b.hwVendor !== undefined) await q.query('update items set hw_vendor = $2 where id = $1', [it.id, b.hwVendor]);
+      if (b.hwPoDoc !== undefined) { await q.query('update items set hw_po_doc = $2 where id = $1', [it.id, b.hwPoDoc]); if (b.hwPoDoc) logs.push('hardware PO copy uploaded'); }
+      if (b.hwReceived !== undefined) { await q.query('update items set hw_received = $2 where id = $1', [it.id, b.hwReceived]); logs.push(b.hwReceived ? 'hardware received' : 'hardware receipt unmarked'); }
+      if (b.productionDone !== undefined) { await q.query('update items set production_done = $2 where id = $1', [it.id, b.productionDone]); logs.push(b.productionDone ? 'factory production complete' : 'production completion unmarked'); }
+      if (b.spec !== undefined) {
+        const clean = Object.fromEntries(MATERIAL_FIELDS.map(f => [f.id, String(b.spec![f.id] ?? '').trim()]).filter(([, v]) => v));
+        await q.query('update items set spec = $2 where id = $1', [it.id, JSON.stringify(clean)]);
+      }
       if (b.dispatch) await q.query('update items set dispatch_vehicle = $2, dispatch_boxes = $3, dispatch_date = $4 where id = $1', [it.id, b.dispatch.vehicle, b.dispatch.boxes, b.dispatch.date]);
       if (b.delivered !== undefined) { await q.query('update items set delivered = $2 where id = $1', [it.id, b.delivered]); logs.push(b.delivered ? 'material delivered at site' : 'delivery unmarked'); }
       for (const l of logs) await act(q, it.project_id, `${it.code}: ${l} (${p.user.name})`);
@@ -247,12 +261,23 @@ export function opsRoutes(r: Router) {
     return done(ctx);
   });
   r.post('/api/v1/items/:id/drawings', staff('edit'), async ctx => {
-    const p = userOf(ctx); const b = parse(z.object({ url: z.string().max(500).optional() }), ctx.body || {});
+    const p = userOf(ctx);
+    const b = parse(z.object({ file: fileRef, notes: z.string().max(500).default(''), spec: z.record(z.string(), z.string().max(300)).optional(), boxes: z.array(z.string().trim().min(1).max(80)).min(1).max(60).optional() }), ctx.body || {});
     await tx(async q => {
-      const it = await one(q, 'select * from items where id = $1', [ctx.params.id]); if (!it) throw notFound();
+      const it = await one(q, 'select * from items where id = $1 for update', [ctx.params.id]); if (!it) throw notFound();
+      if (!(await one(q, 'select 1 from uploads where id = $1', [b.file.slice(7)]))) throw bad('That file was not uploaded. Try again.');
+      if (b.spec) {
+        const clean = Object.fromEntries(MATERIAL_FIELDS.map(f => [f.id, String(b.spec![f.id] ?? '').trim()]).filter(([, v]) => v));
+        await q.query('update items set spec = $2 where id = $1', [it.id, JSON.stringify(clean)]);
+      }
+      if (b.boxes && !it.dispatch_date && !it.install_done) {
+        await q.query('delete from item_boxes where item_id = $1', [it.id]);
+        for (const [i, label] of b.boxes.entries()) await q.query('insert into item_boxes(item_id, n, label) values ($1,$2,$3)', [it.id, i + 1, label]);
+      }
+      const spec = (await one(q, 'select spec from items where id = $1', [it.id]))!.spec;
       const n = Number((await one(q, `select count(*) n from documents where item_id = $1 and kind = 'drawing'`, [it.id]))!.n);
-      await q.query(`insert into documents(item_id, kind, rev, url, by_id) values ($1, 'drawing', $2, $3, $4)`, [it.id, 'R' + n, b.url || null, p.user.id]);
-      await act(q, it.project_id, `${it.code}: drawing R${n} uploaded with packing list (${p.user.name})`);
+      await q.query(`insert into documents(item_id, kind, rev, url, by_id, notes, spec) values ($1, 'drawing', $2, $3, $4, $5, $6)`, [it.id, 'R' + n, b.file, p.user.id, b.notes, JSON.stringify(spec)]);
+      await act(q, it.project_id, `${it.code}: production drawing R${n} uploaded with material spec and packing list (${p.user.name})`);
     });
     return done(ctx);
   });
@@ -272,6 +297,33 @@ export function opsRoutes(r: Router) {
     await tx(q => approveDrawing(q, ctx.params.id, 'staff', p.user.name));
     return done(ctx);
   });
+  /* project documents: floor plan, furniture drawings, final production drawings, PI / PO copies, handover */
+  r.post('/api/v1/projects/:id/documents', staff('edit'), async ctx => {
+    const p = userOf(ctx);
+    const b = parse(z.object({ category: z.enum(DOC_CATEGORY_IDS), title: z.string().trim().min(2).max(120), file: fileRef, notes: z.string().max(500).default(''), itemId: z.string().nullable().optional() }), ctx.body);
+    await tx(async q => {
+      const pr = await one(q, 'select id from projects where id = $1', [ctx.params.id]); if (!pr) throw notFound();
+      if (!(await one(q, 'select 1 from uploads where id = $1', [b.file.slice(7)]))) throw bad('That file was not uploaded. Try again.');
+      if (b.itemId && !(await one(q, 'select 1 from items where id = $1 and project_id = $2', [b.itemId, pr.id]))) throw bad('That item is not in this project.');
+      const cat = DOC_CATEGORIES.find(c => c.id === b.category)!;
+      const n = Number((await one(q, 'select count(*) n from project_docs where project_id = $1 and category = $2 and title = $3', [pr.id, b.category, b.title]))!.n);
+      await q.query('insert into project_docs(project_id, item_id, category, title, file, notes, rev, shared, by_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        [pr.id, b.itemId || null, b.category, b.title, b.file, b.notes, 'R' + n, cat.customer, p.user.id]);
+      await act(q, pr.id, `${cat.name}: "${b.title}" R${n} uploaded (${p.user.name})${cat.customer ? ', visible to the customer' : ''}`);
+    });
+    return done(ctx);
+  });
+  r.delete('/api/v1/documents/:id', staff('edit'), async ctx => {
+    const p = userOf(ctx);
+    await tx(async q => {
+      const d = await one(q, 'select * from project_docs where id = $1', [Number(ctx.params.id)]); if (!d) throw notFound();
+      if (d.by_id !== p.user.id && !p.perms.has('admin')) throw forbidden('Only the person who uploaded it or an admin can remove it.');
+      await q.query('delete from project_docs where id = $1', [d.id]);
+      await act(q, d.project_id, `Removed document "${d.title}" ${d.rev} (${p.user.name})`);
+    });
+    return done(ctx);
+  });
+
   r.post('/api/v1/assignments', staff('assign'), async ctx => {
     const b = parse(z.object({ itemIds: z.array(z.string()).min(1).max(200), installer: z.string(), target: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable() }), ctx.body);
     const out = await tx(q => assign(q, userOf(ctx), b.itemIds, b.installer, b.target || undefined));
