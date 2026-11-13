@@ -112,6 +112,7 @@ function serveStatic(ctx: Ctx, webDir: string): boolean {
   if (ctx.method !== 'GET' && ctx.method !== 'HEAD') return false;
   let rel = decodeURIComponent(ctx.path);
   if (rel === '/' || rel === '/c' || rel === '/c/' || rel.startsWith('/c/')) rel = '/index.html';
+  if (rel === '/privacy' || rel === '/terms' || rel === '/data-deletion') rel = '/privacy.html';
   const file = path.resolve(webDir, '.' + rel);
   if (!file.startsWith(path.resolve(webDir))) return false;
   if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return false;
