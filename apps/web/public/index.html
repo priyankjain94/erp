@@ -307,6 +307,7 @@ tr.expand td{background:var(--bg);padding:12px 14px 14px}
 .toasts{position:fixed;right:max(16px,env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));display:grid;gap:8px;z-index:60;max-width:min(380px,calc(100% - 32px))}
 .toast{background:var(--ink);color:var(--bg);padding:10px 14px;border-radius:10px;font-size:13px;box-shadow:var(--shadow);animation:fade .2s;display:flex;gap:8px;align-items:flex-start}
 .toast svg{flex:none;margin-top:1px;color:var(--accent)}
+.toast.err svg{color:#e5484d}
 .sample{font-size:11px;color:var(--muted);border:1px dashed var(--line-2);border-radius:99px;padding:2px 9px;white-space:nowrap}
 
 .bottomnav{display:none}
@@ -575,7 +576,7 @@ const Mark = () => html`<svg width="30" height="30" viewBox="0 0 24 24" aria-hid
 function refName(lead, leads){ if (!lead.ref) return ''; if (partnerById[lead.ref]) return partnerById[lead.ref].name; const l = leads.find(x => x.id === lead.ref); return l ? l.name : ''; }
 const windowOpen = l => l.lastIn && (Date.now() - l.lastIn) < DAY;
 const hoursLeft = l => Math.max(0, Math.floor(24 - (Date.now() - l.lastIn)/36e5));
-const awaitingReply = l => l.msgs.length && l.msgs[l.msgs.length-1].from === 'them';
+const awaitingReply = l => l.msgs.length > 0 && l.msgs[l.msgs.length-1].from === 'them';
 
 function SourceTag({lead, leads, full}){
   const s = srcById[lead.source], by = refName(lead, leads);
@@ -651,7 +652,7 @@ const LETTERS = 'ABCDEFGH'.split('');
 
 const hrs = ms => (ms / HR).toFixed(1) + ' h';
 const workMs = it => it.sessions.reduce((s,x) => s + ((x.end || Date.now()) - x.start), 0);
-const running = it => it.sessions.length && !it.sessions[it.sessions.length-1].end;
+const running = it => it.sessions.length > 0 && !it.sessions[it.sessions.length-1].end;
 const latestDrawing = it => it.drawings[it.drawings.length-1];
 const openSnags = it => it.snags.filter(s => s.status !== 'fixed');
 const fmtDT = t => `${dayLabel(t)}, ${clock(t)}`;
@@ -777,14 +778,14 @@ function UsersAdmin({erp, ops, toast}){
 }
 function Integrations({toast}){
   const [d, setD] = useState(null), [busy, setBusy] = useState(false), [res, setRes] = useState(null);
-  useEffect(() => { API.call('GET', '/admin/integrations').then(setD).catch(e => toast(e.message)); }, []);
+  useEffect(() => { API.call('GET', '/admin/integrations').then(setD).catch(e => toast(e.message, 'err')); }, []);
   if (!d) return html`<p className="hint">Loading…</p>`;
   const Row = ({k, v}) => html`<div><dt>${k}</dt><dd className="mono" style=${{fontSize:12.5,overflowWrap:'anywhere'}}>${v}</dd></div>`;
   return html`<div className="stack">
     <div className="panel"><h3>WhatsApp Cloud API</h3><p className="hint">${d.whatsapp.live ? 'Connected. Messages are sent through your WhatsApp Business number.' : 'Not connected yet: messages are simulated and logged, nothing is sent. Add the Meta values to the server settings to go live.'}</p>
       <dl className="kv"><${Row} k="Status" v=${d.whatsapp.live ? 'Live' : 'Simulated'}/><${Row} k="Phone number ID" v=${d.whatsapp.phoneNumberId || '—'}/><${Row} k="Webhook URL (paste in Meta)" v=${d.whatsapp.webhook}/><${Row} k="Graph API version" v=${d.graphVersion}/>
         <${Row} k="Sent (30 days)" v=${d.whatsapp.last30.sent}/><${Row} k="Simulated (30 days)" v=${d.whatsapp.last30.simulated}/><${Row} k="Failed (30 days)" v=${d.whatsapp.last30.failed}/></dl>
-      <div className="inline" style=${{marginTop:12}}><button className="btn small" disabled=${!d.whatsapp.live || busy} onClick=${async () => { setBusy(true); try { setRes((await API.call('POST', '/admin/whatsapp/sync-templates')).results); } catch(e){ toast(e.message); } setBusy(false); }}>Submit message templates to Meta</button><span className="sub" style=${{fontSize:12,color:'var(--muted)'}}>Creates every template this app uses (OTP, reminders, updates) for Meta approval.</span></div>
+      <div className="inline" style=${{marginTop:12}}><button className="btn small" disabled=${!d.whatsapp.live || busy} onClick=${async () => { setBusy(true); try { setRes((await API.call('POST', '/admin/whatsapp/sync-templates')).results); } catch(e){ toast(e.message, 'err'); } setBusy(false); }}>Submit message templates to Meta</button><span className="sub" style=${{fontSize:12,color:'var(--muted)'}}>Creates every template this app uses (OTP, reminders, updates) for Meta approval.</span></div>
       ${res && html`<table style=${{marginTop:10,minWidth:0}}><tbody>${res.map(r => html`<tr key=${r.name}><td className="mono">${r.name}</td><td>${r.status}</td></tr>`)}</tbody></table>`}
     </div>
     <div className="panel"><h3>Meta Lead Ads</h3><p className="hint">${d.metaLeads.live ? 'Connected. New Facebook and Instagram lead-form leads arrive in the CRM within seconds, with a 15-minute safety-net sync.' : 'Not connected yet. Add the Page ID and Page access token to the server settings.'}</p>
@@ -796,9 +797,9 @@ function Integrations({toast}){
 /* ---------- Customer app: live portal (/c) and staff preview ---------- */
 function CustomerApp({erp, toast: toastIn, live}){
   const [state, setState] = useState(null), [pid, setPid] = useState(null), [sheet, setSheet] = useState(null), [view, setView] = useState('home'), [toasts, setToasts] = useState([]);
-  const toast = toastIn || (text => { const id = Math.random(); setToasts(t => [...t, {id, text}]); setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4200); });
-  const load = async projectId => { try { const r = await API.call('GET', '/customer/state' + (projectId ? '?projectId=' + projectId : '')); setState(r.state); setPid(projectId || r.state.projects[0]?.id || null); } catch(e){ toast(e.message); } };
-  const act = async (path, body, msg) => { try { const r = await API.call('POST', path, body); setState(r.state); if (msg) toast(msg); return true; } catch(e){ toast(e.message); return false; } };
+  const toast = toastIn || ((text, kind) => { const id = Math.random(); setToasts(t => [...t, {id, text, kind}]); setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4200); });
+  const load = async projectId => { try { const r = await API.call('GET', '/customer/state' + (projectId ? '?projectId=' + projectId : '')); setState(r.state); setPid(projectId || r.state.projects[0]?.id || null); } catch(e){ toast(e.message, 'err'); } };
+  const act = async (path, body, msg) => { try { const r = await API.call('POST', path, body); setState(r.state); if (msg) toast(msg); return true; } catch(e){ toast(e.message, 'err'); return false; } };
   const [authed, setAuthed] = useState(!live);
   useEffect(() => { if (live){ API.setAudience('customer'); API.refresh().then(ok => { if (ok){ setAuthed(true); load(); } }); } }, []);
   const steps = ['Customer logs in with the WhatsApp number on their order; OTP on WhatsApp.','Home shows progress, the next visit and anything waiting for them.','Approve drawings or ask for a change; the designer gets a task.','See payment milestones and installation dates with the team name.','Raise a complaint (goes to the PM as an urgent task) and rate the work after handover.'];
@@ -818,10 +819,10 @@ function CustomerApp({erp, toast: toastIn, live}){
     if (view === 'home') screen = html`<${Phone} title=${'Hello ' + first(p.customer)} sub=${p.code + ' · ' + p.address} right=${html`<button className="btn small" style=${{background:'var(--rail-2)',color:'var(--rail-ink)',border:0}} onClick=${out}>${live ? 'Log out' : 'Close'}</button>`}>
       ${state.projects.length > 1 && html`<select className="sel" value=${p.id} onChange=${e => setPid(e.target.value)}>${state.projects.map(x => html`<option key=${x.id} value=${x.id}>${x.code} · ${x.address}</option>`)}</select>`}
       <div className="mcard"><div className="card-row"><b>Your project</b><span className="meta">Target ${fmtDate(p.target)}</span></div>
-        ${its.length ? html`<${StageBar} items=${its}/><span className="meta">${done} of ${its.length} pieces installed</span>` : html`<span className="meta">${p.survey.status === 'submitted' ? 'Design in progress' : 'Site measurement ' + (p.survey.scheduled ? fmtDT(p.survey.scheduled) : 'to be scheduled')}</span>`}</div>
+        ${its.length ? html`<${StageBar} items=${its}/><span className="meta">${done} of ${its.length} piece${its.length === 1 ? '' : 's'} installed</span>` : html`<span className="meta">${p.survey.status === 'submitted' ? 'Design in progress' : 'Site measurement ' + (p.survey.scheduled ? fmtDT(p.survey.scheduled) : 'to be scheduled')}</span>`}</div>
       ${toApprove.length > 0 && html`<button className="mcard" style=${{borderColor:'var(--accent)'}} onClick=${() => setView('approve')}><div className="card-row"><b>${toApprove.length} drawing${toApprove.length > 1 ? 's' : ''} waiting for your approval</b><span className="pill acc">Action</span></div><span className="meta">Tap to review and approve</span></button>`}
       ${nextInst && html`<div className="mcard"><b>Next installation</b><span>${typeById[nextInst.type].name} in ${nextInst.roomName} · ${fmtDate(nextInst.target)}</span><span className="meta">Team ${staffBy(nextInst.installer).name || ''} · ${staffBy(nextInst.installer).phone || ''}</span></div>`}
-      <button className="mcard" onClick=${() => setView('items')}><div className="card-row"><b>Your furniture</b><span className="meta">${its.length} pieces ›</span></div></button>
+      <button className="mcard" onClick=${() => setView('items')}><div className="card-row"><b>Your furniture</b><span className="meta">${its.length} piece${its.length === 1 ? '' : 's'} ›</span></div></button>
       <button className="mcard" onClick=${() => setView('pay')}><div className="card-row"><b>Payments</b><span className="meta">${due.length ? due.length + ' pending ›' : 'All paid ›'}</span></div></button>
       <div className="inline"><button className="big" onClick=${() => setSheet({n:'complaint', text:''})}>Raise a complaint</button>${its.length && its.every(i => i.stage === 'closed') && !p.feedback ? html`<button className="big pri" onClick=${() => setSheet({n:'rate', r:5, text:''})}>Rate us</button>` : null}</div>
       ${p.feedback && html`<div className="banner good">Thank you for rating us ${p.feedback.rating}/5.</div>`}
@@ -843,7 +844,7 @@ function CustomerApp({erp, toast: toastIn, live}){
       screen = React.cloneElement(screen, {overlay});
     }
   }
-  if (live) return html`<div style=${{minHeight:'100%',display:'grid',placeItems:'start center',padding:'12px 0',background:'var(--bg)'}}>${screen}<div className="toasts" role="status" aria-live="polite">${toasts.map(t => html`<div className="toast" key=${t.id}><${Icon} n="check" s=${16}/><span>${t.text}</span></div>`)}</div></div>`;
+  if (live) return html`<div style=${{minHeight:'100%',display:'grid',placeItems:'start center',padding:'12px 0',background:'var(--bg)'}}>${screen}<div className="toasts" role="status" aria-live="polite">${toasts.map(t => html`<div className=${'toast' + (t.kind === 'err' ? ' err' : '')} key=${t.id}><${Icon} n=${t.kind === 'err' ? 'x' : 'check'} s=${16}/><span>${t.text}</span></div>`)}</div></div>`;
   return html`<section className="view"><div className="phone-wrap">${screen}<${SideNote} title="Customer app flow" steps=${steps}/></div></section>`;
 }
 
@@ -1030,7 +1031,7 @@ function makeOps(erp, setErp, toast, leads, crm, app){
   const apply = res => { if (res && res.state) app.applyState(res.state); return res; };
   const run = async (method, path, body, msg, opts) => {
     try { const res = apply(await API.call(method, path, body, opts)); if (res && res.queued) toast('Saved on this phone. It will sync when the internet is back.'); else if (msg) toast(typeof msg === 'function' ? msg(res) : msg); return res || {}; }
-    catch(e){ toast(e.message || 'Something went wrong.'); return null; }
+    catch(e){ toast(e.message || 'Something went wrong.', 'err'); return null; }
   };
   const timers = app.timers, pend = app.pending;
   const later = (key, fn, ms) => { clearTimeout(timers[key]); timers[key] = setTimeout(async () => { delete timers[key]; await fn(); if (!Object.keys(timers).length) app.flushDeferred(); }, ms); };
@@ -1041,7 +1042,7 @@ function makeOps(erp, setErp, toast, leads, crm, app){
     gates: it => gatesFor(it, E().projects.find(p => p.id === it.projectId)),
     async setMe(id){
       if (!id){ try { await API.call('POST', '/auth/logout'); } catch(e){} app.loggedOut(); return; }
-      try { const r = await API.call('POST', '/auth/demo-switch', {userId:id}); API.setToken(r.accessToken); await app.reload(); toast('Now using the app as ' + uname(id) + '.'); } catch(e){ toast(e.message); }
+      try { const r = await API.call('POST', '/auth/demo-switch', {userId:id}); API.setToken(r.accessToken); await app.reload(); toast('Now using the app as ' + uname(id) + '.'); } catch(e){ toast(e.message, 'err'); }
     },
     async moveItem(id, dir, reason){
       const it = E().items.find(i => i.id === id);
@@ -1050,7 +1051,7 @@ function makeOps(erp, setErp, toast, leads, crm, app){
         const to = pstById[res.to];
         toast(dir === 'back' ? `${it.code} sent back to ${to.short}.` : `${it.code} moved to ${to.short}.${res.flags && res.flags.length ? ' Flagged amber.' : ''}`);
         return true;
-      } catch(e){ toast(e.message); return false; }
+      } catch(e){ toast(e.message, 'err'); return false; }
     },
     updItem(id, fn){
       const before = E().items.find(i => i.id === id); if (!before) return;
@@ -1078,7 +1079,7 @@ function makeOps(erp, setErp, toast, leads, crm, app){
       if (before.notes !== after.notes) later('notes:' + id, () => run('PATCH', `/projects/${id}`, {notes:after.notes}), 800);
       if (!same(before.survey.rooms, after.survey.rooms)) {
         app.surveyDraft[id] = after.survey.rooms;
-        later('survey:' + id, () => API.call('PUT', `/surveys/${id}/draft`, {rooms:cleanRooms(app.surveyDraft[id])}, {queue:true, dedupe:'survey:' + id}).catch(e => toast(e.message)), 900);
+        later('survey:' + id, () => API.call('PUT', `/surveys/${id}/draft`, {rooms:cleanRooms(app.surveyDraft[id])}, {queue:true, dedupe:'survey:' + id}).catch(e => toast(e.message, 'err')), 900);
       }
       if (!same(before.feedback, after.feedback) && after.feedback) run('POST', `/projects/${id}/feedback`, {rating:after.feedback.rating, comment:after.feedback.comment || ''});
     },
@@ -1100,7 +1101,7 @@ function makeOps(erp, setErp, toast, leads, crm, app){
     async submitSurvey(pid, sign){
       clearTimeout(timers['survey:' + pid]); delete timers['survey:' + pid];
       const rooms = E().projects.find(p => p.id === pid).survey.rooms;
-      return run('POST', `/surveys/${pid}/submit`, {signed:!!sign, rooms:cleanRooms(rooms)}, res => `Survey submitted. ${res.created} items created, designer tasks assigned, customer updated on WhatsApp.`);
+      return run('POST', `/surveys/${pid}/submit`, {signed:!!sign, rooms:cleanRooms(rooms)}, res => `Survey submitted. ${res.created} item${res.created === 1 ? '' : 's'} created, designer tasks assigned, customer updated on WhatsApp.`);
     },
     async startWork(id){ const g = await geo(); return run('POST', `/items/${id}/work/start`, g, null, {queue:true}); },
     pauseWork: (id, reason) => run('POST', `/items/${id}/work/pause`, {reason}, `Paused: ${reason}. Timer stopped.`, {queue:true}),
@@ -1210,8 +1211,8 @@ function Projects({erp, ui, ops}){
       const counts = ITEM_TYPES.map(t => [t.name, its.filter(i => i.type === t.id).length]).filter(x => x[1]);
       return html`<button key=${p.id} className="pcard" onClick=${() => ui.openProject(p.id)}>
         <div className="row"><span className="mono" style=${{color:'var(--muted)'}}>${p.code}</span>${p.survey.status !== 'submitted' ? html`<span className="pill acc">Survey ${p.survey.status === 'scheduled' ? fmtDate(ymd(new Date(p.survey.scheduled))) : 'in progress'}</span>` : lt ? html`<span className="pill crit">${lt} late</span>` : done === its.length && its.length ? html`<span className="pill good">Installed</span>` : html`<span className="pill good">On track</span>`}</div>
-        <div><h3>${p.customer}</h3><div className="meta">${p.address} · PM ${uname(p.pm)} · ${lakh(p.value)}</div></div>
-        <div className="meta">${counts.length ? counts.map(([n,c]) => `${c} ${n.toLowerCase()}${c > 1 ? 's' : ''}`).join(', ') : 'Items are created when the survey is submitted'}</div>
+        <div><h3>${p.customer}</h3><div className="meta">${p.address} · PM ${uname(p.pm)}${p.value ? ' · ' + lakh(p.value) : ''}</div></div>
+        <div className="meta">${counts.length ? counts.map(([n,c]) => { const w = n.toLowerCase(); return `${c} ${c > 1 ? (w.endsWith('y') ? w.slice(0,-1) + 'ies' : w.endsWith('s') ? w : w + 's') : w}`; }).join(', ') : 'Items are created when the survey is submitted'}</div>
         ${its.length ? html`<${StageBar} items=${its}/>` : null}
         <div className="row"><span>${its.length ? `${done} of ${its.length} items installed` : 'No items yet'}</span><span className="meta">Target ${fmtDate(p.target)}${sn ? ` · ${sn} snag` : ''}</span></div>
       </button>`; })}</div>
@@ -1245,14 +1246,14 @@ function ProjectDrawer({p, erp, ui, ops, leads, close, tab, setTab}){
   const done = its.filter(i => PIDX(i.stage) >= PIDX('handover')).length;
   const lead = p.leadId && leads.find(l => l.id === p.leadId);
   const rooms = [...new Set(its.map(i => i.room))];
-  const allDone = its.length && its.every(i => i.stage === 'closed');
+  const allDone = its.length > 0 && its.every(i => i.stage === 'closed');
   return html`<div>
     <div className="scrim" onClick=${close}></div>
     <aside className="drawer" role="dialog" aria-label=${p.customer} style=${{width:'min(760px,100%)'}}>
       <div className="d-head">
         <div className="d-title"><div style=${{minWidth:0}}><span className="mono" style=${{fontSize:12,color:'var(--muted)'}}>${p.code}${lead ? ' · from CRM lead' : ''}</span><h2>${p.customer}</h2><div className="phone">${p.phone} · ${p.address}</div></div>
           <div className="d-actions">${lead && html`<button className="btn small" onClick=${() => ui.openLead(lead.id)}>Open lead</button>`}<button className="icon-btn" onClick=${close} aria-label="Close"><${Icon} n="x"/></button></div></div>
-        <div className="inline" style=${{fontSize:13}}><span>PM <b>${uname(p.pm)}</b></span><span>·</span><span className="num">${inr(p.value)}</span><span>·</span><span>Target <b>${fmtDate(p.target)}</b></span><span>·</span><span>${its.length ? `${done} of ${its.length} items installed` : 'Survey pending'}</span></div>
+        <div className="inline" style=${{fontSize:13}}><span>PM <b>${uname(p.pm)}</b></span>${p.value ? html`<span>·</span><span className="num">${inr(p.value)}</span>` : null}<span>·</span><span>Target <b>${fmtDate(p.target)}</b></span><span>·</span><span>${its.length ? `${done} of ${its.length} items installed` : 'Survey pending'}</span></div>
         ${its.length ? html`<${StageBar} items=${its}/>` : null}
       </div>
       <div className="tabs" role="tablist">${[['items','Items'],['survey','Survey'],['payments','Payments & site'],['activity','Activity']].map(([id,n]) => html`<button key=${id} role="tab" aria-selected=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
@@ -1674,12 +1675,12 @@ function SurveyApp({erp, ops}){
     const n = p.survey.rooms.reduce((s,rm) => s + rm.items.length, 0);
     screen = html`<${Phone} title="Review and submit" sub=${p.customer} back=${() => setScr({n:'job', pid:p.id})}
       foot=${html`<button className="big go" disabled=${errs.length > 0 || !n} onClick=${() => { ops.submitSurvey(p.id, sheet === 'signed'); setSheet(null); setScr({n:'job', pid:p.id}); }}>Submit survey</button>`}>
-      <div className=${'banner ' + (errs.length ? 'crit' : 'good')}>${errs.length ? `${errs.length} thing${errs.length > 1 ? 's' : ''} to fix before submitting.` : `All ${p.survey.rooms.reduce((s,rm) => s + rm.walls.length, 0)} walls have a photo and measurements. ${n} furniture items will be created.`}</div>
+      <div className=${'banner ' + (errs.length ? 'crit' : 'good')}>${errs.length ? `${errs.length} thing${errs.length > 1 ? 's' : ''} to fix before submitting.` : `All ${p.survey.rooms.reduce((s,rm) => s + rm.walls.length, 0)} walls have a photo and measurements. ${n} furniture item${n === 1 ? "" : "s"} will be created.`}</div>
       ${errs.map((e,i) => html`<div key=${i} className="mcard" style=${{borderColor:'var(--crit)'}}><span style=${{fontSize:13}}>${e}</span></div>`)}
       ${warns.map((e,i) => html`<div key=${'w'+i} className="mcard" style=${{borderColor:'var(--warn)'}}><span style=${{fontSize:13,color:'var(--warn)'}}>${e}</span></div>`)}
       ${!n && html`<div className="banner warn">Tag at least one piece of furniture so items can be created.</div>`}
       <div className="mcard"><b>Customer signature (optional)</b><${SignPad} onSigned=${() => setSheet('signed')}/></div>
-      <span className="meta" style=${{fontSize:12,color:'var(--muted)'}}>On submit: survey PDF is attached to ${p.code}, items move to Production drawing, designers get tasks, and the customer gets a WhatsApp update.</span>
+      <span className="meta" style=${{fontSize:12,color:'var(--muted)'}}>On submit: rooms, walls and photos are saved to ${p.code}, items move to Production drawing, designers get tasks, and the customer gets a WhatsApp update.</span>
     <//>`;
   } else screen = null;
 
@@ -1759,7 +1760,7 @@ function InstallApp({erp, ops}){
     screen = html`<${Phone} title=${it.code} sub=${typeById[it.type].name + ' · ' + p.customer} back=${() => setScr({n:'list'})}
       foot=${!active ? null : run ? html`<button className="big warn" onClick=${() => setSheet({n:'pause'})}>Pause</button><button className="big go" onClick=${() => setSheet({n:'complete', step:1, checks:{}, photo:null, otp:null, code:'', busy:false})}>Complete</button>`
         : html`<button className="big" onClick=${() => setSheet({n:'snag', type:SNAG_TYPES[0], part:'', note:''})}>Snag</button><button className="big pri" disabled=${it.stage !== 'install'} onClick=${() => ops.startWork(it.id)}>${it.sessions.length ? 'Resume' : 'Start work'}</button>`}>
-      ${active && html`<div className="mcard" style=${{textAlign:'center',justifyItems:'center'}}><span className="meta">${run ? 'Working · timer running' : it.sessions.length ? 'Paused' : 'Not started'}</span><span className="timer">${hms(workMs(it))}</span><span className="meta">Total work time · today ${hms(todayMs)} · standard ${typeById[it.type].std} h</span></div>`}
+      ${active && html`<div className="mcard" style=${{textAlign:'center',justifyItems:'center'}}><span className="meta">${run ? 'Working · timer running' : it.sessions.length ? 'Paused' : 'Not started'}</span><span className="timer">${hms(workMs(it))}</span><span className="meta">Total across all days · today ${hms(todayMs)} · standard ${typeById[it.type].std} h</span></div>`}
       ${it.installDone && html`<div className="banner good">Installed ${fmtDT(it.installedAt)} · ${hrs(workMs(it))} · customer signed off.</div>`}
       <div className="mcard"><div className="card-row"><b>${p.customer}</b><span className=${'due' + (daysFrom(it.target) < 0 ? ' over' : '')}>Target ${fmtDate(it.target)}</span></div><span className="meta">${p.address}</span>
         <div className="inline"><a className="btn small" href=${'tel:' + p.phone.replace(/\s/g,'')}><${Icon} n="phone" s=${14}/>${p.phone}</a><a className="btn small" target="_blank" rel="noopener" href=${'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(p.address)}>Open map</a></div>
@@ -1892,10 +1893,10 @@ function App(){
   useEffect(() => { const f = () => setView(viewFromHash()); window.addEventListener('hashchange', f); return () => window.removeEventListener('hashchange', f); }, []);
   const go = id => { setView(id); try { history.replaceState(null, '', '#' + id); } catch(e) { location.hash = id; } };
 
-  const toast = text => { const id = Math.random(); setToasts(t => [...t, {id, text}]); setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4200); };
+  const toast = (text, kind) => { const id = Math.random(); setToasts(t => [...t, {id, text, kind}]); setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4200); };
   const crm = {note(){}};
   const ops = makeOps(erp, setErp, toast, leads, crm, app);
-  const call = async (method, path, body, msg) => { try { const r = await API.call(method, path, body); if (r.state) app.applyState(r.state); if (msg) toast(typeof msg === 'function' ? msg(r) : msg); return r; } catch(e){ toast(e.message); return null; } };
+  const call = async (method, path, body, msg) => { try { const r = await API.call(method, path, body); if (r.state) app.applyState(r.state); if (msg) toast(typeof msg === 'function' ? msg(r) : msg); return r; } catch(e){ toast(e.message, 'err'); return null; } };
   const ui = {
     go:(id, init) => { setTaskInit(init || null); go(id); },
     openProject:(id, tab = 'items') => { setIOpen(null); setOpenId(null); setPTab(tab); setPOpen(id); },
@@ -1924,7 +1925,7 @@ function App(){
   const unread = leads.filter(l => awaitingReply(l) && !['won','lost'].includes(l.stage)).length;
   const current = leads.find(l => l.id === openId);
   const meta = VIEWS.find(v => v.id === view);
-  const toastsEl = html`<div className="toasts" role="status" aria-live="polite">${toasts.map(t => html`<div className="toast" key=${t.id}><${Icon} n="check" s=${16}/><span>${t.text}</span></div>`)}</div>`;
+  const toastsEl = html`<div className="toasts" role="status" aria-live="polite">${toasts.map(t => html`<div className=${'toast' + (t.kind === 'err' ? ' err' : '')} key=${t.id}><${Icon} n=${t.kind === 'err' ? 'x' : 'check'} s=${16}/><span>${t.text}</span></div>`)}</div>`;
 
   if (boot === 'loading') return html`<div style=${{height:'100%',display:'grid',placeItems:'center',color:'var(--muted)'}}>Loading…</div>`;
   if (boot === 'login' || !erp.me || !userById[erp.me]) return html`<${React.Fragment}><${LoginScreen} audience="staff" onLogin=${async () => { await app.reload(); toast('Logged in.'); }}/>${toastsEl}<//>`;
@@ -1950,7 +1951,7 @@ function App(){
         <h1><span className="eyebrow">${meta.g === 'ops' ? 'MAKE MY SPACE OPERATIONS' : meta.g === 'admin' ? 'MAKE MY SPACE ADMIN' : 'MAKE MY SPACE CRM'}</span>${meta.title || (meta.name === 'Leads' ? 'Lead pipeline' : meta.name)}</h1>
         ${SERVER.demoMode && html`<span className="sample hide-sm">Demo mode</span>`}
         ${!meta.g && allowed && html`<button className="btn primary" onClick=${() => setAdding(true)}><${Icon} n="plus" s=${16}/>Add lead</button>`}
-        ${view === 'projects' && can(erp, 'edit') && html`<button className="btn primary" onClick=${() => setNewProj(true)}><${Icon} n="plus" s=${16}/>New project</button>`}
+        ${view === 'projects' && can(erp, 'assign') && html`<button className="btn primary" onClick=${() => setNewProj(true)}><${Icon} n="plus" s=${16}/>New project</button>`}
         ${(view === 'tasks' || view === 'ops') && html`<button className="btn primary" onClick=${() => setNewTask(true)}><${Icon} n="plus" s=${16}/>New task</button>`}
       </header>
       ${!allowed ? html`<${NoAccess} erp=${erp} view=${view}/>` : html`<${React.Fragment}>
@@ -1981,7 +1982,7 @@ function App(){
     ${newProj && html`<${NewProject} leads=${leads} erp=${erp} ops=${ops} ui=${ui} close=${() => setNewProj(false)}/>`}
     ${newTask && html`<${NewTask} erp=${erp} ops=${ops} close=${() => setNewTask(false)}/>`}
     ${lostFor && html`<${LostDialog} lead=${leads.find(l => l.id === lostFor)} close=${() => setLostFor(null)} pick=${r => { const id = lostFor; setLostFor(null); moveLead(id, 'lost', r); }}/>`}
-    <div className="toasts" role="status" aria-live="polite">${toasts.map(t => html`<div className="toast" key=${t.id}><${Icon} n="check" s=${16}/><span>${t.text}</span></div>`)}</div>
+    <div className="toasts" role="status" aria-live="polite">${toasts.map(t => html`<div className=${'toast' + (t.kind === 'err' ? ' err' : '')} key=${t.id}><${Icon} n=${t.kind === 'err' ? 'x' : 'check'} s=${16}/><span>${t.text}</span></div>`)}</div>
   </div>`;
 }
 

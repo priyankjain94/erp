@@ -19,7 +19,7 @@ export async function pushTask(q: Q, t: NewTask) {
   await q.query(`insert into task_events(task_id, e, by_id, to_id) values ($1, 'assigned', $2, $3)`, [id, t.assigner, t.assignee]);
   if (t.notify !== false) {
     const [a, by] = await Promise.all([one(q, 'select phone from users where id = $1', [t.assignee]), one(q, 'select name from users where id = $1', [t.assigner])]);
-    if (a) await sendTemplate(a.phone, 'task_assigned', [by?.name || 'Make My Space', t.title, await projectLabel(q, t.projectId), fmtDate(t.deadline)], { q, related: { type: 'task', id }, buttons: [`TASK_START:${id}`, `TASK_OPEN:${id}`] });
+    if (a) await sendTemplate(a.phone, 'task_assigned', [t.auto || t.assigner === t.assignee || !by?.name ? 'Make My Space (automatic)' : by.name, t.title, await projectLabel(q, t.projectId), fmtDate(t.deadline)], { q, related: { type: 'task', id }, buttons: [`TASK_START:${id}`, `TASK_OPEN:${id}`] });
   }
   return id;
 }

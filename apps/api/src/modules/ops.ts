@@ -195,7 +195,7 @@ const ItemPatchZ = z.object({ owner: z.string().optional(), target: z.string().r
 export function opsRoutes(r: Router) {
   const done = async (ctx: Ctx, extra: Record<string, unknown> = {}) => ({ ok: true, ...extra, state: await staffState(userOf(ctx)) });
 
-  r.post('/api/v1/projects', staff('edit'), async ctx => {
+  r.post('/api/v1/projects', staff('assign'), async ctx => {
     const b = parse(ProjectZ, ctx.body);
     const out = await tx(q => createProject(q, userOf(ctx), b));
     return done(ctx, out);
