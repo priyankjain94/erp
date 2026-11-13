@@ -13,13 +13,25 @@ export async function bootstrap(q: Q) {
   for (const [id, fam, name, when, then, on] of AUTOMATIONS)
     await q.query('insert into automations(id, fam, name, when_text, then_text, enabled) values ($1,$2,$3,$4,$5,$6) on conflict do nothing', [id, fam, name, when, then, on]);
   await q.query(`insert into settings(key, value) values ('holidays', '[]') on conflict do nothing`);
-  const users = Number((await one(q, 'select count(*) n from users'))!.n);
-  if (!users && config.ADMIN_PHONE) {
-    const phone = normPhone(config.ADMIN_PHONE);
-    if (!phone) throw new Error('ADMIN_PHONE is not a valid mobile number');
-    await q.query(`insert into users(id, name, phone, role) values ('owner', $1, $2, 'admin')`, [config.ADMIN_NAME, phone]);
-    log.info('created first admin user', config.ADMIN_NAME);
+  await ensureSuperAdmin(q);
+}
+
+/** The ADMIN_PHONE number is the super admin: on every start it is made sure to exist, be active and be an admin,
+    so the business can never be locked out. In the app it cannot be deactivated or have its role changed. */
+export const SUPER_ADMIN_ID = 'superadmin';
+async function ensureSuperAdmin(q: Q) {
+  if (!config.ADMIN_PHONE) return;
+  const phone = normPhone(config.ADMIN_PHONE);
+  if (!phone) throw new Error('ADMIN_PHONE is not a valid mobile number');
+  const existing = await one(q, 'select id from users where phone = $1', [phone]);
+  if (existing) {
+    await q.query(`update users set role = 'admin', active = true where id = $1`, [existing.id]);
+    return;
   }
+  const users = Number((await one(q, 'select count(*) n from users'))!.n);
+  const id = users ? SUPER_ADMIN_ID : 'owner';
+  await q.query(`insert into users(id, name, phone, role, title) values ($1, $2, $3, 'admin', 'Super admin') on conflict (id) do update set phone = excluded.phone, role = 'admin', active = true`, [id, config.ADMIN_NAME, phone]);
+  log.info('super admin ready', config.ADMIN_NAME, phone.slice(0, 5) + '•••••' + phone.slice(-2));
 }
 
 /* ---------------- demo data (same company as the tested prototype) ---------------- */

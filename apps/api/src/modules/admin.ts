@@ -52,7 +52,7 @@ export function adminRoutes(r: Router) {
     await tx(async q => {
       const u = await one(q, 'select * from users where id = $1 for update', [ctx.params.id]); if (!u) throw notFound();
       const self = u.id === p.user.id;
-      if ((b.role && b.role !== u.role || b.active === false) && (self || u.id === 'owner')) throw forbidden('You cannot change your own role or deactivate yourself (or the owner).');
+      if ((b.role && b.role !== u.role || b.active === false) && (self || u.id === 'owner' || u.id === 'superadmin' || u.phone === normPhone(config.ADMIN_PHONE))) throw forbidden('You cannot change your own role or deactivate yourself, the owner or the super admin.');
       if (b.role && b.role !== u.role) { await q.query('update users set role = $2 where id = $1', [u.id, b.role]); await audit(q, p, 'user.role', `${u.name}: role ${roleName(u.role)} → ${roleName(b.role)}`, 'user', u.id); }
       if (b.active !== undefined && b.active !== u.active) {
         await q.query('update users set active = $2 where id = $1', [u.id, b.active]);
