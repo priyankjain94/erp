@@ -3,18 +3,19 @@ import { prettyPhone } from '../core/util.js';
 import { CUSTOMER_STAGE, DEFAULT_ROLES, PERMS } from '../domain.js';
 import type { Principal } from './auth.js';
 import { signedFileUrl } from '../integrations/storage.js';
+import { partnerStats } from './business.js';
 
 const ms = (d: Date | string | null) => d ? new Date(d).getTime() : null;
 const group = <T extends Record<string, any>>(rows: T[], key: string) => {
   const m = new Map<any, T[]>(); for (const r of rows) { const k = r[key]; if (!m.has(k)) m.set(k, []); m.get(k)!.push(r); } return m;
 };
 
-async function loadProjects(q: Q, ids: string[] | null, opts: { money: boolean; customer?: boolean }) {
+async function loadProjects(q: Q, ids: string[] | null, opts: { money: boolean; customer?: boolean; internal?: boolean }) {
   const where = ids ? 'where p.id = any($1::text[])' : '';
   const projects = await many(q, `select p.*, c.name customer, c.phone from projects p join customers c on c.id = p.customer_id ${where} order by p.created_at desc`, ids ? [ids] : []);
   if (!projects.length) return [];
   const pids = projects.map(p => p.id);
-  const [pays, acts, surveys, rooms, walls, obs, ritems, pdocs] = await Promise.all([
+  const [pays, acts, surveys, rooms, walls, obs, ritems, pdocs, rcpts, invs, cos, svc, pquotes] = await Promise.all([
     many(q, 'select * from payment_milestones where project_id = any($1::text[]) order by sort, id', [pids]),
     many(q, 'select project_id, text, created_at from project_activity where project_id = any($1::text[]) order by created_at, id', [pids]),
     many(q, 'select * from surveys where project_id = any($1::text[])', [pids]),
@@ -22,8 +23,14 @@ async function loadProjects(q: Q, ids: string[] | null, opts: { money: boolean; 
     many(q, 'select w.* from walls w join rooms r on r.id = w.room_id where r.project_id = any($1::text[]) order by w.label', [pids]),
     many(q, 'select o.* from wall_obstructions o join walls w on w.id = o.wall_id join rooms r on r.id = w.room_id where r.project_id = any($1::text[]) order by o.id', [pids]),
     many(q, 'select ri.* from room_items ri join rooms r on r.id = ri.room_id where r.project_id = any($1::text[]) order by ri.id', [pids]),
-    many(q, `select * from project_docs where project_id = any($1::text[]) ${opts.customer ? 'and shared' : ''} ${opts.money ? '' : "and category not in ('pi','po','quotation')"} order by created_at desc, id desc`, [pids])
+    many(q, `select * from project_docs where project_id = any($1::text[]) ${opts.customer ? 'and shared' : ''} ${opts.money ? '' : opts.internal ? "and category <> 'quotation'" : "and category not in ('pi','po','quotation')"} order by created_at desc, id desc`, [pids]),
+    opts.money ? many(q, 'select * from payment_receipts where project_id = any($1::text[]) order by paid_on, id', [pids]) : [],
+    opts.money ? many(q, 'select * from invoices where project_id = any($1::text[]) order by invoice_date, id', [pids]) : [],
+    many(q, 'select * from change_orders where project_id = any($1::text[]) order by created_at, id', [pids]),
+    many(q, 'select * from service_requests where project_id = any($1::text[]) order by created_at desc, id desc', [pids]),
+    opts.money && !opts.customer ? many(q, `select q.id, q.rev, q.total, q.status, q.created_at, p.id project_id from quotes q join projects p on p.lead_id = q.lead_id where p.id = any($1::text[]) order by q.rev`, [pids]) : []
   ]);
+  const rcBy = group(rcpts, 'project_id'), ivBy = group(invs, 'project_id'), coBy = group(cos, 'project_id'), svBy = group(svc, 'project_id'), pqBy = group(pquotes, 'project_id');
   const docBy = group(pdocs, 'project_id'), payBy = group(pays, 'project_id'), actBy = group(acts, 'project_id'), roomBy = group(rooms, 'project_id'), wallBy = group(walls, 'room_id'), obsBy = group(obs, 'wall_id'), riBy = group(ritems, 'room_id');
   const survBy = new Map(surveys.map(s => [s.project_id, s]));
   return projects.map(p => {
@@ -32,7 +39,13 @@ async function loadProjects(q: Q, ids: string[] | null, opts: { money: boolean; 
       id: p.id, code: p.code, leadId: p.lead_id, customer: p.customer, phone: prettyPhone(p.phone), address: p.address, pm: p.pm_id,
       value: opts.money ? p.value : 0, created: ms(p.created_at), target: p.target, siteReady: p.site_ready, notes: p.notes,
       feedback: p.feedback_rating ? { rating: p.feedback_rating, comment: p.feedback_comment || '', at: ms(p.feedback_at) } : null,
-      payments: opts.money ? (payBy.get(p.id) || []).map(m => ({ id: m.id, label: m.label, pct: m.pct, amount: m.amount, gate: m.gate, received: !!m.received_at })) : [],
+      payments: opts.money ? (payBy.get(p.id) || []).map(m => ({ id: m.id, label: m.label, pct: m.pct, amount: m.amount, gate: m.gate, received: !!m.received_at,
+        paid: (rcBy.get(p.id) || []).filter(r => r.milestone_id === m.id).reduce((a, r) => a + Number(r.amount), 0) })) : [],
+      receipts: (rcBy.get(p.id) || []).map(r => ({ id: r.id, no: r.receipt_no, amount: Number(r.amount), on: r.paid_on, mode: r.mode, ref: r.reference, milestone: r.milestone_id, note: r.note, by: r.by_id })),
+      invoices: (ivBy.get(p.id) || []).map(v => ({ id: v.id, no: v.invoice_no, date: v.invoice_date, desc: v.description, taxable: Number(v.taxable), gstPct: Number(v.gst_pct), gst: Number(v.gst), total: Number(v.total) })),
+      changes: (coBy.get(p.id) || []).map(c => ({ id: c.id, itemId: c.item_id, desc: c.description, amount: opts.money ? Number(c.amount) : null, days: c.days, status: c.status, via: c.decided_via, at: ms(c.created_at), decidedAt: ms(c.decided_at), by: c.by_id })),
+      service: (svBy.get(p.id) || []).map(v => ({ id: v.id, itemId: v.item_id, text: v.text, photo: signedFileUrl(v.photo), status: v.status, visitDate: v.visit_date, assignee: v.assignee_id, resolution: v.resolution, warranty: v.under_warranty, by: v.raised_by, at: ms(v.created_at), resolvedAt: ms(v.resolved_at) })),
+      quotes: (pqBy.get(p.id) || []).map(x => ({ id: x.id, rev: x.rev, total: Number(x.total), status: x.status, at: ms(x.created_at) })),
       activity: (actBy.get(p.id) || []).map(a => ({ t: ms(a.created_at), text: a.text })),
       docs: (docBy.get(p.id) || []).map(d => ({ id: d.id, category: d.category, title: d.title, rev: d.rev, notes: d.notes, itemId: d.item_id, by: d.by_id, at: ms(d.created_at), url: signedFileUrl(d.file), shared: d.shared })),
       survey: {
@@ -70,7 +83,8 @@ async function loadItems(q: Q, where: string, params: unknown[]) {
     delivered: i.delivered, boxes: (b.get(i.id) || []).map(x => ({ n: x.n, label: x.label, got: x.got })),
     sessions: (s.get(i.id) || []).map(x => ({ start: ms(x.start_at), end: ms(x.end_at), reason: x.reason })),
     checklist: i.checklist || {}, afterPhoto: i.after_photo ? signedFileUrl(i.after_photo) : false, installDone: i.install_done, signedOff: i.signed_off, installedAt: ms(i.installed_at),
-    snags: (n.get(i.id) || []).map(x => ({ id: x.id, part: x.part, type: x.type, note: x.note, photo: signedFileUrl(x.photo), status: x.status, raisedBy: x.raised_by, at: ms(x.created_at) })),
+    snags: (n.get(i.id) || []).map(x => ({ id: x.id, part: x.part, type: x.type, note: x.note, photo: signedFileUrl(x.photo), status: x.status, raisedBy: x.raised_by, at: ms(x.created_at), vendor: x.vendor || '', cost: x.cost === null || x.cost === undefined ? null : Number(x.cost), payer: x.payer || '' })),
+    productionSteps: i.production_steps || {}, warrantyUntil: i.warranty_until || null,
     log: (l.get(i.id) || []).map(x => ({ stage: x.stage, in: ms(x.in_at), out: ms(x.out_at), by: x.by_id, override: x.override || undefined })),
     flags: i.flags || []
   }));
@@ -92,13 +106,15 @@ export async function loadLeads(q: Q) {
   const ids = leads.map(l => l.id);
   const msgs = group(await many(q, 'select * from lead_messages where lead_id = any($1::text[]) order by created_at, id', [ids]), 'lead_id');
   const tl = group(await many(q, 'select * from lead_timeline where lead_id = any($1::text[]) order by created_at, id', [ids]), 'lead_id');
+  const qts = group(await many(q, 'select * from quotes where lead_id = any($1::text[]) order by rev', [ids]), 'lead_id');
   return leads.map(l => ({
     id: l.id, name: l.name, phone: prettyPhone(l.phone), source: l.source, sub: l.sub, ref: l.ref_partner_id || l.ref_lead_id || null, showroom: l.showroom,
     stage: l.stage, owner: l.owner_name || '', value: l.value, interest: l.interest, area: l.area, fu: l.follow_up, lastIn: ms(l.last_inbound_at),
     created: ms(l.created_at), lostReason: l.lost_reason, dup: l.dup_flag,
     meta: l.meta_leadgen_id ? { form: l.meta_form_id, ad: l.meta_ad_name, campaign: l.meta_campaign_name } : null,
     msgs: (msgs.get(l.id) || []).map(m => ({ from: m.from_kind, text: m.text, t: ms(m.created_at), tpl: m.tpl || undefined, status: m.status })),
-    timeline: (tl.get(l.id) || []).map(t => ({ t: ms(t.created_at), text: t.text, auto: t.auto || undefined }))
+    timeline: (tl.get(l.id) || []).map(t => ({ t: ms(t.created_at), text: t.text, auto: t.auto || undefined })),
+    quotes: (qts.get(l.id) || []).map(x => ({ id: x.id, rev: x.rev, lines: x.lines, discount: Number(x.discount), gstPct: Number(x.gst_pct), subtotal: Number(x.subtotal), total: Number(x.total), notes: x.notes, status: x.status, at: ms(x.created_at), by: x.by_id }))
   }));
 }
 
@@ -116,7 +132,7 @@ export async function staffState(p: Extract<Principal, { type: 'user' }>, q: Q =
   let items, projects;
   if (seeAllProjects) {
     items = await loadItems(q, '', []);
-    projects = await loadProjects(q, null, { money: perms.has('payments') || perms.has('ops') || perms.has('crm') || perms.has('edit') });
+    projects = await loadProjects(q, null, { money: perms.has('money'), internal: perms.has('edit') || perms.has('ops') });
   } else {
     items = await loadItems(q, 'where installer_id = $1', [me]);
     const pids = [...new Set(items.map(i => i.projectId))];
@@ -126,7 +142,16 @@ export async function staffState(p: Extract<Principal, { type: 'user' }>, q: Q =
   const audit = perms.has('admin') ? (await many(q, 'select actor_id, text, created_at from audit_log order by id desc limit 100')).map(a => ({ t: ms(a.created_at), by: a.actor_id, text: a.text })) : [];
   const crm = perms.has('crm') ? {
     leads: await loadLeads(q),
-    partners: (await many(q, 'select * from partners order by name')).map(x => ({ id: x.id, name: x.name, firm: x.firm, type: x.type, tier: x.tier, rate: x.rate, owner: x.owner_id ? users.find(u => u.id === x.owner_id)?.name : '' })),
+    partners: await (async () => {
+      const st = new Map((await partnerStats(q)).map(s => [s.id, s]));
+      const coms = group(await many(q, 'select * from commissions order by created_at'), 'partner_id');
+      return (await many(q, 'select * from partners order by name')).map(x => { const s: any = st.get(x.id) || {}; return {
+        id: x.id, name: x.name, firm: x.firm, type: x.type, tier: x.tier, rate: x.rate, owner: x.owner_id ? users.find(u => u.id === x.owner_id)?.name : '', ownerId: x.owner_id,
+        phone: x.phone ? prettyPhone(x.phone) : '', email: x.email || '', city: x.city || '', notes: x.notes || '', active: x.active !== false, created: ms(x.created_at),
+        stats: { leads: s.leads || 0, open: s.open || 0, pipeline: Number(s.pipeline || 0), won: s.won || 0, wonValue: Number(s.won_value || 0), projectValue: Number(s.project_value || 0), commission: Number(s.commission || 0), commissionPaid: Number(s.commission_paid || 0), lastLead: ms(s.last_lead) },
+        commissions: perms.has('money') ? (coms.get(x.id) || []).map(c => ({ id: c.id, leadId: c.lead_id, amount: c.amount, status: c.status, at: ms(c.created_at) })) : []
+      }; });
+    })(),
     autos: (await many(q, 'select * from automations order by length(id), id')).map(a => ({ id: a.id, fam: a.fam, name: a.name, when: a.when_text, then: a.then_text, on: a.enabled, runs: a.runs }))
   } : { leads: [], partners: [], autos: [] };
   const wa = await one(q, `select count(*) filter (where status = 'simulated') sim, count(*) filter (where status in ('sent','delivered','read')) sent, count(*) filter (where status = 'failed') failed from wa_messages where created_at > now() - interval '30 days'`);

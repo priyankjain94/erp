@@ -67,7 +67,13 @@ What you need: a Meta Business Portfolio (verified), a phone number that is **no
 4. App → Settings → Basic → copy **App secret** to `META_APP_SECRET`. Choose any random `WHATSAPP_VERIFY_TOKEN`.
 5. `docker compose up -d` to load the new settings.
 6. App → WhatsApp → **Configuration → Webhook**: Callback URL `https://DOMAIN/api/v1/webhooks/whatsapp`, Verify token = `WHATSAPP_VERIFY_TOKEN` → Verify and save → subscribe to **messages**.
-7. In the app, **Users and access → WhatsApp and Meta → Sync templates**. This submits all 23 message templates (OTP, task assigned/reminder/escalation, daily digest, drawing approval, installation scheduled, feedback, lead follow-ups…). Meta usually approves utility/authentication templates within minutes to a few hours; status shows on the same screen.
+7. In the app, **Users and access → WhatsApp and Meta → Message templates**:
+   - **Read templates from Meta** lists the templates already on your WhatsApp Business Account (name, language, status).
+   - Each app message is mapped to a template. Templates you already made in WhatsApp Manager are reused (by default the lead welcome uses `mms_quotation_request`, the gentle follow-up `mms_followup_day3`, the quote follow-up `mms_followup_day7`); change any mapping with the dropdown and the *Values* box (which app values fill `{{1}}`, `{{2}}`…; numbers, or fixed text), then **Save mapping**.
+   - **Create missing templates** submits only the ones that don't exist yet, as `mms_<message>`. Existing templates are never changed. The language of each existing template is picked up automatically.
+   - **Send a test** sends any message to a number of your choice.
+8. **Already have a WhatsApp bot on the same number?** Meta allows one webhook per app, so point it at the ERP and set `WHATSAPP_FORWARD_URL` to the bot's webhook URL. The ERP relays every webhook to the bot, re-signed with the app secret, except taps on the ERP's own buttons (task done, drawing approval, rating).
+9. Production webhooks need the Meta app in **Live** mode (App dashboard → Publish).
 
 Until templates are approved, sends fail and are retried by the job queue; nothing is lost.
 

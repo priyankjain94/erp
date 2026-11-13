@@ -8,14 +8,14 @@ export const ROLES = [
 export type Role = typeof ROLES[number]['id'];
 export const ROLE_IDS = ROLES.map(r => r.id) as [Role, ...Role[]];
 
-export const PERMS = ['crm', 'ops', 'projects', 'edit', 'assign', 'override', 'payments', 'tasksAll', 'survey', 'install', 'team', 'admin'] as const;
+export const PERMS = ['crm', 'ops', 'projects', 'money', 'edit', 'assign', 'override', 'payments', 'tasksAll', 'survey', 'install', 'team', 'admin'] as const;
 export type Perm = typeof PERMS[number];
 const P = (list: Perm[]) => Object.fromEntries(PERMS.map(k => [k, list.includes(k)])) as Record<Perm, boolean>;
 export const DEFAULT_ROLES: Record<Role, Record<Perm, boolean>> = {
   admin: P([...PERMS]),
-  ops_head: P(['crm', 'ops', 'projects', 'edit', 'assign', 'payments', 'tasksAll', 'survey', 'install', 'team']),
-  pm: P(['ops', 'projects', 'edit', 'assign', 'payments', 'tasksAll', 'survey', 'install', 'team']),
-  sales: P(['crm', 'projects']),
+  ops_head: P(['crm', 'ops', 'projects', 'money', 'edit', 'assign', 'payments', 'tasksAll', 'survey', 'install', 'team']),
+  pm: P(['ops', 'projects', 'money', 'edit', 'assign', 'payments', 'tasksAll', 'survey', 'install', 'team']),
+  sales: P(['crm', 'projects', 'money']),
   surveyor: P(['survey', 'projects']),
   designer: P(['projects', 'edit']),
   purchase: P(['projects', 'edit']),
@@ -183,3 +183,24 @@ export const DOC_CATEGORIES = [
   { id: 'other', name: 'Other', customer: false }
 ] as const;
 export const DOC_CATEGORY_IDS = DOC_CATEGORIES.map(c => c.id) as unknown as [string, ...string[]];
+
+/* ---------- money, factory, service ---------- */
+export const PAY_MODES = ['UPI', 'Bank transfer', 'Cheque', 'Cash', 'Card'] as const;
+export const PRODUCTION_STEPS = [
+  { id: 'cutting', name: 'Panel cutting' }, { id: 'edging', name: 'Edge banding' }, { id: 'drilling', name: 'Drilling and grooving' },
+  { id: 'assembly', name: 'Assembly / dry fit' }, { id: 'packing', name: 'Packing and labelling' }
+] as const;
+export const SNAG_PAYERS = ['Company', 'Factory', 'Vendor', 'Customer'] as const;
+export const COMPANY_DEFAULT = {
+  name: 'Make My Space', legalName: '', gstin: '', address: 'Raipur, Chhattisgarh', phone: '+91 75838 37704', email: 'hello@makemyspace.in',
+  website: 'makemyspace.in', bank: '', hsn: '9403', gstPct: 18, warrantyYears: 10, quoteValidityDays: 15,
+  quoteTerms: '50% advance to start production. Balance before dispatch. Prices include installation. Civil, electrical and plumbing work are not included.'
+};
+/** Financial year label for invoice numbers, e.g. 2026-27 (April to March). */
+export function fyLabel(d = new Date()) { const y = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1; return `${y}-${String((y + 1) % 100).padStart(2, '0')}`; }
+export function quoteTotals(lines: { qty: number; rate: number }[], discount: number, gstPct: number) {
+  const subtotal = Math.round(lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.rate) || 0), 0) * 100) / 100;
+  const taxable = Math.max(0, subtotal - (Number(discount) || 0));
+  const total = Math.round(taxable * (1 + (Number(gstPct) || 0) / 100));
+  return { subtotal, taxable, total };
+}

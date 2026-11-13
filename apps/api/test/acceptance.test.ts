@@ -7,12 +7,18 @@ import crypto from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 
 const SECRET = 'test-app-secret';
-const graphCalls: { path: string; body: any }[] = [];
+const graphCalls: { path: string; body: any; method?: string; sig?: string }[] = [];
 const mockGraph = http.createServer((req, res) => {
   let raw = ''; req.on('data', c => raw += c); req.on('end', () => {
     const url = new URL(req.url!, 'http://x'); const body = raw ? JSON.parse(raw) : null;
-    graphCalls.push({ path: url.pathname, body });
+    graphCalls.push({ path: url.pathname, body, method: req.method, sig: req.headers['x-hub-signature-256'] as string });
     res.setHeader('content-type', 'application/json');
+    if (url.pathname === '/forward') return res.end('{}');
+    if (url.pathname.endsWith('/message_templates') && req.method === 'GET') return res.end(JSON.stringify({ data: [
+      { name: 'mms_quotation_request', language: 'en_US', status: 'APPROVED', category: 'MARKETING', components: [{ type: 'BODY', text: 'Hi {{1}}, thanks for your interest.' }] },
+      { name: 'mms_followup_day3', language: 'en_US', status: 'APPROVED', category: 'MARKETING', components: [{ type: 'BODY', text: 'Hi {{1}}, following up.' }, { type: 'BUTTONS', buttons: [{ type: 'URL', text: 'Visit' }] }] },
+      { name: 'mms_task_assigned', language: 'en', status: 'APPROVED', category: 'UTILITY', components: [{ type: 'BODY', text: '{{1}} {{2}} {{3}} {{4}}' }, { type: 'BUTTONS', buttons: [{ type: 'QUICK_REPLY', text: 'Start' }, { type: 'QUICK_REPLY', text: 'Done' }] }] }] }));
+    if (url.pathname.endsWith('/message_templates')) return res.end(JSON.stringify({ id: 't' + graphCalls.length, status: 'PENDING', category: body?.category }));
     if (url.pathname.endsWith('/messages')) return res.end(JSON.stringify({ messages: [{ id: 'wamid.' + crypto.randomUUID() }] }));
     if (url.pathname.endsWith('/leadgen_forms')) return res.end(JSON.stringify({ data: [{ id: 'form1', name: 'Kitchen leads' }] }));
     if (url.pathname.endsWith('/form1/leads')) return res.end(JSON.stringify({ data: [{ id: 'lg-777', form_id: 'form1', created_time: new Date().toISOString(), field_data: [{ name: 'full_name', values: ['Polled Person'] }, { name: 'phone_number', values: ['+919811100077'] }] }] }));
@@ -31,7 +37,7 @@ before(async () => {
   Object.assign(process.env, {
     NODE_ENV: 'test', DEMO_MODE: 'true', SCHEDULER_ENABLED: 'false', WORKER_ENABLED: 'false', STORAGE_LOCAL_DIR: '/tmp/mms-test-uploads',
     META_GRAPH_BASE: `http://127.0.0.1:${(mockGraph.address() as AddressInfo).port}`, META_APP_SECRET: SECRET,
-    WHATSAPP_ACCESS_TOKEN: 'test-token', WHATSAPP_PHONE_NUMBER_ID: '1111', WHATSAPP_WABA_ID: '2222', WHATSAPP_VERIFY_TOKEN: 'wa-verify',
+    WHATSAPP_ACCESS_TOKEN: 'test-token', WHATSAPP_PHONE_NUMBER_ID: '1111', WHATSAPP_WABA_ID: '2222', WHATSAPP_VERIFY_TOKEN: 'wa-verify', WHATSAPP_FORWARD_URL: '',
     META_PAGE_ID: 'page1', META_PAGE_ACCESS_TOKEN: 'page-token', META_LEADS_VERIFY_TOKEN: 'leads-verify'
   });
   const { migrate } = await import('../src/core/migrate.js');
@@ -293,7 +299,7 @@ test('12. WhatsApp: live send payloads, webhook signature, inbound routing, butt
   graphCalls.length = 0; await drain();
   const sends = graphCalls.filter(c => c.path === '/v25.0/1111/messages');
   assert.ok(sends.length > 5, 'queued messages were sent to the Cloud API');
-  const otpMsg = sends.find(c => c.body.template?.name === 'login_otp');
+  const otpMsg = sends.find(c => c.body.template?.name === 'mms_login_otp');
   assert.ok(otpMsg, 'OTP uses the authentication template');
   const comps = otpMsg!.body.template.components;
   assert.equal(comps[0].parameters[0].text, comps[1].parameters[0].text, 'OTP appears in body and copy-code button');
@@ -385,4 +391,144 @@ test('16. project documents: floor plan and production drawings, customer sees o
   const id = docs.find((d: any) => d.category === 'pi').id;
   assert.equal((await api('DELETE', `/api/v1/documents/${id}`, undefined, T.deepa)).status, 403, 'only the uploader or an admin removes a file');
   assert.equal((await api('DELETE', `/api/v1/documents/${id}`, undefined, T.manish)).ok, true);
+});
+
+test('17. WhatsApp templates: existing Meta templates are reused, only missing ones created, webhooks forwarded to the old bot', async () => {
+  const { config } = await import('../src/core/config.js');
+  T.owner = await login(P.owner);
+  graphCalls.length = 0;
+  const sync = await api('POST', '/api/v1/admin/whatsapp/sync-templates', { create: true }, T.owner);
+  const byInternal = Object.fromEntries(sync.results.map((r: any) => [r.internal, r]));
+  assert.equal(byInternal.welcome_catalogue.name, 'mms_quotation_request', 'welcome message mapped to the existing template');
+  assert.match(byInternal.welcome_catalogue.status, /approved/);
+  assert.match(byInternal.task_assigned.status, /approved/, 'existing mms_task_assigned is not re-created');
+  const created = graphCalls.filter(c => c.path === '/v25.0/2222/message_templates' && c.method === 'POST').map(c => c.body.name);
+  assert.ok(!created.includes('mms_quotation_request') && !created.includes('mms_task_assigned'), 'existing templates are never re-submitted');
+  assert.ok(created.includes('mms_login_otp') && created.includes('mms_installation_scheduled'), 'missing operational templates are created');
+  // a new lead's welcome goes out as the existing template, in its language, with only the values it has
+  graphCalls.length = 0;
+  await api('POST', '/api/v1/leads', { name: 'Template Test', phone: '9811100777', source: 'walkin', showroom: '' , interest: 'Kitchen', value: 0, area: '', owner: 'Priya' }, T.owner);
+  await drain();
+  const w = graphCalls.find(c => c.path === '/v25.0/1111/messages' && c.body.template?.name === 'mms_quotation_request');
+  assert.ok(w, 'sent through mms_quotation_request');
+  assert.equal(w!.body.template.language.code, 'en_US');
+  assert.equal(w!.body.template.components.length, 1, 'body only, no buttons');
+  assert.equal(w!.body.template.components[0].parameters.length, 1);
+  // custom mapping from the admin screen
+  const map = await api('GET', '/api/v1/admin/whatsapp/templates', undefined, T.owner);
+  assert.ok(map.rows.length > 10 && map.meta.length === 3);
+  assert.equal((await api('PUT', '/api/v1/admin/whatsapp/template-map', { map: { visit_reminder: { name: 'Bad Name' } } }, T.owner)).status, 400);
+  assert.equal((await api('PUT', '/api/v1/admin/whatsapp/template-map', { map: { visit_reminder: { name: 'mms_followup_day3', params: [0], buttons: false } } }, T.ravi)).status, 403);
+  assert.ok((await api('PUT', '/api/v1/admin/whatsapp/template-map', { map: { visit_reminder: { name: 'mms_followup_day3', params: [0], buttons: false } } }, T.owner)).ok);
+  assert.equal((await api('GET', '/api/v1/admin/whatsapp/templates', undefined, T.owner)).rows.find((r: any) => r.internal === 'visit_reminder').map.name, 'mms_followup_day3');
+  // forwarding: customer text goes to the old bot (re-signed), ERP button taps do not
+  (config as any).WHATSAPP_FORWARD_URL = `${process.env.META_GRAPH_BASE}/forward`;
+  graphCalls.length = 0;
+  const msg = (id: string, m: any) => JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ id, from: '919811100777', timestamp: '1', ...m }] } }] }] });
+  const t1 = msg('wamid.f1', { type: 'text', text: { body: 'hello bot' } });
+  await api('POST', '/api/v1/webhooks/whatsapp', t1, undefined, { 'x-hub-signature-256': sign(t1) });
+  const t2 = msg('wamid.f2', { type: 'button', button: { payload: 'TASK_DONE:T1', text: 'Done' } });
+  await api('POST', '/api/v1/webhooks/whatsapp', t2, undefined, { 'x-hub-signature-256': sign(t2) });
+  await new Promise(r => setTimeout(r, 300));
+  const fw = graphCalls.filter(c => c.path === '/forward');
+  assert.equal(fw.length, 1, 'only the customer text is forwarded');
+  assert.equal(fw[0].sig, sign(t1), 'forwarded with a valid Meta signature');
+  (config as any).WHATSAPP_FORWARD_URL = '';
+  await drain();
+});
+
+test('18. partners, quotations, receipts, GST invoices, change orders, factory steps, service, exports', async () => {
+  T.priya = await login(phoneOf(4));
+  // partners: add, duplicate phone, edit, use on a lead, totals
+  const add = await api('POST', '/api/v1/partners', { name: 'Ar. Test Partner', firm: 'Test Studio', type: 'architect', phone: '9822200111', city: 'Raipur', tier: 'Gold', rate: 4 }, T.priya);
+  assert.ok(add.ok && add.id.startsWith('p'), JSON.stringify(add).slice(0, 200));
+  assert.equal((await api('POST', '/api/v1/partners', { name: 'Dup', type: 'agent', phone: '9822200111' }, T.priya)).status, 400, 'one partner per number');
+  assert.equal((await api('POST', '/api/v1/partners', { name: 'No access', type: 'agent' }, T.ravi)).status, 403);
+  const lead = await api('POST', '/api/v1/leads', { name: 'Partner Client', phone: '9822200999', source: 'architect', ref: add.id, interest: 'Kitchen', value: 500000 }, T.priya);
+  assert.ok(lead.ok, JSON.stringify(lead).slice(0, 200));
+  const lid = lead.state.crm.leads.find((l: any) => l.name === 'Partner Client').id;
+  let pt = lead.state.crm.partners.find((x: any) => x.id === add.id);
+  assert.equal(pt.stats.leads, 1); assert.equal(pt.stats.pipeline, 500000);
+  assert.equal((await api('PATCH', `/api/v1/partners/${add.id}`, { type: 'agent' }, T.priya)).status, 400, 'type is fixed once there are leads');
+  assert.ok((await api('PATCH', `/api/v1/partners/${add.id}`, { rate: 5, active: false }, T.priya)).ok);
+  // quotation with revisions; accepting updates the lead value
+  const q0 = await api('POST', `/api/v1/leads/${lid}/quotes`, { lines: [{ room: 'Kitchen', item: 'Base units', qty: 1, rate: 200000 }, { room: 'Kitchen', item: 'Wall units', qty: 1, rate: 100000 }], discount: 0, gstPct: 18 }, T.priya);
+  assert.equal(q0.rev, 0);
+  const q1r = await api('POST', `/api/v1/leads/${lid}/quotes`, { lines: [{ item: 'Kitchen complete', qty: 1, rate: 300000 }], discount: 20000, gstPct: 18 }, T.priya);
+  assert.equal(q1r.rev, 1);
+  let L = q1r.state.crm.leads.find((l: any) => l.id === lid);
+  assert.equal(L.value, 330400, '(300000 − 20000) × 1.18');
+  assert.equal(L.quotes[0].status, 'superseded');
+  assert.equal((await api('POST', `/api/v1/quotes/${q0.quoteId}/accept`, {}, T.priya)).status, 400, 'old revision cannot be accepted');
+  assert.ok((await api('POST', `/api/v1/quotes/${q1r.quoteId}/accept`, {}, T.priya)).ok);
+  const pq = await fetch(base + `/api/v1/print/quote/${q1r.quoteId}`, { headers: { authorization: 'Bearer ' + T.priya } });
+  assert.equal(pq.status, 200); assert.match(await pq.text(), /3,30,400\.00/);
+  // won → commission; partner totals
+  await api('POST', `/api/v1/leads/${lid}/stage`, { stage: 'won' }, T.priya);
+  const st = await api('GET', '/api/v1/state', undefined, T.owner);
+  pt = st.crm.partners.find((x: any) => x.id === add.id);
+  assert.equal(pt.stats.won, 1); assert.equal(pt.stats.wonValue, 330400); assert.ok(pt.stats.commission > 0);
+  assert.ok(pt.commissions.length === 1);
+  assert.ok((await api('POST', `/api/v1/commissions/${pt.commissions[0].id}/paid`, { paid: true }, T.owner)).ok);
+  // receipts: reference needed for non-cash, milestone settles when covered
+  const pid = T.pid;
+  const proj = st.erp.projects.find((p: any) => p.id === pid);
+  const m = proj.payments.find((x: any) => !x.received);
+  assert.ok(m, 'an unpaid milestone exists');
+  assert.equal((await api('POST', `/api/v1/projects/${pid}/receipts`, { amount: 1000, mode: 'UPI' }, T.owner)).status, 400);
+  const r1 = await api('POST', `/api/v1/projects/${pid}/receipts`, { amount: m.amount - 1000, mode: 'UPI', reference: 'UTR1', milestoneId: m.id }, T.owner);
+  assert.match(r1.receiptNo, /^RCPT\/\d{4}-\d{2}\/\d{4}$/);
+  assert.equal(r1.state.erp.projects.find((p: any) => p.id === pid).payments.find((x: any) => x.id === m.id).received, false, 'partly paid');
+  const r2 = await api('POST', `/api/v1/projects/${pid}/receipts`, { amount: 1000, mode: 'Cash', milestoneId: m.id }, T.owner);
+  assert.equal(r2.state.erp.projects.find((p: any) => p.id === pid).payments.find((x: any) => x.id === m.id).received, true, 'covered → received');
+  assert.equal((await api('POST', `/api/v1/projects/${pid}/receipts`, { amount: 5, mode: 'Cash' }, T.ravi)).status, 403);
+  // invoices numbered per financial year
+  const i1 = await api('POST', `/api/v1/projects/${pid}/invoices`, { description: 'Kitchen supply', taxable: 100000 }, T.owner);
+  const i2 = await api('POST', `/api/v1/projects/${pid}/invoices`, { description: 'Wardrobe supply', taxable: 50000 }, T.owner);
+  assert.match(i1.invoiceNo, /^MMS\/\d{4}-\d{2}\/\d{3}$/);
+  assert.equal(Number(i2.invoiceNo.split('/').pop()), Number(i1.invoiceNo.split('/').pop()) + 1);
+  const inv = i2.state.erp.projects.find((p: any) => p.id === pid).invoices.find((v: any) => v.no === i1.invoiceNo);
+  assert.equal(inv.gst, 18000); assert.equal(inv.total, 118000);
+  const pi = await fetch(base + `/api/v1/print/invoice/${i1.invoiceId}`, { headers: { authorization: 'Bearer ' + T.owner } });
+  assert.match(await pi.text(), /CGST 9%/);
+  assert.equal((await fetch(base + `/api/v1/print/invoice/${i1.invoiceId}`, { headers: { authorization: 'Bearer ' + T.ravi } })).status, 403);
+  // money is hidden from roles without the money permission
+  const dstate = await api('GET', '/api/v1/state', undefined, T.deepa);
+  assert.equal(dstate.erp.projects.find((p: any) => p.id === pid).value, 0);
+  assert.equal(dstate.erp.projects.find((p: any) => p.id === pid).receipts.length, 0);
+  // change order: customer approves in the app → value and target move
+  const before = (await api('GET', '/api/v1/state', undefined, T.owner)).erp.projects.find((p: any) => p.id === pid);
+  await api('POST', `/api/v1/projects/${pid}/change-orders`, { description: 'Add loft above wardrobe', amount: 25000, days: 3 }, T.deepa);
+  const cs = await api('GET', '/api/v1/customer/state', undefined, T.cust);
+  const co = cs.state.projects.find((p: any) => p.id === pid).changes.find((c: any) => c.status === 'pending');
+  assert.equal(co.amount, 25000);
+  const dec = await api('POST', `/api/v1/customer/change-orders/${co.id}/decide`, { approve: true }, T.cust);
+  assert.ok(dec.ok);
+  assert.equal((await api('POST', `/api/v1/customer/change-orders/${co.id}/decide`, { approve: true }, T.cust)).status, 400, 'decided once');
+  const after = (await api('GET', '/api/v1/state', undefined, T.owner)).erp.projects.find((p: any) => p.id === pid);
+  assert.equal(after.value, before.value + 25000);
+  assert.equal(after.payments.reduce((a: number, x: any) => a + x.amount, 0), after.value, 'milestones re-spread to the new value');
+  assert.notEqual(after.target, before.target);
+  // factory steps: all ticked → production complete
+  for (const step of ['cutting', 'edging', 'drilling', 'assembly']) await api('POST', `/api/v1/items/${T.cu}/production`, { step, done: true }, T.manish);
+  let it = (await api('GET', '/api/v1/state', undefined, T.manish)).erp.items.find((i: any) => i.id === T.cu);
+  assert.equal(it.productionDone, false);
+  const last = await api('POST', `/api/v1/items/${T.cu}/production`, { step: 'packing', done: true }, T.manish);
+  it = last.state.erp.items.find((i: any) => i.id === T.cu);
+  assert.equal(it.productionDone, true);
+  // service request from the customer; staff resolves it
+  const sv = await api('POST', `/api/v1/customer/projects/${pid}/service`, { text: 'Drawer channel is stuck', itemId: T.kit }, T.cust);
+  assert.ok(sv.ok);
+  const sreq = (await api('GET', '/api/v1/state', undefined, T.owner)).erp.projects.find((p: any) => p.id === pid).service[0];
+  assert.equal(sreq.status, 'open');
+  assert.equal((await api('PATCH', `/api/v1/service/${sreq.id}`, { status: 'resolved' }, T.owner)).status, 400, 'needs a resolution');
+  assert.ok((await api('PATCH', `/api/v1/service/${sreq.id}`, { status: 'resolved', resolution: 'Channel replaced' }, T.owner)).ok);
+  // exports
+  const csv = await fetch(base + '/api/v1/export/partners', { headers: { authorization: 'Bearer ' + T.priya } });
+  assert.equal(csv.status, 200); assert.match(csv.headers.get('content-type') || '', /text\/csv/);
+  assert.match(await csv.text(), /Ar\. Test Partner/);
+  assert.equal((await fetch(base + '/api/v1/export/payments', { headers: { authorization: 'Bearer ' + T.ravi } })).status, 403);
+  // company profile
+  assert.equal((await api('PUT', '/api/v1/settings/company', { name: 'Make My Space', gstin: 'BAD' }, T.owner)).status, 400);
+  assert.ok((await api('PUT', '/api/v1/settings/company', { name: 'Make My Space', gstin: '22ABCDE1234F1Z5', warrantyYears: 5 }, T.owner)).ok);
 });

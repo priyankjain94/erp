@@ -37,6 +37,7 @@ const Env = z.object({
   WHATSAPP_ACCESS_TOKEN: z.string().default(''),
   WHATSAPP_VERIFY_TOKEN: z.string().default(''),
   WHATSAPP_TEMPLATE_LANG: z.string().default('en'),
+  WHATSAPP_FORWARD_URL: z.string().default(''),
   META_PAGE_ID: z.string().default(''),
   META_PAGE_ACCESS_TOKEN: z.string().default(''),
   META_LEADS_VERIFY_TOKEN: z.string().default(''),

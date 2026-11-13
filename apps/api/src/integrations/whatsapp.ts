@@ -8,6 +8,54 @@ import { renderTemplate, WA_TEMPLATES } from '../domain.js';
 export interface SendOpts { q?: Q; related?: { type: string; id: string }; buttons?: string[] /* quick-reply payloads, in button order */ }
 const graph = (p: string) => `${config.META_GRAPH_BASE}/${config.META_GRAPH_VERSION}/${p}`;
 
+/* ---------- template mapping ----------
+ * Every message the app sends has an internal name (WA_TEMPLATES). Each one is sent through a Meta template:
+ * either one the business already made in WhatsApp Manager (mapped below or in Admin → Integrations),
+ * or `mms_<internal name>`, which "Sync templates" creates when it doesn't exist yet.
+ * params: which of the app's values go into {{1}}, {{2}}… (0-based index into the app's values, or literal text). */
+export interface TplMap { name: string; params?: (number | string)[]; buttons?: boolean }
+export const DEFAULT_TEMPLATE_MAP: Record<string, TplMap> = {
+  welcome_catalogue: { name: 'mms_quotation_request', params: [0], buttons: false },
+  follow_up_gentle: { name: 'mms_followup_day3', params: [0], buttons: false },
+  quote_followup: { name: 'mms_followup_day7', params: [0], buttons: false }
+};
+export interface MetaTpl { name: string; language: string; status: string; category: string; params: number; quickReplies: number }
+async function settingsValue<T>(key: string, fallback: T, q: Q = db): Promise<T> { return ((await one(q, 'select value from settings where key = $1', [key]))?.value ?? fallback) as T; }
+async function saveSetting(key: string, value: unknown) { await db.query(`insert into settings(key, value) values ($1, $2) on conflict (key) do update set value = excluded.value`, [key, JSON.stringify(value)]); }
+export async function templateMap(q: Q = db) {
+  const custom = await settingsValue<Record<string, TplMap>>('wa_template_map', {}, q);
+  const out: Record<string, TplMap> = {};
+  for (const k of Object.keys(WA_TEMPLATES)) out[k] = custom[k]?.name ? custom[k] : DEFAULT_TEMPLATE_MAP[k] || { name: 'mms_' + k };
+  return out;
+}
+export async function saveTemplateMap(map: Record<string, TplMap>) {
+  const clean: Record<string, TplMap> = {};
+  for (const [k, v] of Object.entries(map)) if (WA_TEMPLATES[k] && v?.name) clean[k] = { name: String(v.name).trim(), ...(v.params ? { params: v.params.slice(0, 10) } : {}), ...(v.buttons === false ? { buttons: false } : {}) };
+  await saveSetting('wa_template_map', clean);
+}
+export const metaTemplates = (q: Q = db) => settingsValue<MetaTpl[]>('wa_templates_meta', [], q);
+
+/** Reads the templates that already exist on the WhatsApp Business Account (name, language, status, how many {{n}} and buttons). */
+export async function fetchMetaTemplates(): Promise<MetaTpl[]> {
+  if (!config.WHATSAPP_ACCESS_TOKEN || !config.WHATSAPP_WABA_ID) throw new Error('Set WHATSAPP_ACCESS_TOKEN and WHATSAPP_WABA_ID first');
+  const out: MetaTpl[] = [];
+  let url: string | null = graph(`${config.WHATSAPP_WABA_ID}/message_templates?fields=name,language,status,category,components&limit=100`);
+  for (let page = 0; url && page < 20; page++) {
+    const res: Response = await fetch(url, { headers: { Authorization: `Bearer ${config.WHATSAPP_ACCESS_TOKEN}` } });
+    const body: any = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`Meta: ${body?.error?.message || res.status}`);
+    for (const t of body.data || []) {
+      const bodyText = (t.components || []).find((c: any) => c.type === 'BODY')?.text || '';
+      const nums = (bodyText.match(/\{\{(\d+)\}\}/g) || []).map((x: string) => Number(x.replace(/\D/g, '')));
+      const btns = (t.components || []).find((c: any) => c.type === 'BUTTONS')?.buttons || [];
+      out.push({ name: t.name, language: t.language, status: t.status, category: t.category, params: nums.length ? Math.max(...nums) : 0, quickReplies: btns.filter((b: any) => b.type === 'QUICK_REPLY').length });
+    }
+    url = body.paging?.next || null;
+  }
+  await saveSetting('wa_templates_meta', out);
+  return out;
+}
+
 /** Queue a template message. Runs after the surrounding transaction commits. */
 export async function sendTemplate(phone: string, name: string, params: string[], opts: SendOpts = {}) {
   const to = normPhone(phone); if (!to) return;
@@ -38,20 +86,26 @@ export async function windowOpen(phone: string, q: Q = db) {
   return !!r?.open;
 }
 
-function buildPayload(m: any) {
+async function buildPayload(m: any) {
   if (m.kind === 'text') return { messaging_product: 'whatsapp', to: waNumber(m.phone), type: 'text', text: { body: m.body, preview_url: false } };
   const t = WA_TEMPLATES[m.template];
-  const params: string[] = m.payload?.params || [];
+  const map = (await templateMap())[m.template] || { name: m.template };
+  const known = (await metaTemplates()).filter(x => x.name === map.name);
+  const meta = known.find(x => x.language === config.WHATSAPP_TEMPLATE_LANG) || known.find(x => x.status === 'APPROVED') || known[0];
+  const raw: string[] = m.payload?.params || [];
+  let params: string[] = map.params ? map.params.map(p => typeof p === 'number' ? String(raw[p] ?? '') : String(p)) : raw;
+  if (meta) { params = params.slice(0, meta.params); while (params.length < meta.params) params.push('-'); }
   const components: any[] = [];
-  if (params.length) components.push({ type: 'body', parameters: params.map(text => ({ type: 'text', text: String(text).slice(0, 1000) })) });
+  if (params.length) components.push({ type: 'body', parameters: params.map(text => ({ type: 'text', text: String(text || '-').replace(/\s*\n\s*/g, ' ').slice(0, 1000) })) });
   if (t?.category === 'AUTHENTICATION') {
     // Copy-code OTP templates need the code twice: in the body and in the button.
     components.push({ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: params[0] }] });
   }
-  (m.payload?.buttons || []).forEach((payload: string, i: number) => {
+  const maxButtons = map.buttons === false ? 0 : meta ? meta.quickReplies : 10;
+  (m.payload?.buttons || []).slice(0, maxButtons).forEach((payload: string, i: number) => {
     if (payload) components.push({ type: 'button', sub_type: 'quick_reply', index: String(i), parameters: [{ type: 'payload', payload }] });
   });
-  return { messaging_product: 'whatsapp', to: waNumber(m.phone), type: 'template', template: { name: m.template, language: { code: config.WHATSAPP_TEMPLATE_LANG }, components } };
+  return { messaging_product: 'whatsapp', to: waNumber(m.phone), type: 'template', template: { name: map.name, language: { code: meta?.language || config.WHATSAPP_TEMPLATE_LANG }, components } };
 }
 
 registerJob('wa.send', async ({ id }) => {
@@ -72,7 +126,7 @@ registerJob('wa.send', async ({ id }) => {
   }
   const res = await fetch(graph(`${config.WHATSAPP_PHONE_NUMBER_ID}/messages`), {
     method: 'POST', headers: { Authorization: `Bearer ${config.WHATSAPP_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(buildPayload(m))
+    body: JSON.stringify(await buildPayload(m))
   });
   const body: any = await res.json().catch(() => ({}));
   if (res.ok && body.messages?.[0]?.id) {
@@ -149,10 +203,20 @@ registerJob('wa.inbound', async ({ id }) => {
 });
 
 /** Create / sync templates in Meta (WhatsApp Manager) from WA_TEMPLATES. Used by the admin setup script. */
-export async function syncTemplates() {
-  if (!whatsappLive() || !config.WHATSAPP_WABA_ID) throw new Error('Set WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_WABA_ID first');
-  const results: { name: string; status: string }[] = [];
-  for (const [name, t] of Object.entries(WA_TEMPLATES)) {
+/** Reads what already exists on the WhatsApp Business Account and creates only the templates the app still needs.
+ *  Existing templates (yours from WhatsApp Manager) are never changed. */
+export async function syncTemplates(opts: { create?: boolean } = { create: true }) {
+  if (!config.WHATSAPP_ACCESS_TOKEN || !config.WHATSAPP_WABA_ID) throw new Error('Set WHATSAPP_ACCESS_TOKEN and WHATSAPP_WABA_ID first');
+  const existing = await fetchMetaTemplates();
+  const map = await templateMap();
+  const results: { internal: string; name: string; status: string }[] = [];
+  const created = new Set<string>();
+  for (const [internal, t] of Object.entries(WA_TEMPLATES)) {
+    const name = map[internal].name;
+    const have = existing.filter(x => x.name === name);
+    if (have.length) { results.push({ internal, name, status: have.map(x => `${x.status.toLowerCase()} (${x.language})`).join(', ') }); continue; }
+    if (created.has(name)) { results.push({ internal, name, status: 'submitted' }); continue; }
+    if (!opts.create) { results.push({ internal, name, status: 'missing' }); continue; }
     const components: any[] = [];
     if (t.category === 'AUTHENTICATION') {
       components.push({ type: 'body', add_security_recommendation: true }, { type: 'footer', code_expiration_minutes: config.OTP_TTL_MIN }, { type: 'buttons', buttons: [{ type: 'otp', otp_type: 'copy_code', text: 'Copy code' }] });
@@ -166,7 +230,22 @@ export async function syncTemplates() {
       body: JSON.stringify({ name, language: config.WHATSAPP_TEMPLATE_LANG, category: t.category, ...(t.category === 'AUTHENTICATION' ? { message_send_ttl_seconds: config.OTP_TTL_MIN * 60 } : {}), components })
     });
     const body: any = await res.json().catch(() => ({}));
-    results.push({ name, status: res.ok ? (body.status || 'submitted') : `error: ${body?.error?.message || res.status}` });
+    if (res.ok) created.add(name);
+    results.push({ internal, name, status: res.ok ? `created, ${String(body.status || 'pending').toLowerCase()}` : `error: ${body?.error?.error_user_msg || body?.error?.message || res.status}` });
   }
+  if (created.size) await fetchMetaTemplates().catch(() => null);
   return results;
+}
+
+/** Keeps the business's existing WhatsApp bot working: every webhook the ERP receives is relayed to it,
+ *  except taps on the ERP's own buttons (task / drawing approvals), which only the ERP understands. */
+export function forwardWebhook(raw: Buffer, payload: any) {
+  if (!config.WHATSAPP_FORWARD_URL) return;
+  const msgs = (payload?.entry || []).flatMap((e: any) => (e.changes || []).flatMap((c: any) => c.value?.messages || []));
+  const ours = (m: any) => /^(TASK_|DRAWING_|RATE:)/.test(m?.button?.payload || m?.interactive?.button_reply?.id || '');
+  if (msgs.length && msgs.every(ours)) return;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (config.META_APP_SECRET) headers['X-Hub-Signature-256'] = 'sha256=' + crypto.createHmac('sha256', config.META_APP_SECRET).update(raw).digest('hex');
+  fetch(config.WHATSAPP_FORWARD_URL, { method: 'POST', headers, body: new Uint8Array(raw), signal: AbortSignal.timeout(8000) })
+    .then(r => { if (!r.ok) log.warn('whatsapp forward', r.status); }).catch(e => log.warn('whatsapp forward failed', String(e?.message || e)));
 }

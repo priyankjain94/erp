@@ -90,6 +90,9 @@ export async function moveIn(q: Q, itemId: string, to: string, byId: string, not
   const byName = byId === 'system' ? 'system' : await uname(q, byId);
   await act(q, it.project_id, `${it.code} moved ${stageById[from as keyof typeof stageById].short} → ${st.short} by ${byName}${note ? ' · ' + note : ''}${override ? ' · OVERRIDE: ' + override : ''}`);
   if (to === 'closed') {
+    // warranty starts at handover; length comes from the company profile (default 10 years)
+    const yrs = Number((await one(q, `select value->>'warrantyYears' y from settings where key = 'company'`))?.y ?? 10);
+    await q.query(`update items set warranty_until = coalesce(warranty_until, current_date + make_interval(years => $2::int)) where id = $1`, [it.id, yrs]);
     const left = await one(q, `select count(*) n from items where project_id = $1 and stage <> 'closed'`, [it.project_id]);
     if (Number(left!.n) === 0) {
       const pc = await one(q, 'select p.code, c.name, c.phone from projects p join customers c on c.id = p.customer_id where p.id = $1', [it.project_id]);

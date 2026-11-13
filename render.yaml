@@ -30,6 +30,21 @@ services:
         fromDatabase:
           name: mms-erp-test-db
           property: connectionString
+      # WhatsApp Cloud API: IDs here; secrets (token, app secret, verify token) are entered in the Render dashboard only
+      - key: WHATSAPP_WABA_ID
+        value: "2613333339176910"
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        value: "1429433796920415"
+      - key: META_APP_ID
+        value: "2027884144572768"
+      - key: WHATSAPP_FORWARD_URL
+        value: https://mms-whatsapp-bot.vercel.app/api/webhook
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
 
 databases:
   - name: mms-erp-test-db

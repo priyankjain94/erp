@@ -221,6 +221,22 @@ export async function seedDemo(q: Q) {
     await q.query('insert into users(id, name, phone, role, title, members, skills) values ($1,$2,$3,$4,$5,$6,$7)', [id, name, demoPhone(i), role, title, CREW[id]?.members || [], CREW[id]?.skills || []]);
   await seedCrm(q, now);
   await seedOps(q, now);
+  await q.query(`insert into commissions(lead_id, partner_id, amount, status) select l.id, p.id, round(l.value * p.rate / 100), 'pending' from leads l join partners p on p.id = l.ref_partner_id where l.stage = 'won' and not exists (select 1 from commissions c where c.lead_id = l.id)`);
+  // v1.5: warranty on handed-over pieces, receipts for milestones already received, one sample quotation and service request
+  await q.query(`update items set warranty_until = (installed_at::date + interval '10 years')::date where stage = 'closed' and installed_at is not null`);
+  await q.query(`update items set warranty_until = (current_date + interval '10 years')::date - 20 where stage = 'closed' and warranty_until is null`);
+  const rec = await q.query(`select m.id, m.project_id, m.amount, m.received_at from payment_milestones m where m.received_at is not null and m.amount > 0 order by m.project_id, m.sort`);
+  for (const [i, m] of rec.rows.entries())
+    await q.query(`insert into payment_receipts(project_id, milestone_id, receipt_no, amount, paid_on, mode, reference, by_id) values ($1,$2,$3,$4,$5::date,$6,$7,'owner')`,
+      [m.project_id, m.id, `RCPT/DEMO/${String(i + 1).padStart(4, '0')}`, m.amount, m.received_at, i % 2 ? 'Bank transfer' : 'UPI', i % 2 ? 'NEFT' + (40211 + i) : 'UPI' + (900311 + i)]);
+  const ql = await q.query(`select id, value from leads where stage in ('proposal','negotiation') order by created_at limit 1`);
+  if (ql.rows[0]) {
+    const v = Math.round(ql.rows[0].value / 1.18 / 1000) * 1000;
+    const lines = [{ room: 'Kitchen', item: 'Base and wall units', desc: 'BWP ply carcass, acrylic shutters', size: '3200 × 600', qty: 1, unit: 'set', rate: Math.round(v * 0.6) }, { room: 'Master bedroom', item: 'Sliding wardrobe', desc: 'HDHMR, laminate finish', size: '2400 × 2100', qty: 1, unit: 'nos', rate: v - Math.round(v * 0.6) }];
+    await q.query(`insert into quotes(lead_id, rev, lines, discount, gst_pct, subtotal, total, status, by_id) values ($1, 0, $2, 0, 18, $3, $4, 'sent', 'priya')`, [ql.rows[0].id, JSON.stringify(lines), v, Math.round(v * 1.18)]);
+  }
+  const cl = await q.query(`select i.id, i.project_id from items i where i.stage = 'closed' limit 1`);
+  if (cl.rows[0]) await q.query(`insert into service_requests(project_id, item_id, text, under_warranty, raised_by) values ($1,$2,'Drawer in the tall unit is not closing smoothly', true, 'customer app')`, [cl.rows[0].project_id, cl.rows[0].id]);
 }
 
 /** Wipe all business data (keeps schema). Used by the demo reset and tests. */
@@ -229,6 +245,7 @@ export async function wipe(q: Q) {
     task_events, tasks, snags, work_sessions, item_boxes, documents, item_stage_log, items, room_items, wall_obstructions, walls, rooms, surveys,
     project_activity, payment_milestones, projects, customers, commissions, lead_timeline, lead_messages, leads, partners, users restart identity cascade`);
   await q.query(`select setval('project_seq', 101, false)`); await q.query(`select setval('item_seq', 1, false)`); await q.query(`select setval('task_seq', 1, false)`);
+  await q.query(`select setval('receipt_seq', 1, false)`); await q.query(`select setval('partner_seq', 100, false)`); await q.query('delete from invoice_seq');
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

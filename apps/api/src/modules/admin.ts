@@ -3,8 +3,8 @@ import { config } from '../core/config.js';
 import { db, one, tx, type Q } from '../core/db.js';
 import { parse, type Ctx, type Router } from '../core/http.js';
 import { bad, forbidden, normPhone, notFound, slug } from '../core/util.js';
-import { DEFAULT_ROLES, PERMS, ROLE_IDS, ROLES, TYPE_IDS } from '../domain.js';
-import { syncTemplates, sendTemplate } from '../integrations/whatsapp.js';
+import { DEFAULT_ROLES, PERMS, ROLE_IDS, ROLES, TYPE_IDS, WA_TEMPLATES } from '../domain.js';
+import { syncTemplates, sendTemplate, templateMap, saveTemplateMap, metaTemplates, fetchMetaTemplates, DEFAULT_TEMPLATE_MAP } from '../integrations/whatsapp.js';
 import { subscribePage, pollLeads } from '../integrations/metaLeads.js';
 import { metaLeadsLive } from '../core/config.js';
 import { audit, invalidatePerms, revokeAllSessions, staff, userOf } from './auth.js';
@@ -122,7 +122,8 @@ export function adminRoutes(r: Router) {
     const leads = await one(db, `select count(*) n, max(created_at) last from meta_leads_raw`);
     const jobs = await one(db, `select count(*) filter (where done_at is null) pending, count(*) filter (where done_at is not null and last_error is not null and attempts >= max_attempts) dead from jobs`);
     return {
-      whatsapp: { live: !!config.WHATSAPP_ACCESS_TOKEN, phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID ? '…' + config.WHATSAPP_PHONE_NUMBER_ID.slice(-4) : '', webhook: `${config.APP_BASE_URL}/api/v1/webhooks/whatsapp`, last30: wa },
+      whatsapp: { live: !!config.WHATSAPP_ACCESS_TOKEN, phoneNumberId: config.WHATSAPP_PHONE_NUMBER_ID ? '…' + config.WHATSAPP_PHONE_NUMBER_ID.slice(-4) : '', wabaId: config.WHATSAPP_WABA_ID ? '…' + config.WHATSAPP_WABA_ID.slice(-4) : '', appSecret: !!config.META_APP_SECRET, verifyToken: !!config.WHATSAPP_VERIFY_TOKEN, forwardUrl: config.WHATSAPP_FORWARD_URL, lang: config.WHATSAPP_TEMPLATE_LANG, webhook: `${config.APP_BASE_URL}/api/v1/webhooks/whatsapp`, last30: wa,
+        recentFailures: await many(db, `select template, error, created_at from wa_messages where direction = 'out' and status = 'failed' order by id desc limit 5`) },
       metaLeads: { live: !!config.META_PAGE_ACCESS_TOKEN, pageId: config.META_PAGE_ID, webhook: `${config.APP_BASE_URL}/api/v1/webhooks/meta-leads`, received: leads },
       jobs, graphVersion: config.META_GRAPH_VERSION
     };
@@ -138,7 +139,27 @@ export function adminRoutes(r: Router) {
     await tx(async q => { await wipe(q); await seedDemo(q); await bootstrap(q); });
     return { ok: true };
   });
-  r.post('/api/v1/admin/whatsapp/sync-templates', staff('admin'), async () => ({ results: await syncTemplates() }));
+  r.post('/api/v1/admin/whatsapp/sync-templates', staff('admin'), async ctx => ({ results: await syncTemplates({ create: (ctx.body as any)?.create !== false }) }));
+  r.get('/api/v1/admin/whatsapp/templates', staff('admin'), async ctx => {
+    if (ctx.query.get('refresh') === '1') await fetchMetaTemplates();
+    const map = await templateMap(), meta = await metaTemplates();
+    return { meta, defaults: DEFAULT_TEMPLATE_MAP, rows: Object.entries(WA_TEMPLATES).map(([internal, t]) => ({ internal, category: t.category, body: t.body, values: (t.body.match(/\{\{\d+\}\}/g) || []).length, map: map[internal], found: meta.filter(m => m.name === map[internal].name) })) };
+  });
+  r.put('/api/v1/admin/whatsapp/template-map', staff('admin'), async ctx => {
+    const b = parse(z.object({ map: z.record(z.string(), z.object({ name: z.string().trim().regex(/^[a-z0-9_]{1,512}$/, 'Template names use lower-case letters, numbers and _'), params: z.array(z.union([z.number().int().min(0).max(9), z.string().max(200)])).max(10).optional(), buttons: z.boolean().optional() })) }), ctx.body);
+    await saveTemplateMap(b.map);
+    await audit(db, userOf(ctx), 'whatsapp.map', 'WhatsApp template mapping updated', 'settings', 'wa_template_map');
+    return { ok: true };
+  });
+  r.post('/api/v1/admin/whatsapp/test', staff('admin'), async ctx => {
+    const b = parse(z.object({ template: z.string(), phone: z.string() }), ctx.body);
+    const t = WA_TEMPLATES[b.template]; if (!t || t.category === 'AUTHENTICATION') throw bad('Pick a non-login message to test.');
+    const n = (t.body.match(/\{\{\d+\}\}/g) || []).length;
+    const id = await sendTemplate(b.phone, b.template, Array.from({ length: n }, (_, i) => i === 0 ? 'Test' : 'sample ' + (i + 1)));
+    if (!id) throw bad('Enter a valid WhatsApp number.');
+    return { ok: true, id };
+  });
+  r.get('/api/v1/admin/whatsapp/messages', staff('admin'), async () => ({ messages: await many(db, `select id, direction, phone, kind, template, status, error, created_at from wa_messages order by id desc limit 40`) }));
   r.post('/api/v1/admin/meta/subscribe-page', staff('admin'), async () => { if (!metaLeadsLive()) throw bad('Set META_PAGE_ID and META_PAGE_ACCESS_TOKEN first'); return { result: await subscribePage() }; });
   r.post('/api/v1/admin/meta/poll-leads', staff('admin'), async () => { if (!metaLeadsLive()) throw bad('Set META_PAGE_ID and META_PAGE_ACCESS_TOKEN first'); return await pollLeads(); });
 }

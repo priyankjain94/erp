@@ -764,7 +764,7 @@ function UsersAdmin({erp, ops, toast}){
   const ok = f && f.name.trim() && f.phone.replace(/\D/g,'').length === 10;
   const counts = Object.fromEntries(ROLES.map(r => [r.id, erp.users.filter(u => u.role === r.id && u.active !== false).length]));
   return html`<section className="view"><div className="stack">
-    <div className="seg" style=${{alignSelf:'start'}}>${[['users','Users'],['roles','Roles and access'],['audit','Change log'],['integrations','WhatsApp and Meta']].map(([id,n]) => html`<button key=${id} aria-pressed=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
+    <div className="seg" style=${{alignSelf:'start'}}>${[['users','Users'],['roles','Roles and access'],['audit','Change log'],['integrations','WhatsApp and Meta'],['company','Company profile'],['exports','Exports']].map(([id,n]) => html`<button key=${id} aria-pressed=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
     ${tab === 'users' && html`<div className="stack">
       <div className="inline"><span style=${{color:'var(--muted)'}}>${erp.users.filter(u => u.active !== false).length} active users. Staff sign in with their mobile number and a WhatsApp OTP; no passwords.</span><button className="btn primary small" style=${{marginLeft:'auto'}} onClick=${() => setF({name:'', phone:'', role:'installer', title:''})}><${Icon} n="plus" s=${14}/>Add user</button></div>
       ${f && html`<div className="box"><h4>New user</h4><div className="form" style=${{padding:0}}>
@@ -795,7 +795,24 @@ function UsersAdmin({erp, ops, toast}){
     ${tab === 'audit' && html`<div className="panel"><h3>Change log</h3><p className="hint">Logins, user and access changes, payments, overrides and assignments, newest first.</p>
       <ol className="chain">${(erp.audit || []).map((a,i) => html`<li key=${i}><span>${a.text} <span className="sub" style=${{color:'var(--muted)'}}>· by ${uname(a.by)}</span></span><time>${fmtDT(a.t)}</time></li>`)}</ol>${!(erp.audit || []).length && html`<p className="hint">No changes yet.</p>`}</div>`}
     ${tab === 'integrations' && html`<${Integrations} toast=${toast}/>`}
+    ${tab === 'company' && html`<${CompanyProfile} toast=${toast}/>`}
+    ${tab === 'exports' && html`<div className="panel"><h3>Exports</h3><p className="hint">Download as CSV (opens in Excel or Google Sheets).</p><div className="inline" style=${{flexWrap:'wrap',gap:8,marginTop:10}}>${[['leads','Leads'],['partners','Partners and sales value'],['projects','Projects'],['payments','Payments received'],['invoices','Tax invoices'],['installer-hours','Installer hours']].map(([k, n]) => html`<button key=${k} className="btn small" onClick=${() => downloadCsv(k)}>${n}</button>`)}</div></div>`}
   </div></section>`;
+}
+function CompanyProfile({toast}){
+  const [c, setC] = useState(null), [busy, setBusy] = useState(false);
+  useEffect(() => { API.call('GET', '/settings/company').then(r => setC(r.company)).catch(e => toast(e.message, 'err')); }, []);
+  if (!c) return html`<p className="hint">Loading…</p>`;
+  const F = ({k, label, wide, rows, num}) => html`<label className=${wide ? 'full' : ''}>${label}${rows ? html`<textarea rows=${rows} value=${c[k]} onInput=${e => setC({...c, [k]:e.target.value})}></textarea>` : html`<input value=${c[k]} inputMode=${num ? 'numeric' : undefined} onInput=${e => setC({...c, [k]:e.target.value})}/>`}</label>`;
+  const save = async () => { setBusy(true); try { const r = await API.call('PUT', '/settings/company', c); setC(r.company); toast('Company profile saved.'); } catch(e){ toast(e.message, 'err'); } setBusy(false); };
+  return html`<div className="panel"><h3>Company profile</h3><p className="hint">Printed on quotations, payment receipts, tax invoices and snag slips.</p>
+    <div className="form" style=${{marginTop:12}}>
+      ${F({k:'name', label:'Brand name'})}${F({k:'legalName', label:'Legal name (on invoices)'})}${F({k:'gstin', label:'GSTIN'})}${F({k:'hsn', label:'HSN code'})}
+      ${F({k:'address', label:'Address (state last, used as place of supply)', wide:true})}${F({k:'phone', label:'Phone'})}${F({k:'email', label:'Email'})}${F({k:'website', label:'Website'})}
+      ${F({k:'gstPct', label:'Default GST %', num:true})}${F({k:'warrantyYears', label:'Warranty (years from handover)', num:true})}${F({k:'quoteValidityDays', label:'Quotation valid for (days)', num:true})}
+      ${F({k:'bank', label:'Bank details for invoices', wide:true, rows:2})}${F({k:'quoteTerms', label:'Quotation terms', wide:true, rows:3})}
+      <div className="form-foot"><button className="btn primary" disabled=${busy} onClick=${save}>Save</button></div>
+    </div></div>`;
 }
 function Integrations({toast}){
   const [d, setD] = useState(null), [busy, setBusy] = useState(false), [res, setRes] = useState(null);
@@ -804,14 +821,51 @@ function Integrations({toast}){
   const Row = ({k, v}) => html`<div><dt>${k}</dt><dd className="mono" style=${{fontSize:12.5,overflowWrap:'anywhere'}}>${v}</dd></div>`;
   return html`<div className="stack">
     <div className="panel"><h3>WhatsApp Cloud API</h3><p className="hint">${d.whatsapp.live ? 'Connected. Messages are sent through your WhatsApp Business number.' : 'Not connected yet: messages are simulated and logged, nothing is sent. Add the Meta values to the server settings to go live.'}</p>
-      <dl className="kv"><${Row} k="Status" v=${d.whatsapp.live ? 'Live' : 'Simulated'}/><${Row} k="Phone number ID" v=${d.whatsapp.phoneNumberId || '—'}/><${Row} k="Webhook URL (paste in Meta)" v=${d.whatsapp.webhook}/><${Row} k="Graph API version" v=${d.graphVersion}/>
+      <dl className="kv"><${Row} k="Status" v=${d.whatsapp.live ? 'Live' : 'Simulated'}/><${Row} k="Phone number ID" v=${d.whatsapp.phoneNumberId || '—'}/><${Row} k="Business account (WABA)" v=${d.whatsapp.wabaId || '—'}/>
+        <${Row} k="App secret (signature check)" v=${d.whatsapp.appSecret ? 'Set' : 'Missing'}/><${Row} k="Verify token" v=${d.whatsapp.verifyToken ? 'Set' : 'Missing'}/>
+        <${Row} k="Webhook URL (paste in Meta)" v=${d.whatsapp.webhook}/><${Row} k="Also forwarded to" v=${d.whatsapp.forwardUrl || '—'}/><${Row} k="Graph API version" v=${d.graphVersion}/>
         <${Row} k="Sent (30 days)" v=${d.whatsapp.last30.sent}/><${Row} k="Simulated (30 days)" v=${d.whatsapp.last30.simulated}/><${Row} k="Failed (30 days)" v=${d.whatsapp.last30.failed}/></dl>
-      <div className="inline" style=${{marginTop:12}}><button className="btn small" disabled=${!d.whatsapp.live || busy} onClick=${async () => { setBusy(true); try { setRes((await API.call('POST', '/admin/whatsapp/sync-templates')).results); } catch(e){ toast(e.message, 'err'); } setBusy(false); }}>Submit message templates to Meta</button><span className="sub" style=${{fontSize:12,color:'var(--muted)'}}>Creates every template this app uses (OTP, reminders, updates) for Meta approval.</span></div>
-      ${res && html`<table style=${{marginTop:10,minWidth:0}}><tbody>${res.map(r => html`<tr key=${r.name}><td className="mono">${r.name}</td><td>${r.status}</td></tr>`)}</tbody></table>`}
+      ${d.whatsapp.recentFailures?.length > 0 && html`<p className="hint" style=${{marginTop:10}}><b>Recent failures</b></p><table style=${{minWidth:0}}><tbody>${d.whatsapp.recentFailures.map((f, i) => html`<tr key=${i}><td className="mono">${f.template || 'text'}</td><td>${f.error}</td><td className="meta">${String(f.created_at).slice(0, 16).replace('T', ' ')}</td></tr>`)}</tbody></table>`}
     </div>
+    <${TemplateMap} live=${d.whatsapp.live} toast=${toast}/>
     <div className="panel"><h3>Meta Lead Ads</h3><p className="hint">${d.metaLeads.live ? 'Connected. New Facebook and Instagram lead-form leads arrive in the CRM within seconds, with a 15-minute safety-net sync.' : 'Not connected yet. Add the Page ID and Page access token to the server settings.'}</p>
       <dl className="kv"><${Row} k="Status" v=${d.metaLeads.live ? 'Live' : 'Not connected'}/><${Row} k="Page ID" v=${d.metaLeads.pageId || '—'}/><${Row} k="Webhook URL (paste in Meta)" v=${d.metaLeads.webhook}/><${Row} k="Leads received" v=${d.metaLeads.received.n}/></dl></div>
     <div className="panel"><h3>Background jobs</h3><dl className="kv"><${Row} k="Waiting" v=${d.jobs.pending}/><${Row} k="Failed after retries" v=${d.jobs.dead}/></dl></div>
+  </div>`;
+}
+
+function TemplateMap({live, toast}){
+  const [d, setD] = useState(null), [busy, setBusy] = useState(''), [edit, setEdit] = useState({}), [res, setRes] = useState(null), [testTo, setTestTo] = useState(''), [testTpl, setTestTpl] = useState('task_reminder');
+  const load = async refresh => { try { setD(await API.call('GET', '/admin/whatsapp/templates' + (refresh ? '?refresh=1' : ''))); } catch(e){ toast(e.message, 'err'); } };
+  useEffect(() => { load(false); }, []);
+  if (!d) return html`<div className="panel"><h3>Message templates</h3><p className="hint">Loading…</p></div>`;
+  const run = async (key, fn) => { setBusy(key); try { await fn(); } catch(e){ toast(e.message, 'err'); } setBusy(''); };
+  const names = [...new Set(d.meta.map(m => m.name))].sort();
+  const val = r => edit[r.internal] || r.map;
+  const setName = (r, name) => setEdit(e => ({...e, [r.internal]: {...val(r), name}}));
+  const setParams = (r, text) => setEdit(e => ({...e, [r.internal]: {...val(r), params: text.trim() ? text.split(',').map(x => x.trim()).map(x => /^\d+$/.test(x) ? Number(x) - 1 : x) : undefined}}));
+  const paramText = m => (m.params || []).map(p => typeof p === 'number' ? String(p + 1) : p).join(', ');
+  const save = () => run('save', async () => { const map = {}; d.rows.forEach(r => { map[r.internal] = val(r); }); await API.call('PUT', '/admin/whatsapp/template-map', {map}); setEdit({}); await load(false); toast('Template mapping saved'); });
+  const status = r => { const m = d.meta.filter(x => x.name === val(r).name); if (!d.meta.length) return '—'; if (!m.length) return html`<span className="pill">Will be created</span>`; return m.map(x => html`<span key=${x.language} className=${'pill' + (x.status === 'APPROVED' ? ' good' : x.status === 'REJECTED' ? ' crit' : ' warn')}>${x.status.toLowerCase()} · ${x.language}</span>`); };
+  return html`<div className="panel"><h3>Message templates</h3>
+    <p className="hint">Each message the app sends goes out through a WhatsApp template. Your own templates from WhatsApp Manager are used where they fit; the rest are created as <span className="mono">mms_…</span> templates the first time you sync. Values: which of the app's values fill {{1}}, {{2}}… (numbers), or fixed text.</p>
+    <div className="inline" style=${{margin:'10px 0'}}>
+      <button className="btn small" disabled=${!live || !!busy} onClick=${() => run('read', () => load(true))}>${busy === 'read' ? 'Reading…' : 'Read templates from Meta'}</button>
+      <button className="btn small primary" disabled=${!live || !!busy} onClick=${() => run('sync', async () => { setRes((await API.call('POST', '/admin/whatsapp/sync-templates', {create: true})).results); await load(false); })}>${busy === 'sync' ? 'Syncing…' : 'Create missing templates'}</button>
+      ${Object.keys(edit).length > 0 && html`<button className="btn small" disabled=${!!busy} onClick=${save}>Save mapping</button>`}
+      <span className="sub" style=${{fontSize:12,color:'var(--muted)'}}>${d.meta.length ? d.meta.length + ' templates on your account' : live ? 'Not read yet' : 'Connect WhatsApp first'}</span>
+    </div>
+    <div className="table-wrap"><table style=${{minWidth:0}}><thead><tr><th>App message</th><th>Sends as template</th><th>Values</th><th>On Meta</th></tr></thead><tbody>
+      ${d.rows.map(r => html`<tr key=${r.internal}><td><b className="mono" style=${{fontSize:12.5}}>${r.internal}</b><div className="meta" style=${{fontSize:12,maxWidth:360}}>${r.body.slice(0, 110)}${r.body.length > 110 ? '…' : ''}</div></td>
+        <td>${names.length ? html`<select value=${val(r).name} onChange=${e => setName(r, e.target.value)}><option value=${'mms_' + r.internal}>${'mms_' + r.internal} (app default)</option>${names.filter(n => n !== 'mms_' + r.internal).map(n => html`<option key=${n} value=${n}>${n}</option>`)}</select>` : html`<span className="mono">${val(r).name}</span>`}</td>
+        <td><input style=${{width:110}} placeholder=${r.values ? Array.from({length: r.values}, (_, i) => i + 1).join(', ') : 'none'} defaultValue=${paramText(val(r))} onBlur=${e => { if (e.target.value !== paramText(val(r))) setParams(r, e.target.value); }}/></td>
+        <td>${status(r)}</td></tr>`)}
+    </tbody></table></div>
+    ${res && html`<p className="hint" style=${{marginTop:10}}><b>Sync result:</b> ${res.filter(x => x.status.startsWith('created')).length} created, ${res.filter(x => x.status.startsWith('error')).length} errors.</p>${res.filter(x => x.status.startsWith('error')).map(x => html`<p key=${x.internal} className="hint mono" style=${{fontSize:12}}>${x.name}: ${x.status}</p>`)}`}
+    <div className="inline" style=${{marginTop:14}}><b style=${{fontSize:13}}>Send a test</b>
+      <select value=${testTpl} onChange=${e => setTestTpl(e.target.value)}>${d.rows.filter(r => r.category !== 'AUTHENTICATION').map(r => html`<option key=${r.internal}>${r.internal}</option>`)}</select>
+      <input placeholder="WhatsApp number" value=${testTo} onInput=${e => setTestTo(e.target.value)} style=${{width:150}}/>
+      <button className="btn small" disabled=${!testTo || !!busy} onClick=${() => run('test', async () => { await API.call('POST', '/admin/whatsapp/test', {template: testTpl, phone: testTo}); toast(live ? 'Test queued — check WhatsApp in a few seconds' : 'Simulated (WhatsApp not connected)'); })}>Send</button></div>
   </div>`;
 }
 
@@ -835,6 +889,8 @@ function CustomerApp({erp, toast: toastIn, live}){
     const toApprove = its.filter(i => i.stage === 'drawing' && i.drawings.length && !latestDrawing(i).approved);
     const nextInst = its.filter(i => !i.installDone && i.installer && PIDX(i.stage) >= PIDX('dispatch')).sort((a,b) => a.target < b.target ? -1 : 1)[0];
     const due = p.payments.filter(m => !m.received);
+    const pendingCo = (p.changes || []).filter(c => c.status === 'pending');
+    const openSvc = (p.service || []).filter(v => v.status !== 'resolved');
     const out = async () => { if (live){ try { await API.call('POST', '/auth/logout'); } catch(e){} setAuthed(false); setState(null); } else { setPid(null); setState(null); } };
     const back = view !== 'home' ? () => setView('home') : null;
     if (view === 'home') screen = html`<${Phone} title=${'Hello ' + first(p.customer)} sub=${p.code + ' · ' + p.address} right=${html`<button className="btn small" style=${{background:'var(--rail-2)',color:'var(--rail-ink)',border:0}} onClick=${out}>${live ? 'Log out' : 'Close'}</button>`}>
@@ -843,9 +899,11 @@ function CustomerApp({erp, toast: toastIn, live}){
         ${its.length ? html`<${StageBar} items=${its}/><span className="meta">${done} of ${its.length} piece${its.length === 1 ? '' : 's'} installed</span>` : html`<span className="meta">${p.survey.status === 'submitted' ? 'Design in progress' : 'Site measurement ' + (p.survey.scheduled ? fmtDT(p.survey.scheduled) : 'to be scheduled')}</span>`}</div>
       ${toApprove.length > 0 && html`<button className="mcard" style=${{borderColor:'var(--accent)'}} onClick=${() => setView('approve')}><div className="card-row"><b>${toApprove.length} drawing${toApprove.length > 1 ? 's' : ''} waiting for your approval</b><span className="pill acc">Action</span></div><span className="meta">Tap to review and approve</span></button>`}
       ${nextInst && html`<div className="mcard"><b>Next installation</b><span>${typeById[nextInst.type].name} in ${nextInst.roomName} · ${fmtDate(nextInst.target)}</span><span className="meta">Team ${staffBy(nextInst.installer).name || ''} · ${staffBy(nextInst.installer).phone || ''}</span></div>`}
+      ${pendingCo.length > 0 && html`<button className="mcard" style=${{borderColor:'var(--accent)'}} onClick=${() => setView('changes')}><div className="card-row"><b>${pendingCo.length} change${pendingCo.length > 1 ? 's' : ''} waiting for your OK</b><span className="pill acc">Action</span></div><span className="meta">Price or scope change requested on your order</span></button>`}
       <button className="mcard" onClick=${() => setView('items')}><div className="card-row"><b>Your furniture</b><span className="meta">${its.length} piece${its.length === 1 ? '' : 's'} ›</span></div></button>
       <button className="mcard" onClick=${() => setView('docs')}><div className="card-row"><b>Documents</b><span className="meta">${(p.docs || []).length ? (p.docs || []).length + ' ›' : 'Floor plan, drawings ›'}</span></div></button>
       <button className="mcard" onClick=${() => setView('pay')}><div className="card-row"><b>Payments</b><span className="meta">${due.length ? due.length + ' pending ›' : 'All paid ›'}</span></div></button>
+      ${its.some(i => i.stage === 'closed') && html`<button className="mcard" onClick=${() => setView('service')}><div className="card-row"><b>Service and warranty</b><span className="meta">${openSvc.length ? openSvc.length + ' open ›' : 'Request a visit ›'}</span></div></button>`}
       <div className="inline"><button className="big" onClick=${() => setSheet({n:'complaint', text:''})}>Raise a complaint</button>${its.length && its.every(i => i.stage === 'closed') && !p.feedback ? html`<button className="big pri" onClick=${() => setSheet({n:'rate', r:5, text:''})}>Rate us</button>` : null}</div>
       ${p.feedback && html`<div className="banner good">Thank you for rating us ${p.feedback.rating}/5.</div>`}
       <span className="meta" style=${{fontSize:12,color:'var(--muted)'}}>Project manager: ${staffBy(p.pm).name || ''} · ${staffBy(p.pm).phone || ''}</span>
@@ -856,6 +914,14 @@ function CustomerApp({erp, toast: toastIn, live}){
       ${its.filter(i => i.drawings.some(x => x.url && x.approved)).map(i => { const d = [...i.drawings].reverse().find(x => x.url && x.approved); return html`<div key=${i.id} className="mcard"><div className="card-row"><b>${typeById[i.type].name} · ${i.roomName}</b><span className="meta">${d.rev} · approved</span></div><a className="btn small" href=${d.url} target="_blank" rel="noopener">Open drawing</a></div>`; })}
       ${!(p.docs || []).length && !its.some(i => i.drawings.some(x => x.url && x.approved)) && html`<p className="meta">Your floor plan, approved drawings, quotation and handover papers will appear here.</p>`}<//>`;
     else if (view === 'pay') screen = html`<${Phone} title="Payments" sub=${p.customer} back=${back}>${p.payments.map(m => html`<div key=${m.id} className="mcard"><div className="card-row"><b>${m.label}</b><span className=${'pill ' + (m.received ? 'good' : 'warn')}>${m.received ? 'Received' : 'Pending'}</span></div><span className="meta">${inr(m.amount)} · ${m.pct}%</span></div>`)}<span className="meta" style=${{fontSize:12}}>For payment details, please contact ${staffBy(p.pm).name || 'your project manager'}.</span><//>`;
+    else if (view === 'changes') screen = html`<${Phone} title="Changes to your order" sub=${p.customer} back=${back}>
+      ${(p.changes || []).length ? [...p.changes].reverse().map(c => html`<div key=${c.id} className="mcard"><div className="card-row"><b>${c.desc}</b><span className=${'pill ' + (c.status === 'approved' ? 'good' : c.status === 'pending' ? 'warn' : '')}>${c.status === 'pending' ? 'Waiting for you' : c.status}</span></div>
+        <span className="meta">${c.amount == null ? '' : c.amount >= 0 ? 'Adds ' + inr(c.amount) : 'Reduces ' + inr(-c.amount)}${c.days ? ' · ' + c.days + ' more day' + (c.days > 1 ? 's' : '') : ''}${c.itemId ? ' · ' + (typeById[its.find(i => i.id === c.itemId)?.type]?.name || '') : ''}</span>
+        ${c.status === 'pending' && html`<div className="inline"><button className="big" onClick=${() => act(`/customer/change-orders/${c.id}/decide`, {approve:false}, 'Noted. Your project manager will call you.')}>Decline</button><button className="big go" onClick=${() => act(`/customer/change-orders/${c.id}/decide`, {approve:true}, 'Approved. Your order is updated.')}>Approve</button></div>`}</div>`) : html`<p className="meta">No changes to your order.</p>`}<//>`;
+    else if (view === 'service') screen = html`<${Phone} title="Service and warranty" sub=${p.customer} back=${back}>
+      <div className="mcard"><b>Warranty</b>${its.filter(i => i.warrantyUntil).map(i => html`<div key=${i.id} className="card-row" style=${{fontSize:13}}><span>${typeById[i.type].name} · ${i.roomName}</span><span className="meta">until ${fmtDate(String(i.warrantyUntil).slice(0,10))}</span></div>`)}${!its.some(i => i.warrantyUntil) && html`<span className="meta">Starts when each piece is handed over.</span>`}</div>
+      <button className="big pri" onClick=${() => setSheet({n:'service', text:'', itemId:''})}>Request a service visit</button>
+      ${(p.service || []).map(v => html`<div key=${v.id} className="mcard"><div className="card-row"><b>${v.text}</b><span className=${'pill ' + (v.status === 'resolved' ? 'good' : 'warn')}>${v.status === 'open' ? 'Received' : v.status}</span></div><span className="meta">${dayLabel(v.at)}${v.visitDate ? ' · visit ' + fmtDate(String(v.visitDate).slice(0,10)) : ''}${v.resolution ? ' · ' + v.resolution : ''}</span></div>`)}<//>`;
     else if (view === 'approve') screen = html`<${Phone} title="Approve drawings" sub=${p.customer} back=${back}>
       ${toApprove.map(i => { const wall = p.survey.rooms.find(r => r.code === i.room)?.walls.find(w => w.label === i.wall); return html`<div key=${i.id} className="mcard"><b>${typeById[i.type].name} · ${i.roomName}</b><span className="meta">Drawing ${latestDrawing(i).rev}${i.desc ? ' · ' + i.desc : ''}</span>${latestDrawing(i).url ? html`<a className="btn small" href=${latestDrawing(i).url} target="_blank" rel="noopener">Open drawing</a>` : html`<${Elevation} it=${i} wall=${wall}/>`}
         ${['size','carcass','shutter','finish','hardware','accessories'].some(k => (i.spec || {})[k]) && html`<div style=${{fontSize:13}}><span className="meta" style=${{display:'block',marginBottom:4}}>Materials you are approving</span>${['size','finish','carcass','shutter','hardware','accessories'].filter(k => (i.spec || {})[k]).map(k => html`<div key=${k}><span className="meta">${MATERIAL_FIELDS.find(m => m.id === k).label}:</span> ${i.spec[k]}</div>`)}</div>`}
@@ -866,6 +932,7 @@ function CustomerApp({erp, toast: toastIn, live}){
       const wrap = inner => html`<div className="sheet-m" onClick=${e => e.target === e.currentTarget && close()}><div className="in">${inner}</div></div>`;
       let overlay = null;
       if (sheet.n === 'change') overlay = wrap(html`<h3>What should change?</h3><textarea className="inp" rows="3" value=${sheet.text} onInput=${e => setSheet({...sheet, text:e.target.value})} placeholder="e.g. Please add 2 more drawers on the left"></textarea><div className="inline"><button className="big" onClick=${close}>Cancel</button><button className="big pri" disabled=${sheet.text.trim().length < 2} onClick=${async () => { if (await act(`/customer/items/${sheet.id}/change-request`, {note:sheet.text.trim()}, 'Sent to your designer. The revised drawing will come on WhatsApp.')) close(); }}>Send to designer</button></div>`);
+      if (sheet.n === 'service') overlay = wrap(html`<h3>What needs attention?</h3><select className="sel" value=${sheet.itemId} onChange=${e => setSheet({...sheet, itemId:e.target.value})}><option value="">General</option>${its.map(i => html`<option key=${i.id} value=${i.id}>${typeById[i.type].name} · ${i.roomName}</option>`)}</select><textarea className="inp" rows="3" value=${sheet.text} onInput=${e => setSheet({...sheet, text:e.target.value})} placeholder="e.g. Drawer in the kitchen is not closing smoothly"></textarea><div className="inline"><button className="big" onClick=${close}>Cancel</button><button className="big pri" disabled=${sheet.text.trim().length < 3} onClick=${async () => { if (await act(`/customer/projects/${p.id}/service`, {text:sheet.text, itemId:sheet.itemId || null}, 'Request received. We will call you to fix a visit.')) close(); }}>Send</button></div>`);
       if (sheet.n === 'complaint') overlay = wrap(html`<h3>Raise a complaint</h3><textarea className="inp" rows="3" value=${sheet.text} onInput=${e => setSheet({...sheet, text:e.target.value})} placeholder="Tell us what went wrong"></textarea><div className="inline"><button className="big" onClick=${close}>Cancel</button><button className="big pri" disabled=${sheet.text.trim().length < 2} onClick=${async () => { if (await act(`/customer/projects/${p.id}/complaint`, {text:sheet.text.trim()}, 'Complaint sent. Your project manager will call you within a day.')) close(); }}>Send</button></div>`);
       if (sheet.n === 'rate') overlay = wrap(html`<h3>How did we do?</h3><div className="inline" style=${{justifyContent:'center'}}>${[1,2,3,4,5].map(r => html`<button key=${r} className=${'btn' + (sheet.r >= r ? ' primary' : '')} onClick=${() => setSheet({...sheet, r})}>${r} ★</button>`)}</div><textarea className="inp" rows="2" value=${sheet.text} onInput=${e => setSheet({...sheet, text:e.target.value})} placeholder="Anything to add? (optional)"></textarea><button className="big pri" onClick=${async () => { if (await act(`/customer/projects/${p.id}/feedback`, {rating:sheet.r, comment:sheet.text.trim()}, 'Thank you for your feedback!')) close(); }}>Submit</button>`);
       screen = React.cloneElement(screen, {overlay});
@@ -885,6 +952,7 @@ const PERMS = [
   ['crm','CRM','Leads, inbox, partners and automations'],
   ['ops','Operations dashboard','Company-wide numbers and late items'],
   ['projects','View projects','Projects, items, drawings, survey data'],
+  ['money','See money','Project values, quotations, payments, invoices, commissions'],
   ['edit','Edit and move items','Move items through stages, edit details, create projects'],
   ['assign','Assign installers','Installer management board and assignment anywhere'],
   ['override','Override hard gates','Push an item past a blocked gate with a logged reason'],
@@ -897,9 +965,9 @@ const PERMS = [
 const P = s => Object.fromEntries(PERMS.map(([k]) => [k, s.includes(k)]));
 const DEFAULT_ROLES = {
   admin:P(PERMS.map(p => p[0])),
-  ops_head:P(['crm','ops','projects','edit','assign','payments','tasksAll','survey','install','team']),
-  pm:P(['ops','projects','edit','assign','payments','tasksAll','survey','install','team']),
-  sales:P(['crm','projects']),
+  ops_head:P(['crm','ops','projects','money','edit','assign','payments','tasksAll','survey','install','team']),
+  pm:P(['ops','projects','money','edit','assign','payments','tasksAll','survey','install','team']),
+  sales:P(['crm','projects','money']),
   surveyor:P(['survey','projects']),
   designer:P(['projects','edit']),
   purchase:P(['projects','edit']),
@@ -1031,7 +1099,13 @@ const API = (() => {
     writeQ(rest); flushing = false;
   }
   window.addEventListener('online', flush); setInterval(flush, 20000);
-  return { call, refresh, flush, pending: () => readQ().length, setToken: t => { token = t; }, setAudience: a => { audience = a; }, onAuthLost: fn => { onAuthLost = fn; } };
+  async function raw(path){
+    const go = () => fetch('/api/v1' + path, {credentials:'same-origin', headers: token ? {Authorization:'Bearer ' + token} : {}});
+    let r = await go(); if (r.status === 401 && await refresh()) r = await go();
+    if (!r.ok){ const d = await r.json().catch(() => ({})); throw new Error(d.message || 'Could not open the document.'); }
+    return r;
+  }
+  return { call, raw, refresh, flush, pending: () => readQ().length, setToken: t => { token = t; }, setAudience: a => { audience = a; }, onAuthLost: fn => { onAuthLost = fn; } };
 })();
 const SERVER = {demoMode:false, whatsappLive:false};
 fetch('/api/v1/auth/config').then(r => r.json()).then(c => Object.assign(SERVER, c)).catch(() => {});
@@ -1090,6 +1164,23 @@ function useQueueCount(){
 const geo = () => new Promise(res => { try { navigator.geolocation.getCurrentPosition(p => res({lat:p.coords.latitude, lng:p.coords.longitude}), () => res({}), {timeout:4000}); } catch(e){ res({}); } });
 
 /* ---------- operations used by every screen (same names as the tested prototype) ---------- */
+
+/* ---------- v1.5 helpers: printable documents and CSV downloads ---------- */
+async function openPrint(kind, id){
+  const w = window.open('', '_blank');
+  try { const r = await API.raw(`/print/${kind}/${id}`); const html = await r.text(); if (w){ w.document.open(); w.document.write(html); w.document.close(); } }
+  catch(e){ if (w) w.close(); alert(e.message); }
+}
+async function downloadCsv(what){
+  try { const r = await API.raw(`/export/${what}`); const b = await r.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `mms-${what}-${todayYmd()}.csv`; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); }
+  catch(e){ alert(e.message); }
+}
+const todayYmd = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+const PAY_MODES = ['UPI','Bank transfer','Cheque','Cash','Card'];
+const PRODUCTION_STEPS = [['cutting','Panel cutting'],['edging','Edge banding'],['drilling','Drilling and grooving'],['assembly','Assembly / dry fit'],['packing','Packing and labelling']];
+const SNAG_PAYERS = ['Company','Factory','Vendor','Customer'];
+const rs = n => '₹' + Math.round(Number(n) || 0).toLocaleString('en-IN');
+
 function makeOps(erp, setErp, toast, leads, crm, app){
   const me = erp.me;
   const apply = res => { if (res && res.state) app.applyState(res.state); return res; };
@@ -1102,7 +1193,7 @@ function makeOps(erp, setErp, toast, leads, crm, app){
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const E = () => app.cur();
   const ops = {
-    me,
+    me, api: run,
     gates: it => gatesFor(it, E().projects.find(p => p.id === it.projectId)),
     async setMe(id){
       if (!id){ try { await API.call('POST', '/auth/logout'); } catch(e){} app.loggedOut(); return; }
@@ -1305,6 +1396,87 @@ function Projects({erp, ui, ops}){
 }
 
 /* ---------- Project drawer ---------- */
+function ProjectMoney({p, erp, ops}){
+  const [f, setF] = useState({amount:'', mode:'UPI', reference:'', paidOn:todayYmd(), milestoneId:'', note:''});
+  const [inv, setInv] = useState(null);
+  const set = (k, v) => setF(x => ({...x, [k]:v}));
+  const received = (p.receipts || []).reduce((a, r) => a + r.amount, 0);
+  const invoiced = (p.invoices || []).reduce((a, v) => a + v.total, 0);
+  const canPay = can(erp, 'payments');
+  const record = async () => {
+    const r = await ops.api('POST', `/projects/${p.id}/receipts`, {amount:Number(f.amount), mode:f.mode, reference:f.reference, paidOn:f.paidOn, milestoneId:f.milestoneId ? Number(f.milestoneId) : null, note:f.note}, res => `Receipt ${res.receiptNo} saved.`);
+    if (r && r.receiptId){ setF(x => ({...x, amount:'', reference:'', note:''})); openPrint('receipt', r.receiptId); }
+  };
+  return html`<${React.Fragment}>
+    <div className="box"><h4>Payments · ${rs(received)} received of ${rs(p.value)}</h4>
+      <table><thead><tr><th>Milestone</th><th className="r">Amount</th><th className="r">Paid</th><th>Gate</th><th>Received</th></tr></thead><tbody>${p.payments.map(m => html`<tr key=${m.id}>
+        <td>${m.label}<div className="sub">${m.pct}%</div></td><td className="r num">${inr(m.amount)}</td><td className="r num">${m.paid ? inr(m.paid) : '—'}</td><td>${m.gate ? html`<span className="pill crit">Blocks order</span>` : html`<span className="sub">—</span>`}</td>
+        <td><button className="switch" role="switch" disabled=${!canPay} aria-checked=${m.received} aria-label=${m.label + ' received'} onClick=${() => ops.updProject(p.id, x => { x.payments.find(y => y.id === m.id).received = !m.received; })}></button></td></tr>`)}</tbody></table>
+      <span style=${{fontSize:12,color:'var(--muted)'}}>A milestone turns on by itself once receipts against it cover the amount. The switch is for payments recorded elsewhere.</span></div>
+    ${canPay && html`<div className="box"><h4>Record a payment</h4>
+      <div className="inline" style=${{flexWrap:'wrap',gap:8}}>
+        <input className="inp" inputMode="numeric" placeholder="Amount ₹" value=${f.amount} onInput=${e => set('amount', e.target.value.replace(/[^\d.]/g,''))} style=${{width:120}}/>
+        <select className="sel" value=${f.mode} onChange=${e => set('mode', e.target.value)}>${PAY_MODES.map(m => html`<option key=${m}>${m}</option>`)}</select>
+        <input className="inp" placeholder=${f.mode === 'Cheque' ? 'Cheque no.' : f.mode === 'Cash' ? 'Reference (optional)' : 'UTR / transaction ID'} value=${f.reference} onInput=${e => set('reference', e.target.value)} style=${{width:170}}/>
+        <input type="date" className="inp" value=${f.paidOn} onInput=${e => set('paidOn', e.target.value)}/>
+        <select className="sel" value=${f.milestoneId} onChange=${e => set('milestoneId', e.target.value)}><option value="">Next unpaid milestone</option>${p.payments.map(m => html`<option key=${m.id} value=${m.id}>${m.label}</option>`)}</select>
+        <button className="btn small primary" disabled=${!(Number(f.amount) > 0) || (f.mode !== 'Cash' && !f.reference.trim())} onClick=${record}>Save and print receipt</button>
+      </div></div>`}
+    ${(p.receipts || []).length > 0 && html`<div className="box"><h4>Receipts</h4><table><tbody>${[...p.receipts].reverse().map(r => html`<tr key=${r.id}><td className="mono" style=${{fontSize:12}}>${r.no}</td><td>${fmtDate(String(r.on).slice(0,10))}</td><td className="r num">${inr(r.amount)}</td><td>${r.mode}${r.ref ? html`<div className="sub">${r.ref}</div>` : null}</td><td><button className="btn small ghost" onClick=${() => openPrint('receipt', r.id)}>Print</button>${can(erp, 'admin') && html`<button className="btn small ghost" onClick=${() => { if (confirm('Cancel receipt ' + r.no + '?')) ops.api('DELETE', `/receipts/${r.id}`, undefined, 'Receipt cancelled.'); }}>Cancel</button>`}</td></tr>`)}</tbody></table></div>`}
+    <div className="box"><h4>Tax invoices · ${rs(invoiced)} invoiced</h4>
+      ${(p.invoices || []).length > 0 && html`<table><tbody>${[...p.invoices].reverse().map(v => html`<tr key=${v.id}><td className="mono" style=${{fontSize:12}}>${v.no}</td><td>${fmtDate(String(v.date).slice(0,10))}</td><td>${v.desc}</td><td className="r num">${inr(v.total)}<div className="sub">GST ${inr(v.gst)}</div></td><td><button className="btn small ghost" onClick=${() => openPrint('invoice', v.id)}>Print</button></td></tr>`)}</tbody></table>`}
+      ${inv ? html`<div className="inline" style=${{flexWrap:'wrap',gap:8,marginTop:8}}>
+          <input className="inp" placeholder="Description" value=${inv.description} onInput=${e => setInv(x => ({...x, description:e.target.value}))} style=${{minWidth:240,flex:1}}/>
+          <input className="inp" inputMode="numeric" placeholder="Taxable value ₹" value=${inv.taxable} onInput=${e => setInv(x => ({...x, taxable:e.target.value.replace(/[^\d.]/g,'')}))} style=${{width:140}}/>
+          <input className="inp" inputMode="numeric" value=${inv.gstPct} onInput=${e => setInv(x => ({...x, gstPct:e.target.value.replace(/[^\d.]/g,'')}))} style=${{width:56}} aria-label="GST %"/><span className="sub">% GST</span>
+          <button className="btn small primary" disabled=${!inv.description.trim() || !(Number(inv.taxable) > 0)} onClick=${async () => { const r = await ops.api('POST', `/projects/${p.id}/invoices`, {description:inv.description, taxable:Number(inv.taxable), gstPct:Number(inv.gstPct)}, res => `Invoice ${res.invoiceNo} raised.`); if (r?.invoiceId){ setInv(null); openPrint('invoice', r.invoiceId); } }}>Raise invoice</button>
+          <button className="btn small ghost" onClick=${() => setInv(null)}>Cancel</button></div>`
+        : html`<div className="row-btns"><button className="btn small" onClick=${() => setInv({description:`Modular furniture supply and installation · ${p.code}`, taxable:String(Math.max(0, Math.round((p.value - invoiced) / 1.18))), gstPct:'18'})}>New tax invoice</button></div>`}
+      <span style=${{fontSize:12,color:'var(--muted)'}}>Numbered MMS/financial year/serial. Company GSTIN and bank details come from Admin → Company profile.</span></div>
+    ${(p.quotes || []).length > 0 && html`<div className="box"><h4>Quotation</h4>${p.quotes.map(x => html`<div key=${x.id} className="inline" style=${{gap:10}}><b>R${x.rev}</b><span className="num">${rs(x.total)}</span><span className=${'pill' + (x.status === 'accepted' ? ' good' : '')}>${x.status}</span><button className="btn small ghost" onClick=${() => openPrint('quote', x.id)}>Print</button></div>`)}</div>`}
+  <//>`;
+}
+function ChangeOrders({p, its, erp, ops}){
+  const [f, setF] = useState({description:'', amount:'', days:'0', itemId:''});
+  const money = can(erp, 'money');
+  return html`<div className="details">
+    ${can(erp, 'edit') && html`<div className="box"><h4>Raise a change order</h4>
+      <p className="sub" style=${{fontSize:12.5,margin:'0 0 8px'}}>For any change in scope or price after the drawing is approved. The customer approves it in their app; on approval the project value, unpaid milestones and target date update.</p>
+      <div className="inline" style=${{flexWrap:'wrap',gap:8}}>
+        <input className="inp" placeholder="What is changing (e.g. add loft above wardrobe W2)" value=${f.description} onInput=${e => setF(x => ({...x, description:e.target.value}))} style=${{minWidth:260,flex:1}}/>
+        <select className="sel" value=${f.itemId} onChange=${e => setF(x => ({...x, itemId:e.target.value}))}><option value="">Whole project</option>${its.map(i => html`<option key=${i.id} value=${i.id}>${i.code}</option>`)}</select>
+        <input className="inp" inputMode="numeric" placeholder="± ₹" value=${f.amount} onInput=${e => setF(x => ({...x, amount:e.target.value.replace(/[^\d.-]/g,'')}))} style=${{width:110}}/>
+        <input className="inp" inputMode="numeric" value=${f.days} onInput=${e => setF(x => ({...x, days:e.target.value.replace(/\D/g,'')}))} style=${{width:56}} aria-label="Extra days"/><span className="sub">extra days</span>
+        <button className="btn small primary" disabled=${f.description.trim().length < 3 || f.amount === '' || isNaN(Number(f.amount))} onClick=${async () => { if (await ops.api('POST', `/projects/${p.id}/change-orders`, {description:f.description, amount:Number(f.amount), days:Number(f.days) || 0, itemId:f.itemId || null}, 'Change order sent to the customer app for approval.')) setF({description:'', amount:'', days:'0', itemId:''}); }}>Raise</button>
+      </div></div>`}
+    ${!(p.changes || []).length ? html`<p className="hint">No change orders on this project.</p>` : html`<div className="box"><table><thead><tr><th>Change</th><th className="r">Amount</th><th>Days</th><th>Status</th><th></th></tr></thead><tbody>${[...p.changes].reverse().map(c => html`<tr key=${c.id}>
+      <td>${c.desc}<div className="sub">${c.itemId ? its.find(i => i.id === c.itemId)?.code || '' : 'Project'} · ${dayLabel(c.at)}${c.via ? ' · ' + c.via : ''}</div></td>
+      <td className="r num">${c.amount == null ? '—' : (c.amount >= 0 ? '+' : '−') + inr(Math.abs(c.amount))}</td><td>${c.days ? '+' + c.days : '—'}</td>
+      <td><span className=${'pill' + (c.status === 'approved' ? ' good' : c.status === 'rejected' ? '' : ' warn')}>${c.status === 'pending' ? 'Waiting for client' : c.status}</span></td>
+      <td>${c.status === 'pending' && money && html`<span style=${{whiteSpace:'nowrap'}}><button className="btn small" onClick=${() => ops.api('POST', `/change-orders/${c.id}/decide`, {approve:true}, 'Recorded as approved by the client.')}>Client approved</button><button className="btn small ghost" onClick=${() => ops.api('POST', `/change-orders/${c.id}/decide`, {approve:false}, 'Recorded as declined.')}>Declined</button></span>`}</td></tr>`)}</tbody></table></div>`}
+  </div>`;
+}
+function ServicePanel({p, its, erp, ops}){
+  const [f, setF] = useState({text:'', itemId:''});
+  const staff = TEAM.filter(u => u.active !== false && ['installer','pm','ops_head'].includes(u.role));
+  const today = todayYmd();
+  return html`<div className="details">
+    <div className="box"><h4>Warranty</h4>${its.length ? html`<table><tbody>${its.map(i => html`<tr key=${i.id}><td className="mono" style=${{fontSize:12}}>${i.code}</td><td>${typeById[i.type].name}</td><td>${i.warrantyUntil ? html`<span className=${'pill' + (String(i.warrantyUntil).slice(0,10) >= today ? ' good' : ' warn')}>${String(i.warrantyUntil).slice(0,10) >= today ? 'Until ' : 'Expired '}${fmtDate(String(i.warrantyUntil).slice(0,10))}</span>` : html`<span className="sub">Starts at handover</span>`}</td></tr>`)}</tbody></table>` : html`<span className="sub">No items yet.</span>`}</div>
+    <div className="box"><h4>New service request</h4><div className="inline" style=${{flexWrap:'wrap',gap:8}}>
+      <select className="sel" value=${f.itemId} onChange=${e => setF(x => ({...x, itemId:e.target.value}))}><option value="">General</option>${its.map(i => html`<option key=${i.id} value=${i.id}>${i.code}</option>`)}</select>
+      <input className="inp" placeholder="What does the customer report? (e.g. drawer channel stuck)" value=${f.text} onInput=${e => setF(x => ({...x, text:e.target.value}))} style=${{minWidth:260,flex:1}}/>
+      <button className="btn small primary" disabled=${f.text.trim().length < 3} onClick=${async () => { if (await ops.api('POST', `/projects/${p.id}/service`, {text:f.text, itemId:f.itemId || null}, 'Service request logged; PM has a task.')) setF({text:'', itemId:''}); }}>Log request</button></div></div>
+    ${(p.service || []).map(v => html`<div className="box" key=${v.id}><h4>#${v.id} · ${v.itemId ? its.find(i => i.id === v.itemId)?.code || '' : 'General'} <span className=${'pill' + (v.status === 'resolved' ? ' good' : ' warn')}>${v.status}</span>${v.warranty === true ? html` <span className="pill">Under warranty</span>` : v.warranty === false ? html` <span className="pill crit">Out of warranty</span>` : null}</h4>
+      <div>${v.text}</div><div className="sub" style=${{fontSize:12}}>Raised ${dayLabel(v.at)} by ${v.by}</div>${v.photo && html`<a href=${v.photo} target="_blank" rel="noopener">Photo</a>`}
+      ${v.status !== 'resolved' && can(erp, 'edit') ? html`<div className="inline" style=${{flexWrap:'wrap',gap:8,marginTop:8}}>
+        <select className="sel" value=${v.assignee || ''} onChange=${e => ops.api('PATCH', `/service/${v.id}`, {assignee:e.target.value || null}, 'Assigned; task created.')}><option value="">Assign to…</option>${staff.map(u => html`<option key=${u.id} value=${u.id}>${u.name}</option>`)}</select>
+        <input type="date" className="inp" value=${v.visitDate ? String(v.visitDate).slice(0,10) : ''} onChange=${e => ops.api('PATCH', `/service/${v.id}`, {visitDate:e.target.value || null}, 'Visit scheduled.')}/>
+        <input className="inp" placeholder="Resolution" defaultValue=${v.resolution} id=${'res-' + v.id} style=${{minWidth:200,flex:1}}/>
+        <button className="btn small" onClick=${() => ops.api('PATCH', `/service/${v.id}`, {status:'resolved', resolution:document.getElementById('res-' + v.id).value}, 'Service request closed.')}>Resolve</button></div>`
+      : v.resolution && html`<div className="sub" style=${{marginTop:6}}>Resolution: ${v.resolution}</div>`}
+    </div>`)}
+  </div>`;
+}
 function ProjectDrawer({p, erp, ui, ops, leads, close, tab, setTab}){
   useEffect(() => { const k = e => e.key === 'Escape' && close(); window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, []);
   const its = erp.items.filter(i => i.projectId === p.id);
@@ -1324,7 +1496,7 @@ function ProjectDrawer({p, erp, ui, ops, leads, close, tab, setTab}){
         <div className="inline" style=${{fontSize:13}}><span>PM <b>${uname(p.pm)}</b></span>${p.value ? html`<span>·</span><span className="num">${inr(p.value)}</span>` : null}<span>·</span><span>Target <b>${fmtDate(p.target)}</b></span><span>·</span><span>${its.length ? `${done} of ${its.length} items installed` : 'Survey pending'}</span></div>
         ${its.length ? html`<${StageBar} items=${its}/>` : null}
       </div>
-      <div className="tabs" role="tablist">${[['items','Items'],['docs','Documents'],['survey','Survey'],['payments','Payments & site'],['activity','Activity']].map(([id,n]) => html`<button key=${id} role="tab" aria-selected=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
+      <div className="tabs" role="tablist">${[['items','Items'],['docs','Documents'],['survey','Survey'],['payments', can(erp, 'money') ? 'Money & site' : 'Site'],['changes','Changes' + (p.changes?.some(c => c.status === 'pending') ? ' •' : '')],['service','Service' + (p.service?.some(v => v.status !== 'resolved') ? ' •' : '')],['activity','Activity']].map(([id,n]) => html`<button key=${id} role="tab" aria-selected=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
       <div className="d-body">
         ${tab === 'items' && html`<div className="details">
           ${!its.length && html`<div className="banner">Items are created automatically when Sana submits the site survey. Survey ${p.survey.status === 'scheduled' ? 'is scheduled for ' + fmtDT(p.survey.scheduled) : 'is in progress'}.</div>`}
@@ -1346,17 +1518,15 @@ function ProjectDrawer({p, erp, ui, ops, leads, close, tab, setTab}){
         </div>`}
         ${tab === 'survey' && html`<${SurveyView} p=${p}/>`}
         ${tab === 'payments' && html`<div className="details">
-          <div className="box"><h4>Payment milestones</h4>
-            <table><thead><tr><th>Milestone</th><th className="r">Amount</th><th>Gate</th><th>Received</th></tr></thead><tbody>${p.payments.map(m => html`<tr key=${m.id}>
-              <td>${m.label}<div className="sub">${m.pct}%</div></td><td className="r num">${inr(m.amount)}</td><td>${m.gate ? html`<span className="pill crit">Blocks order</span>` : html`<span className="sub">—</span>`}</td>
-              <td><button className="switch" role="switch" disabled=${!can(erp, 'payments')} aria-checked=${m.received} aria-label=${m.label + ' received'} onClick=${() => ops.updProject(p.id, x => { x.payments.find(y => y.id === m.id).received = !m.received; }, `Payment ${m.received ? 'unmarked' : 'received'}: ${m.label} (${inr(m.amount)})`)}></button></td></tr>`)}</tbody></table>
-            <span style=${{fontSize:12,color:'var(--muted)'}}>Only received yes/no. Invoicing stays in Tally.</span></div>
+          ${can(erp, 'money') && html`<${ProjectMoney} p=${p} erp=${erp} ops=${ops}/>`}
           <div className="box"><h4>Site readiness</h4>
             <label className="check"><input type="checkbox" disabled=${!can(erp, 'payments')} checked=${p.siteReady} onChange=${() => ops.updProject(p.id, x => { x.siteReady = !x.siteReady; }, p.siteReady ? 'Site marked not ready' : 'Site marked ready (civil, electrical, painting, flooring done)')}/>Civil, electrical, painting and flooring are done</label>
             <span style=${{fontSize:12,color:'var(--muted)'}}>Hard gate: items cannot move from Dispatch to Installation until this is ticked.</span></div>
           <div className="box"><h4>Notes for the installation team</h4><textarea className="inp" rows="3" value=${p.notes} onInput=${e => ops.updProject(p.id, x => { x.notes = e.target.value; })} aria-label="Notes"></textarea></div>
         </div>`}
         ${tab === 'docs' && html`<${ProjectDocs} p=${p} erp=${erp} ops=${ops}/>`}
+        ${tab === 'changes' && html`<${ChangeOrders} p=${p} its=${its} erp=${erp} ops=${ops}/>`}
+        ${tab === 'service' && html`<${ServicePanel} p=${p} its=${its} erp=${erp} ops=${ops}/>`}
         ${tab === 'activity' && html`<ol className="timeline">${[...p.activity].reverse().map((e,i) => html`<li key=${i}><span>${e.text}</span><time>${fmtDT(e.t)}</time></li>`)}</ol>`}
       </div>
     </aside>
@@ -1452,6 +1622,9 @@ function HardwareWork({it, ops, edit}){
     <div className="inline">
       <label className="check"><input type="checkbox" disabled=${!edit} checked=${it.hwReceived} onChange=${() => ops.patchItem(it.id, {hwReceived:!it.hwReceived})}/>Hardware received</label>
       <label className="check"><input type="checkbox" disabled=${!edit} checked=${it.productionDone} onChange=${() => ops.patchItem(it.id, {productionDone:!it.productionDone})}/>Factory production complete</label></div>
+    <div><span className="sub" style=${{fontSize:12,letterSpacing:'.08em',textTransform:'uppercase'}}>Factory steps</span>
+      <div className="inline" style=${{flexWrap:'wrap',gap:'4px 14px',marginTop:4}}>${PRODUCTION_STEPS.map(([id, n]) => html`<label key=${id} className="check"><input type="checkbox" disabled=${!edit} checked=${!!(it.productionSteps || {})[id]} onChange=${() => ops.api('POST', `/items/${it.id}/production`, {step:id, done:!(it.productionSteps || {})[id]}, null)}/>${n}</label>`)}</div>
+      <span className="sub" style=${{fontSize:12,color:'var(--muted)'}}>Ticking every step marks factory production complete.</span></div>
     ${it.prodPiNo ? html`<span className="sub" style=${{fontSize:12.5,color:'var(--muted)'}}>Factory PI ${it.prodPiNo}${it.prodPiAmount ? ' · ₹' + Number(it.prodPiAmount).toLocaleString('en-IN') : ''}. Dispatch is allowed once hardware is in and the factory has finished.</span>` : null}</div>`;
 }
 function ProjectDocs({p, erp, ops}){
@@ -1550,7 +1723,10 @@ function ItemModal({it, erp, ops, close, ui}){
       </div>`}
 
       <div className="sec"><h4>Snags · ${openSnags(it).length} open</h4>
-        ${it.snags.map(s => html`<div key=${s.id} className="inline" style=${{fontSize:13}}><span className=${'pill ' + (s.status === 'fixed' ? 'good' : 'crit')}>${SNAG_LABEL[s.status]}</span><b>${s.part}</b><span className="sub">${s.type}${s.note ? ' · ' + s.note : ''} · by ${uname(s.raisedBy)} ${ago(s.at)} ago</span>${s.status !== 'fixed' && html`<button className="btn small" onClick=${() => ops.advanceSnag(it.id, s.id)}>Mark ${SNAG_LABEL[SNAG_FLOW[SNAG_FLOW.indexOf(s.status) + 1]].toLowerCase()}</button>`}</div>`)}
+        ${it.snags.map(s => html`<div key=${s.id} className="inline" style=${{fontSize:13}}><span className=${'pill ' + (s.status === 'fixed' ? 'good' : 'crit')}>${SNAG_LABEL[s.status]}</span><b>${s.part}</b><span className="sub">${s.type}${s.note ? ' · ' + s.note : ''} · by ${uname(s.raisedBy)} ${ago(s.at)} ago</span>${s.status !== 'fixed' && html`<button className="btn small" onClick=${() => ops.advanceSnag(it.id, s.id)}>Mark ${SNAG_LABEL[SNAG_FLOW[SNAG_FLOW.indexOf(s.status) + 1]].toLowerCase()}</button>`}
+          ${can(erp, 'edit') && html`<span className="inline" style=${{gap:6}}><input className="inp" inputMode="numeric" placeholder="Cost ₹" defaultValue=${s.cost ?? ''} style=${{width:90}} onBlur=${e => { const v = e.target.value.trim(); const n = v === '' ? null : Number(v); if (n !== s.cost && (n === null || n >= 0)) ops.api('PATCH', `/snags/${s.id}`, {cost:n}, 'Snag cost saved.'); }} aria-label="Snag cost"/>
+            <select className="sel" value=${s.payer || ''} onChange=${e => ops.api('PATCH', `/snags/${s.id}`, {payer:e.target.value}, 'Saved.')} aria-label="Borne by"><option value="">Borne by…</option>${SNAG_PAYERS.map(x => html`<option key=${x}>${x}</option>`)}</select>
+            <button className="btn small ghost" onClick=${() => openPrint('snag', s.id)}>Reorder slip</button></span>`}</div>`)}
         ${snag ? html`<div className="inline"><select className="sel" value=${snag.type} onChange=${e => setSnag({...snag, type:e.target.value})} aria-label="Snag type">${SNAG_TYPES.map(t => html`<option key=${t}>${t}</option>`)}</select><input className="inp" placeholder="Part (e.g. Shutter 3)" value=${snag.part} onInput=${e => setSnag({...snag, part:e.target.value})}/><input className="inp" placeholder="Note" value=${snag.note} onInput=${e => setSnag({...snag, note:e.target.value})}/><button className="btn small primary" disabled=${!snag.part.trim()} onClick=${() => { ops.raiseSnag(it.id, snag); setSnag(null); }}>Raise</button></div>`
           : html`<div><button className="btn small" onClick=${() => setSnag({type:SNAG_TYPES[0], part:'', note:''})}><${Icon} n="plus" s=${14}/>Raise snag</button></div>`}
       </div>
@@ -2110,7 +2286,7 @@ function App(){
       ${view === 'dashboard' && html`<${Dashboard} leads=${leads} open=${open} go=${go}/>`}
       ${view === 'pipeline' && html`<${Pipeline} leads=${leads} open=${open} move=${moveLead}/>`}
       ${view === 'inbox' && html`<${Inbox} leads=${leads} open=${open} send=${send}/>`}
-      ${view === 'partners' && html`<${Partners} leads=${leads} open=${open}/>`}
+      ${view === 'partners' && html`<${Partners} leads=${leads} open=${open} call=${call} erp=${erp}/>`}
       ${view === 'automations' && html`<${Automations} autos=${autos} toggle=${toggleAuto}/>`}
       ${view === 'ops' && html`<${OpsDashboard} erp=${erp} ui=${ui} ops=${ops}/>`}
       ${view === 'projects' && html`<${Projects} erp=${erp} ui=${ui} ops=${ops}/>`}
@@ -2126,8 +2302,8 @@ function App(){
 
     <nav className="bottomnav" aria-label="Main">${VIEWS.filter(v => canView(erp, v.id)).map(v => html`<button key=${v.id} aria-current=${view === v.id ? 'page' : undefined} onClick=${() => go(v.id)}><${Icon} n=${v.icon} s=${20}/>${v.name}${v.id === 'inbox' && unread ? html`<span className="count">${unread}</span>` : null}</button>`)}</nav>
 
-    ${current && html`<${Drawer} lead=${current} leads=${leads} tab=${openTab} setTab=${setOpenTab} close=${() => setOpenId(null)} move=${moveLead} send=${send} follow=${setFollow} extra=${current.stage === 'won' && can(erp, 'edit') ? html`<${ConvertBox} key=${current.id} lead=${current} erp=${erp} ops=${ops} ui=${ui}/>` : null} setOwner=${o => call('PATCH', `/leads/${current.id}`, {owner:o}, `${current.name} reassigned to ${o}.`)}/>`}
-    ${adding && html`<${AddLead} leads=${leads} close=${() => setAdding(false)} add=${addLead}/>`}
+    ${current && html`<${Drawer} lead=${current} leads=${leads} call=${call} money=${can(erp, 'money')} tab=${openTab} setTab=${setOpenTab} close=${() => setOpenId(null)} move=${moveLead} send=${send} follow=${setFollow} extra=${current.stage === 'won' && can(erp, 'edit') ? html`<${ConvertBox} key=${current.id} lead=${current} erp=${erp} ops=${ops} ui=${ui}/>` : null} setOwner=${o => call('PATCH', `/leads/${current.id}`, {owner:o}, `${current.name} reassigned to ${o}.`)}/>`}
+    ${adding && html`<${AddLead} leads=${leads} close=${() => setAdding(false)} add=${addLead} call=${call} erp=${erp}/>`}
     ${pOpen && html`<${ProjectDrawer} key=${pOpen} p=${erp.projects.find(p => p.id === pOpen)} erp=${erp} ui=${ui} ops=${ops} leads=${leads} tab=${pTab} setTab=${setPTab} close=${() => setPOpen(null)}/>`}
     ${tOpen && html`<${TaskDrawer} key=${tOpen} t=${erp.tasks.find(t => t.id === tOpen)} erp=${erp} ops=${ops} close=${() => setTOpen(null)}/>`}
     ${iOpen && html`<${ItemModal} key=${iOpen} it=${erp.items.find(i => i.id === iOpen)} erp=${erp} ops=${ops} ui=${ui} close=${() => setIOpen(null)}/>`}
@@ -2209,7 +2385,48 @@ function Card({lead, leads, open, dragging, onDrag}){
 }
 
 /* ---------- Drawer ---------- */
-function Drawer({lead, leads, tab, setTab, close, move, send, follow, setOwner, extra}){
+function QuoteTab({lead, call}){
+  const latest = lead.quotes?.length ? lead.quotes[lead.quotes.length - 1] : null;
+  const blankLine = () => ({room:'', item:'', desc:'', size:'', qty:'1', unit:'nos', rate:''});
+  const [editing, setEditing] = useState(!latest);
+  const [lines, setLines] = useState(latest ? latest.lines.map(l => ({...l, qty:String(l.qty), rate:String(l.rate)})) : [blankLine()]);
+  const [discount, setDiscount] = useState(latest ? String(latest.discount || '') : ''), [gst, setGst] = useState(latest ? String(latest.gstPct) : '18'), [notes, setNotes] = useState(latest?.notes || '');
+  const upd = (i, k, v) => setLines(ls => ls.map((l, j) => j === i ? {...l, [k]:v} : l));
+  const sub = lines.reduce((a, l) => a + (Number(l.qty) || 0) * (Number(l.rate) || 0), 0), taxable = Math.max(0, sub - (Number(discount) || 0)), total = Math.round(taxable * (1 + (Number(gst) || 0) / 100));
+  const valid = lines.some(l => l.item.trim() && Number(l.rate) > 0);
+  const save = async () => {
+    const body = {lines:lines.filter(l => l.item.trim()).map(l => ({room:l.room, item:l.item.trim(), desc:l.desc, size:l.size, qty:Number(l.qty) || 0, unit:l.unit || 'nos', rate:Number(l.rate) || 0})), discount:Number(discount) || 0, gstPct:Number(gst) || 0, notes};
+    const r = await call('POST', `/leads/${lead.id}/quotes`, body, res => `Quotation R${res.rev} saved · ${rs(total)}. Deal value updated.`);
+    if (r){ setEditing(false); if (r.quoteId) openPrint('quote', r.quoteId); }
+  };
+  return html`<div className="details">
+    ${lead.quotes?.length > 0 && html`<div className="box"><h4>Revisions</h4><table style=${{minWidth:0}}><tbody>${[...lead.quotes].reverse().map(x => html`<tr key=${x.id}><td><b>R${x.rev}</b></td><td className="num">${rs(x.total)}</td><td><span className=${'pill' + (x.status === 'accepted' ? ' good' : x.status === 'superseded' ? '' : ' warn')}>${x.status}</span></td><td className="meta">${dayLabel(x.at)}</td>
+      <td style=${{whiteSpace:'nowrap'}}><button className="btn small ghost" onClick=${() => openPrint('quote', x.id)}>Print / PDF</button>${x.status === 'sent' && html`<button className="btn small" onClick=${() => call('POST', `/quotes/${x.id}/accept`, {}, 'Quotation marked accepted. Deal value updated.')}>Client accepted</button>`}</td></tr>`)}</tbody></table>
+      ${!editing && html`<div className="row-btns" style=${{marginTop:8}}><button className="btn small" onClick=${() => setEditing(true)}>New revision</button></div>`}</div>`}
+    ${editing && html`<div className="box"><h4>${latest ? 'Revision R' + (latest.rev + 1) : 'New quotation'}</h4>
+      <div style=${{overflowX:'auto'}}><table className="qtable" style=${{minWidth:640}}><thead><tr><th>Room</th><th>Item</th><th>Size</th><th className="r">Qty</th><th className="r">Rate ₹</th><th className="r">Amount</th><th></th></tr></thead><tbody>
+        ${lines.map((l, i) => html`<tr key=${i}>
+          <td><input value=${l.room} onInput=${e => upd(i, 'room', e.target.value)} placeholder="Kitchen" style=${{width:90}}/></td>
+          <td><input value=${l.item} onInput=${e => upd(i, 'item', e.target.value)} placeholder="Base units, carcass + shutters" style=${{width:'100%',minWidth:160}}/><input value=${l.desc} onInput=${e => upd(i, 'desc', e.target.value)} placeholder="Material / finish (optional)" style=${{width:'100%',marginTop:4,fontSize:12}}/></td>
+          <td><input value=${l.size} onInput=${e => upd(i, 'size', e.target.value)} placeholder="3000 × 600" style=${{width:90}}/></td>
+          <td className="r"><input inputMode="decimal" value=${l.qty} onInput=${e => upd(i, 'qty', e.target.value.replace(/[^\d.]/g,''))} style=${{width:52,textAlign:'right'}}/><select value=${l.unit} onChange=${e => upd(i, 'unit', e.target.value)} style=${{width:62,marginLeft:4}}>${['nos','sqft','rft','set'].map(u => html`<option key=${u}>${u}</option>`)}</select></td>
+          <td className="r"><input inputMode="numeric" value=${l.rate} onInput=${e => upd(i, 'rate', e.target.value.replace(/[^\d.]/g,''))} style=${{width:90,textAlign:'right'}}/></td>
+          <td className="r num">${rs((Number(l.qty) || 0) * (Number(l.rate) || 0))}</td>
+          <td><button className="btn small ghost" aria-label="Remove line" disabled=${lines.length === 1} onClick=${() => setLines(ls => ls.filter((_, j) => j !== i))}>×</button></td></tr>`)}
+      </tbody></table></div>
+      <div className="row-btns"><button className="btn small" onClick=${() => setLines(ls => [...ls, blankLine()])}>+ Add line</button></div>
+      <dl className="fields" style=${{marginTop:10}}>
+        <div><dt>Subtotal</dt><dd className="num">${rs(sub)}</dd></div>
+        <div><dt>Discount ₹</dt><dd><input inputMode="numeric" value=${discount} onInput=${e => setDiscount(e.target.value.replace(/\D/g,''))} style=${{width:110}}/></dd></div>
+        <div><dt>GST %</dt><dd><input inputMode="numeric" value=${gst} onInput=${e => setGst(e.target.value.replace(/[^\d.]/g,''))} style=${{width:60}}/></dd></div>
+        <div><dt>Total incl. GST</dt><dd className="num"><b>${rs(total)}</b></dd></div>
+      </dl>
+      <label style=${{display:'grid',gap:4,fontSize:12,marginTop:8}}>Notes for the client<textarea rows="2" value=${notes} onInput=${e => setNotes(e.target.value)} placeholder="Brand of hardware, exclusions, timeline…"></textarea></label>
+      <div className="row-btns" style=${{marginTop:10}}>${latest && html`<button className="btn small ghost" onClick=${() => setEditing(false)}>Cancel</button>`}<button className="btn small primary" disabled=${!valid} onClick=${save}>Save and open PDF</button></div>
+    </div>`}
+  </div>`;
+}
+function Drawer({lead, leads, tab, setTab, close, move, send, follow, setOwner, extra, call, money}){
   useEffect(() => { const k = e => e.key === 'Escape' && close(); window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, []);
   const idx = OPEN.indexOf(lead.stage);
   const [copied, setCopied] = useState(false);
@@ -2233,10 +2450,11 @@ function Drawer({lead, leads, tab, setTab, close, move, send, follow, setOwner, 
         </div>
       </div>
       <div className="tabs" role="tablist">
-        ${[['chat','WhatsApp'],['details','Details'],['timeline','Timeline']].map(([id,n]) => html`<button key=${id} role="tab" aria-selected=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}
+        ${[['chat','WhatsApp'],['details','Details'],...(money ? [['quote','Quotation']] : []),['timeline','Timeline']].map(([id,n]) => html`<button key=${id} role="tab" aria-selected=${tab === id} onClick=${() => setTab(id)}>${n}${id === 'quote' && lead.quotes?.length ? ' R' + lead.quotes[lead.quotes.length - 1].rev : ''}</button>`)}
       </div>
       <div className="d-body" style=${tab === 'chat' ? {overflow:'hidden'} : null}>
         ${tab === 'chat' && html`<${Chat} lead=${lead} send=${send}/>`}
+        ${tab === 'quote' && money && html`<${QuoteTab} key=${lead.id} lead=${lead} call=${call}/>`}
         ${tab === 'details' && html`<div className="details">
           <dl className="fields">
             <div><dt>Source</dt><dd>${srcById[lead.source].name}${lead.sub ? ' · ' + lead.sub : ''}</dd></div>
@@ -2375,38 +2593,85 @@ function Inbox({leads, open, send}){
 }
 
 /* ---------- Partners ---------- */
-function Partners({leads, open}){
-  const [exp, setExp] = useState(null);
-  const [type, setType] = useState('all');
-  const rows = PARTNERS.map(p => {
-    const ls = leads.filter(l => l.ref === p.id);
-    const won = ls.filter(l => l.stage === 'won');
-    const wonVal = won.reduce((s,l) => s + l.value, 0);
-    const last = ls.length ? Math.max(...ls.map(l => l.created)) : null;
-    return {p, ls, won:won.length, wonVal, comm:wonVal * p.rate / 100, open:ls.filter(l => OPEN.includes(l.stage)).length, lastDays: last ? Math.floor((Date.now()-last)/DAY) : null};
-  }).filter(r => type === 'all' || r.p.type === type).sort((a,b) => b.wonVal - a.wonVal || b.ls.length - a.ls.length);
-  const typeName = {architect:'Architect / Interior planner', contractor:'Civil engineer / Contractor', agent:'Real estate agent'};
-  const totalDue = rows.reduce((s,r) => s + r.comm, 0);
+const PARTNER_TYPES = {architect:'Architect / Interior planner', contractor:'Civil engineer / Contractor', agent:'Real estate agent'};
+function PartnerForm({init, erp, close, save}){
+  const blank = {name:'', firm:'', type:'architect', phone:'', email:'', city:'', tier:'Silver', rate:'2', owner:'', notes:'', active:true};
+  const [f, setF] = useState(init ? {...blank, ...init, rate:String(init.rate ?? ''), owner:init.ownerId || '', phone:init.phone || ''} : blank);
+  const [tried, setTried] = useState(false), [busy, setBusy] = useState(false);
+  const set = (k, v) => setF(x => ({...x, [k]:v}));
+  const digits = f.phone.replace(/\D/g,'').slice(-10);
+  const errs = {name:f.name.trim().length < 2, phone:!!f.phone.trim() && digits.length !== 10, rate:!(Number(f.rate) >= 0 && Number(f.rate) <= 30)};
+  const owners = (erp?.users || []).filter(u => u.active !== false && ['sales','admin','ops_head'].includes(u.role));
+  const submit = async e => { e.preventDefault(); setTried(true); if (Object.values(errs).some(Boolean)) return; setBusy(true);
+    const ok = await save({name:f.name.trim(), firm:f.firm.trim(), type:f.type, phone:digits ? digits : '', email:f.email.trim(), city:f.city.trim(), tier:f.tier, rate:Number(f.rate) || 0, owner:f.owner || null, notes:f.notes, active:f.active});
+    setBusy(false); if (ok) close(); };
+  return html`<div className="modal" role="dialog" aria-modal="true" aria-label=${init ? 'Edit partner' : 'Add partner'}>
+    <div className="scrim" onClick=${close}></div>
+    <form className="sheet" onSubmit=${submit} noValidate>
+      <header><h2>${init ? 'Edit partner' : 'Add partner'}</h2><p>Architects, contractors and agents who send you clients. Their leads, sales value and commission are tracked automatically.</p></header>
+      <div className="form">
+        <label>Name <span className="req">*</span><input value=${f.name} onInput=${e => set('name', e.target.value)} placeholder="e.g. Ar. Neha Sharma" autoFocus/>${tried && errs.name && html`<span className="err">Enter the partner's name.</span>`}</label>
+        <label>Firm<input value=${f.firm} onInput=${e => set('firm', e.target.value)} placeholder="Studio / company name"/></label>
+        <label className="full">Type <span className="req">*</span><select value=${f.type} disabled=${!!init && init.stats?.leads > 0} onChange=${e => set('type', e.target.value)}>${Object.entries(PARTNER_TYPES).map(([k, n]) => html`<option key=${k} value=${k}>${n}</option>`)}</select>${init && init.stats?.leads > 0 && html`<span className="hint">Type is fixed once the partner has leads.</span>`}</label>
+        <label>WhatsApp number<input inputMode="tel" value=${f.phone} onInput=${e => set('phone', e.target.value)} placeholder="10-digit mobile"/>${tried && errs.phone && html`<span className="err">Enter a 10-digit number or leave it empty.</span>`}</label>
+        <label>Email<input type="email" value=${f.email} onInput=${e => set('email', e.target.value)}/></label>
+        <label>City<input value=${f.city} onInput=${e => set('city', e.target.value)}/></label>
+        <label>Tier<select value=${f.tier} onChange=${e => set('tier', e.target.value)}>${['Silver','Gold','Platinum'].map(t => html`<option key=${t}>${t}</option>`)}</select></label>
+        <label>Commission %<input inputMode="decimal" value=${f.rate} onInput=${e => set('rate', e.target.value.replace(/[^\d.]/g,''))}/>${tried && errs.rate && html`<span className="err">0 to 30.</span>`}</label>
+        <label>Relationship owner<select value=${f.owner} onChange=${e => set('owner', e.target.value)}><option value="">Not set</option>${owners.map(u => html`<option key=${u.id} value=${u.id}>${u.name}</option>`)}</select></label>
+        <label className="full">Notes<textarea rows="2" value=${f.notes} onInput=${e => set('notes', e.target.value)} placeholder="Agreement, preferred brands, payout terms…"></textarea></label>
+        ${init && html`<label className="full" style=${{flexDirection:'row',alignItems:'center',gap:8}}><input type="checkbox" checked=${f.active} onChange=${e => set('active', e.target.checked)} style=${{width:'auto'}}/> Active (inactive partners are hidden from the lead form)</label>`}
+        <div className="form-foot"><button type="button" className="btn ghost" onClick=${close}>Cancel</button><button type="submit" className="btn primary" disabled=${busy}>${init ? 'Save' : 'Add partner'}</button></div>
+      </div>
+    </form>
+  </div>`;
+}
+function Partners({leads, open, call, erp}){
+  const [exp, setExp] = useState(null), [type, setType] = useState('all'), [form, setForm] = useState(null), [showInactive, setShowInactive] = useState(false);
+  const money = can(erp, 'money');
+  const rows = PARTNERS.filter(p => showInactive || p.active !== false).map(p => {
+    const ls = leads.filter(l => l.ref === p.id), st = p.stats || {};
+    const due = (st.commission || 0) - (st.commissionPaid || 0);
+    const lastDays = st.lastLead ? Math.floor((Date.now() - st.lastLead) / DAY) : null;
+    return {p, ls, st, due, lastDays};
+  }).filter(r => type === 'all' || r.p.type === type).sort((a,b) => (b.st.wonValue || 0) - (a.st.wonValue || 0) || b.ls.length - a.ls.length);
+  const tot = rows.reduce((a, r) => ({leads:a.leads + (r.st.leads || 0), pipe:a.pipe + (r.st.pipeline || 0), won:a.won + (r.st.wonValue || 0), proj:a.proj + (r.st.projectValue || 0), due:a.due + r.due}), {leads:0, pipe:0, won:0, proj:0, due:0});
+  const save = async (body, id) => !!(await call(id ? 'PATCH' : 'POST', id ? `/partners/${id}` : '/partners', body, id ? 'Partner updated.' : `${body.name} added. Choose them under "Referred by" when adding a lead.`));
   return html`<section className="view">
     <div className="toolbar">
       <div className="chips" role="group" aria-label="Partner type">${[['all','All partners'],['architect','Architects'],['contractor','Contractors'],['agent','Agents']].map(([id,n]) => html`<button key=${id} className="chip" aria-pressed=${type === id} onClick=${() => setType(id)}>${n}</button>`)}</div>
-      <span style=${{marginLeft:'auto',fontSize:13,color:'var(--muted)'}}>Commission due: <b className="num" style=${{color:'var(--ink)'}}>${inr(totalDue)}</b></span>
+      <label className="chip" style=${{cursor:'pointer'}}><input type="checkbox" checked=${showInactive} onChange=${e => setShowInactive(e.target.checked)} style=${{margin:0}}/> Show inactive</label>
+      <span style=${{marginLeft:'auto'}}></span>
+      <button className="btn small" onClick=${() => downloadCsv('partners')}>Export CSV</button>
+      <button className="btn small primary" onClick=${() => setForm({})}><${Icon} n="plus" s=${14}/>Add partner</button>
+    </div>
+    <div className="kpis" style=${{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:12,marginBottom:16}}>
+      ${[['Partners', rows.length], ['Leads sent', tot.leads], ['Open pipeline', lakh(tot.pipe)], ['Won value', lakh(tot.won)], ['Project value', lakh(tot.proj)], ...(money ? [['Commission due', inr(tot.due)]] : [])].map(([k, v]) => html`<div key=${k} className="panel" style=${{padding:'12px 14px'}}><div className="sub" style=${{fontSize:11,letterSpacing:'.08em',textTransform:'uppercase',color:'var(--muted)'}}>${k}</div><b className="num" style=${{fontSize:20}}>${v}</b></div>`)}
     </div>
     <div className="table-wrap"><table>
-      <thead><tr><th>Partner</th><th>Type</th><th>Tier</th><th className="r">Leads</th><th className="r">Open</th><th className="r">Won value</th><th className="r">Commission due</th><th>Last lead</th></tr></thead>
+      <thead><tr><th>Partner</th><th>Type</th><th>Tier</th><th className="r">Leads</th><th className="r">Open pipeline</th><th className="r">Won</th><th className="r">Won value</th><th className="r">Project value</th>${money && html`<th className="r">Commission due</th>`}<th>Last lead</th><th></th></tr></thead>
       <tbody>${rows.map(r => html`<${React.Fragment} key=${r.p.id}>
-        <tr className="click" onClick=${() => setExp(exp === r.p.id ? null : r.p.id)} aria-expanded=${exp === r.p.id}>
-          <td className="p-name"><b>${r.p.name}</b><div className="sub">${r.p.firm} · managed by ${r.p.owner}</div></td>
-          <td><span className="src"><i className="sw" style=${{background:`var(--s-${r.p.type})`}}></i>${typeName[r.p.type]}</span></td>
+        <tr className="click" onClick=${() => setExp(exp === r.p.id ? null : r.p.id)} aria-expanded=${exp === r.p.id} style=${r.p.active === false ? {opacity:.55} : null}>
+          <td className="p-name"><b>${r.p.name}</b><div className="sub">${[r.p.firm, r.p.city, r.p.owner ? 'managed by ' + r.p.owner : ''].filter(Boolean).join(' · ')}</div></td>
+          <td><span className="src"><i className="sw" style=${{background:`var(--s-${r.p.type})`}}></i>${PARTNER_TYPES[r.p.type]}</span></td>
           <td><span className=${'tier ' + r.p.tier}>${r.p.tier}</span></td>
-          <td className="r num">${r.ls.length}</td><td className="r num">${r.open}</td>
-          <td className="r num"><b>${r.wonVal ? lakh(r.wonVal) : '—'}</b></td>
-          <td className="r num">${r.comm ? inr(r.comm) : '—'}<div className="sub">${r.p.rate}%</div></td>
+          <td className="r num">${r.st.leads || 0}</td>
+          <td className="r num">${r.st.pipeline ? lakh(r.st.pipeline) : '—'}<div className="sub">${r.st.open || 0} open</div></td>
+          <td className="r num">${r.st.won || 0}</td>
+          <td className="r num"><b>${r.st.wonValue ? lakh(r.st.wonValue) : '—'}</b></td>
+          <td className="r num">${r.st.projectValue ? lakh(r.st.projectValue) : '—'}</td>
+          ${money && html`<td className="r num">${r.due ? inr(r.due) : '—'}<div className="sub">${r.p.rate}%${r.st.commissionPaid ? ' · ' + inr(r.st.commissionPaid) + ' paid' : ''}</div></td>`}
           <td>${r.lastDays == null ? html`<span className="dormant">No leads yet</span>` : r.lastDays > 60 ? html`<span className="dormant">${r.lastDays}d ago</span>` : html`<span className="num">${r.lastDays === 0 ? 'Today' : r.lastDays + 'd ago'}</span>`}</td>
+          <td><button className="btn small ghost" onClick=${e => { e.stopPropagation(); setForm(r.p); }}>Edit</button></td>
         </tr>
-        ${exp === r.p.id && html`<tr className="expand"><td colSpan="8">${r.ls.length ? html`<div className="mini-leads">${r.ls.map(l => html`<button key=${l.id} className="mini" onClick=${() => open(l.id, 'details')}><b>${l.name}</b><span style=${{color:'var(--muted)'}}>${stageById[l.stage].name}</span><span className="num">${lakh(l.value)}</span></button>`)}</div>` : html`<span style=${{color:'var(--muted)'}}>No leads referred yet. The dormant-partner automation will create a visit task for ${r.p.owner}.</span>`}</td></tr>`}
+        ${exp === r.p.id && html`<tr className="expand"><td colSpan=${money ? 11 : 10}>
+          <div style=${{display:'flex',gap:18,flexWrap:'wrap',fontSize:13,marginBottom:8}}>${r.p.phone && html`<span>WhatsApp <b>${r.p.phone}</b></span>`}${r.p.email && html`<span>${r.p.email}</span>`}${r.p.notes && html`<span className="meta">${r.p.notes}</span>`}</div>
+          ${r.ls.length ? html`<div className="mini-leads">${r.ls.map(l => html`<button key=${l.id} className="mini" onClick=${() => open(l.id, 'details')}><b>${l.name}</b><span style=${{color:'var(--muted)'}}>${stageById[l.stage].name}</span><span className="num">${lakh(l.value)}</span></button>`)}</div>` : html`<span style=${{color:'var(--muted)'}}>No leads from this partner yet.</span>`}
+          ${money && r.p.commissions?.length > 0 && html`<table style=${{marginTop:10,minWidth:0}}><thead><tr><th>Commission on</th><th className="r">Amount</th><th>Status</th><th></th></tr></thead><tbody>${r.p.commissions.map(c => html`<tr key=${c.id}><td>${leads.find(l => l.id === c.leadId)?.name || c.leadId}</td><td className="r num">${inr(c.amount)}</td><td><span className=${'pill' + (c.status === 'paid' ? ' good' : ' warn')}>${c.status}</span></td><td><button className="btn small" onClick=${() => call('POST', `/commissions/${c.id}/paid`, {paid:c.status !== 'paid'}, c.status !== 'paid' ? 'Commission marked paid.' : 'Marked pending again.')}>${c.status === 'paid' ? 'Mark pending' : 'Mark paid'}</button></td></tr>`)}</tbody></table>`}
+        </td></tr>`}
       <//>`)}</tbody>
     </table></div>
+    ${form && html`<${PartnerForm} init=${form.id ? form : null} erp=${erp} close=${() => setForm(null)} save=${b => save(b, form.id)}/>`}
   </section>`;
 }
 
@@ -2424,14 +2689,15 @@ function Automations({autos, toggle}){
 }
 
 /* ---------- Add lead ---------- */
-function AddLead({leads, close, add}){
+function AddLead({leads, close, add, call, erp}){
+  const [newPartner, setNewPartner] = useState(false);
   const [f, setF] = useState({name:'', phone:'', source:'', sub:'', ref:'', showroom:SHOWROOMS[0], interest:'', value:'', area:'', owner:OWNERS[0]});
   const [tried, setTried] = useState(false);
   const set = (k,v) => setF(x => ({...x, [k]:v}));
   const s = srcById[f.source];
   const digits = f.phone.replace(/\D/g,'').slice(-10);
   const dup = digits.length === 10 ? leads.find(l => l.phone.replace(/\D/g,'').slice(-10) === digits) : null;
-  const partners = s?.family === 'partner' ? PARTNERS.filter(p => p.type === f.source) : [];
+  const partners = s?.family === 'partner' ? PARTNERS.filter(p => p.type === f.source && p.active !== false) : [];
   const clients = leads.filter(l => l.stage === 'won');
   const errs = {name:!f.name.trim(), phone:digits.length !== 10, source:!f.source, ref:(s?.family === 'partner' || s?.family === 'referral') && !f.ref};
   const ok = !Object.values(errs).some(Boolean);
@@ -2451,7 +2717,7 @@ function AddLead({leads, close, add}){
           <div className="src-grid" role="group" aria-label="Lead source">${SOURCES.map(x => html`<button type="button" key=${x.id} className="src-opt" aria-pressed=${f.source === x.id} onClick=${() => setF(v => ({...v, source:x.id, ref:'', sub:''}))}><i style=${{width:9,height:9,borderRadius:2,background:`var(--s-${x.id})`,flex:'none'}}></i>${x.name}</button>`)}</div>
           ${tried && errs.source && html`<span className="err">Pick where this client came from.</span>`}
         </div>
-        ${s?.family === 'partner' && html`<label className="full">Referred by <span className="req">*</span><select id="f-ref" value=${f.ref} onChange=${e => set('ref', e.target.value)}><option value="">Choose ${s.short.toLowerCase()}</option>${partners.map(p => html`<option key=${p.id} value=${p.id}>${p.name}, ${p.firm}</option>`)}</select>${tried && errs.ref && html`<span className="err">Choose the partner who sent this client, so they get credit.</span>`}${f.ref && html`<span style=${{color:'var(--muted)',fontWeight:400}}>Assigned to ${partnerById[f.ref].owner}, who manages this partner.</span>`}</label>`}
+        ${s?.family === 'partner' && html`<label className="full">Referred by <span className="req">*</span><select id="f-ref" value=${f.ref} onChange=${e => set('ref', e.target.value)}><option value="">Choose ${s.short.toLowerCase()}</option>${partners.map(p => html`<option key=${p.id} value=${p.id}>${p.name}${p.firm ? ', ' + p.firm : ''}</option>`)}</select><button type="button" className="linkbtn" onClick=${() => setNewPartner(true)}>+ Add a new ${s.short.toLowerCase()}</button>${tried && errs.ref && html`<span className="err">Choose the partner who sent this client, so they get credit.</span>`}${f.ref && html`<span style=${{color:'var(--muted)',fontWeight:400}}>Assigned to ${partnerById[f.ref].owner}, who manages this partner.</span>`}</label>`}
         ${s?.family === 'referral' && html`<label className="full">Referred by client <span className="req">*</span><select id="f-client" value=${f.ref} onChange=${e => set('ref', e.target.value)}><option value="">Choose an existing client</option>${clients.map(c => html`<option key=${c.id} value=${c.id}>${c.name}</option>`)}</select>${tried && errs.ref && html`<span className="err">Choose the client who referred them.</span>`}</label>`}
         ${f.source === 'walkin' && html`<label>Showroom<select id="f-showroom" value=${f.showroom} onChange=${e => set('showroom', e.target.value)}>${SHOWROOMS.map(x => html`<option key=${x}>${x}</option>`)}</select></label>`}
         ${SUB[f.source] && html`<label>Sub-source<select id="f-sub" value=${f.sub} onChange=${e => set('sub', e.target.value)}><option value="">Choose</option>${SUB[f.source].map(x => html`<option key=${x}>${x}</option>`)}</select></label>`}
@@ -2462,6 +2728,7 @@ function AddLead({leads, close, add}){
         <div className="form-foot"><button type="button" className="btn ghost" onClick=${close}>Cancel</button><button type="submit" className="btn primary">Add lead</button></div>
       </div>
     </form>
+    ${newPartner && html`<${PartnerForm} init=${null} erp=${erp} close=${() => setNewPartner(false)} save=${async b => { const r = await call('POST', '/partners', {...b, type:f.source}, `${b.name} added as a partner.`); if (r?.id) set('ref', r.id); return !!r; }}/>`}
   </div>`;
 }
 
