@@ -822,7 +822,7 @@ function Integrations({toast}){
   return html`<div className="stack">
     <div className="panel"><h3>WhatsApp Cloud API</h3><p className="hint">${d.whatsapp.live ? 'Connected. Messages are sent through your WhatsApp Business number.' : 'Not connected yet: messages are simulated and logged, nothing is sent. Add the Meta values to the server settings to go live.'}</p>
       <dl className="kv"><${Row} k="Status" v=${d.whatsapp.live ? 'Live' : 'Simulated'}/><${Row} k="Phone number ID" v=${d.whatsapp.phoneNumberId || '—'}/><${Row} k="Business account (WABA)" v=${d.whatsapp.wabaId || '—'}/>
-        <${Row} k="App secret (signature check)" v=${d.whatsapp.appSecret ? 'Set' : 'Missing'}/><${Row} k="Verify token" v=${d.whatsapp.verifyToken ? 'Set' : 'Missing'}/>
+        <${Row} k="App secret (signature check)" v=${d.whatsapp.appSecret ? 'Set' : 'Missing'}/><${Row} k="Verify token (paste in Meta)" v=${d.whatsapp.verifyToken}/>
         <${Row} k="Webhook URL (paste in Meta)" v=${d.whatsapp.webhook}/><${Row} k="Also forwarded to" v=${d.whatsapp.forwardUrl || '—'}/><${Row} k="Graph API version" v=${d.graphVersion}/>
         <${Row} k="Sent (30 days)" v=${d.whatsapp.last30.sent}/><${Row} k="Simulated (30 days)" v=${d.whatsapp.last30.simulated}/><${Row} k="Failed (30 days)" v=${d.whatsapp.last30.failed}/></dl>
       ${d.whatsapp.recentFailures?.length > 0 && html`<p className="hint" style=${{marginTop:10}}><b>Recent failures</b></p><table style=${{minWidth:0}}><tbody>${d.whatsapp.recentFailures.map((f, i) => html`<tr key=${i}><td className="mono">${f.template || 'text'}</td><td>${f.error}</td><td className="meta">${String(f.created_at).slice(0, 16).replace('T', ' ')}</td></tr>`)}</tbody></table>`}

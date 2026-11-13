@@ -1,4 +1,4 @@
-import { config } from './core/config.js';
+import { config, waVerifyToken } from './core/config.js';
 import { db } from './core/db.js';
 import { send, Router, createServer } from './core/http.js';
 import { HttpError } from './core/util.js';
@@ -20,7 +20,7 @@ export function buildApp() {
 
   // Meta webhooks: GET handshake + signed POSTs. Always answer 200 quickly; processing happens in jobs.
   r.get('/api/v1/webhooks/whatsapp', ctx => {
-    const c = verifyHandshake(ctx.query, config.WHATSAPP_VERIFY_TOKEN);
+    const c = verifyHandshake(ctx.query, waVerifyToken());
     if (c === null) throw new HttpError(403, 'Forbidden', 'forbidden');
     send(ctx.res, 200, c);
   });
@@ -28,7 +28,7 @@ export function buildApp() {
     if (!validSignature(ctx.rawBody, ctx.req.headers['x-hub-signature-256'] as string)) throw new HttpError(401, 'Bad signature', 'bad_signature');
     const payload = JSON.parse(ctx.rawBody.toString('utf8') || '{}');
     await ingestWhatsAppWebhook(payload);
-    forwardWebhook(ctx.rawBody, payload);
+    forwardWebhook(ctx.rawBody, payload, ctx.req.headers['x-hub-signature-256'] as string);
     return { ok: true };
   });
   r.get('/api/v1/webhooks/meta-leads', ctx => {

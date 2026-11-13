@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { z } from 'zod';
 
 const bool = z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true' || v === '1');
@@ -60,5 +61,7 @@ export function assertProductionConfig() {
   if (problems.length) throw new Error('Unsafe production config:\n- ' + problems.join('\n- '));
 }
 
+/** Webhook verify token: WHATSAPP_VERIFY_TOKEN if set, otherwise derived from JWT_SECRET (stable, shown to admins on the Integrations screen). */
+export const waVerifyToken = () => config.WHATSAPP_VERIFY_TOKEN || 'mms-' + crypto.createHash('sha256').update('wa-verify:' + config.JWT_SECRET).digest('hex').slice(0, 24);
 export const whatsappLive = () => !!(config.WHATSAPP_ACCESS_TOKEN && config.WHATSAPP_PHONE_NUMBER_ID);
 export const metaLeadsLive = () => !!(config.META_PAGE_ACCESS_TOKEN && config.META_PAGE_ID);

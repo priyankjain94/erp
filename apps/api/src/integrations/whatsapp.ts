@@ -239,13 +239,15 @@ export async function syncTemplates(opts: { create?: boolean } = { create: true 
 
 /** Keeps the business's existing WhatsApp bot working: every webhook the ERP receives is relayed to it,
  *  except taps on the ERP's own buttons (task / drawing approvals), which only the ERP understands. */
-export function forwardWebhook(raw: Buffer, payload: any) {
+export function forwardWebhook(raw: Buffer, payload: any, signature?: string) {
   if (!config.WHATSAPP_FORWARD_URL) return;
   const msgs = (payload?.entry || []).flatMap((e: any) => (e.changes || []).flatMap((c: any) => c.value?.messages || []));
   const ours = (m: any) => /^(TASK_|DRAWING_|RATE:)/.test(m?.button?.payload || m?.interactive?.button_reply?.id || '');
   if (msgs.length && msgs.every(ours)) return;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (config.META_APP_SECRET) headers['X-Hub-Signature-256'] = 'sha256=' + crypto.createHmac('sha256', config.META_APP_SECRET).update(raw).digest('hex');
+  // the body is relayed byte-for-byte, so Meta's own signature stays valid for the bot
+  const sig = signature || (config.META_APP_SECRET ? 'sha256=' + crypto.createHmac('sha256', config.META_APP_SECRET).update(raw).digest('hex') : '');
+  if (sig) headers['X-Hub-Signature-256'] = sig;
   fetch(config.WHATSAPP_FORWARD_URL, { method: 'POST', headers, body: new Uint8Array(raw), signal: AbortSignal.timeout(8000) })
     .then(r => { if (!r.ok) log.warn('whatsapp forward', r.status); }).catch(e => log.warn('whatsapp forward failed', String(e?.message || e)));
 }
