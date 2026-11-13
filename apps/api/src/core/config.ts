@@ -5,7 +5,7 @@ const bool = z.union([z.boolean(), z.string()]).transform(v => v === true || v =
 const Env = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().default(8080),
-  APP_BASE_URL: z.string().default('http://localhost:8080'),
+  APP_BASE_URL: z.string().default(process.env.RENDER_EXTERNAL_URL || 'http://localhost:8080'),
   DATABASE_URL: z.string().default('postgres://postgres@127.0.0.1:5432/mms'),
   DATABASE_SSL: bool.default(false),
   JWT_SECRET: z.string().min(16).default('dev-only-change-me-access-secret'),

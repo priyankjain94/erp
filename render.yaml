@@ -1,0 +1,37 @@
+# Render Blueprint — free TEST deployment (Render dashboard → New → Blueprint → pick this repo).
+# Demo mode: OTP shown on screen, sample data loaded, WhatsApp simulated. Not for real customers.
+# Free limits: app sleeps after 15 min idle (~1 min to wake); free database is deleted after 30 days.
+services:
+  - type: web
+    name: mms-erp-test
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: development
+      - key: DEMO_MODE
+        value: "true"
+      - key: SEED_DEMO
+        value: "true"
+      - key: SCHEDULER_ENABLED
+        value: "true"
+      - key: WORKER_ENABLED
+        value: "true"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mms-erp-test-db
+          property: connectionString
+
+databases:
+  - name: mms-erp-test-db
+    plan: free
+    region: singapore
+    databaseName: mms
+    user: mms
