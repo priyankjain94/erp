@@ -1,0 +1,36 @@
+# TEST / DEMO on your own computer — no domain, no Meta tokens needed.
+#   docker compose -f docker-compose.demo.yml up -d --build      then open http://localhost:8080
+# Login codes are shown on screen, sample data is loaded, WhatsApp is simulated (nothing is sent).
+# Never use this file on the live server.
+name: mms-demo
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: mms
+      POSTGRES_USER: mms
+      POSTGRES_PASSWORD: demo-only
+    volumes: [ "demo_pgdata:/var/lib/postgresql/data" ]
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U mms -d mms" ]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://mms:demo-only@db:5432/mms
+      APP_BASE_URL: http://localhost:8080
+      DEMO_MODE: "true"
+      SEED_DEMO: "true"
+      SCHEDULER_ENABLED: "true"
+      WORKER_ENABLED: "true"
+    ports: [ "8080:8080" ]
+    volumes: [ "demo_uploads:/data/uploads" ]
+    depends_on:
+      db: { condition: service_healthy }
+
+volumes:
+  demo_pgdata:
+  demo_uploads:

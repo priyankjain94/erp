@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+data/
+*.log
+
+# sandbox-only Postgres stand-in (production uses the real pg package)
+tools/
