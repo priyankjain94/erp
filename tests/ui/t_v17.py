@@ -1,0 +1,35 @@
+import asyncio
+from h2 import *
+async def main():
+    async with async_playwright() as pw:
+        b = await launch(pw); p = await new_page(b)
+        await p.goto(BASE + '/'); await p.wait_for_timeout(1000)
+        await p.get_by_placeholder('10-digit mobile').fill('9000000001'); await p.get_by_role('button', name='Send OTP on WhatsApp').click(); await p.wait_for_timeout(500)
+        code = re.search(r'(\d{4})', await p.locator('.banner.warn').inner_text()).group(1)
+        await p.locator('input[maxlength="8"]').fill(code); await p.get_by_role('button', name='Log in').click(); await p.wait_for_timeout(1500)
+        await p.goto(BASE + '/#users'); await p.wait_for_timeout(1000)
+        await p.get_by_text('Anyone can join straight away').click()
+        await p.get_by_role('button', name='Save rules').click(); await p.wait_for_timeout(800)
+        print('rules saved:', await p.get_by_text('Sign-up rules saved.').count())
+        await p.locator('.seg button', has_text='Roles and access').click(); await p.wait_for_timeout(500)
+        print('guest column:', await p.get_by_text('New member (no role yet)').count(), 'people perm:', await p.get_by_text('Approve sign-ups').count())
+        await p.screenshot(path='/tmp/v17_roles.png')
+        await p.locator('.seg button').nth(0).click(); await p.wait_for_timeout(400)
+        await p.screenshot(path='/tmp/v17_users.png', full_page=True)
+        # sign up as new person in fresh context
+        q = await new_page(b); errs = q.errs
+        await q.goto(BASE + '/'); await q.wait_for_timeout(2500)
+        await q.get_by_role('button', name='Request access').click()
+        await q.get_by_label('Your name').fill('Fresh Guest'); await q.get_by_label('WhatsApp number').fill('9877700111')
+        await q.locator('form').get_by_role('button', name='Request access').click(); await q.wait_for_timeout(800)
+        print('joined msg:', await q.get_by_text('Your account is ready').count())
+        await q.get_by_role('button', name='Back to login').click()
+        await q.get_by_placeholder('10-digit mobile').fill('9877700111'); await q.get_by_role('button', name='Send OTP on WhatsApp').click(); await q.wait_for_timeout(500)
+        code = re.search(r'(\d{4})', await q.locator('.banner.warn').inner_text()).group(1)
+        await q.locator('input[maxlength="8"]').fill(code); await q.get_by_role('button', name='Log in').click(); await q.wait_for_timeout(1500)
+        print('guest welcome:', await q.get_by_text("you don't have a role yet").count(), 'nav items:', await q.locator('nav.bottomnav button').count(), [e for e in errs if '401' not in e])
+        await q.screenshot(path='/tmp/v17_guest.png')
+        await p.reload(); await p.wait_for_timeout(1500)
+        print('admin sees guest:', await p.get_by_text('New members without a role').count())
+        await b.close()
+asyncio.run(main())
