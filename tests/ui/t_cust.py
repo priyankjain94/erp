@@ -3,7 +3,7 @@ from h2 import *
 async def main():
     async with async_playwright() as pw:
         b = await launch(pw); p = await new_page(b)
-        await p.set_viewport_size({'width':1400,'height':900})
+        await p.set_viewport_size({'width':800,'height':700})
         await p.goto(BASE + '/c'); await p.wait_for_timeout(1500)
         await p.get_by_placeholder('10-digit mobile').fill('9827890116'); await p.get_by_role('button', name='Send OTP on WhatsApp').click(); await p.wait_for_timeout(600)
         c = re.search(r'(\d{4})', await p.locator('.banner.warn').inner_text()).group(1)
