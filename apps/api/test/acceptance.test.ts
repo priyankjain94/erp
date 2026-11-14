@@ -84,6 +84,7 @@ const q1 = async (sql: string, p: unknown[] = []) => (await M.db.pool.query(sql,
 const phoneOf = (i: number) => '+9190000000' + String(i + 1).padStart(2, '0');
 const P = { owner: phoneOf(0), meera: phoneOf(1), vikram: phoneOf(2), sana: phoneOf(6), deepa: phoneOf(7), arjun: phoneOf(8), manish: phoneOf(9), ravi: phoneOf(11) };
 const T: Record<string, string> = {};
+const addDaysIso = (n: number) => { const d = new Date(Date.now() + 5.5 * 3600e3); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 
 test('1. staff login: unknown number, wrong OTP, role-scoped data', async () => {
   assert.equal((await api('POST', '/api/v1/auth/otp/request', { phone: '9999900000', audience: 'staff' })).status, 404);
@@ -387,6 +388,83 @@ test('14. reminders: due/overdue reminders + escalation once per day, skipped on
   assert.ok(mon.sent.some((s: string) => s.startsWith('esc:')), 'escalation to the assigner for 2+ days overdue');
   const sun = await M.tasks.runReminders(at('2099-01-04T04:40:00Z'));
   assert.equal(sun.skipped, true);
+});
+
+test('23. task rules v1.11: more time needs approval, original deadline kept, blocked has owner + follow-up, real proof, check and reopen, ladder, read receipt, calendar repeats, waiting on client', async () => {
+  const owner = await login(P.owner), meera = await login(P.meera);
+  const due = '2099-02-10';
+  let st = await api('POST', '/api/v1/tasks', { title: 'Get client sign-off on kitchen colours', assignee: 'manish', deadline: due, projectId: 'P101', proof: 'photo', verify: true }, T.vikram);
+  const t = st.state.erp.tasks.find((x: any) => x.title === 'Get client sign-off on kitchen colours');
+  assert.equal(t.originalDeadline, due); assert.equal(t.verify, true);
+  // the person doing the task cannot move the deadline; they ask, the assigner decides
+  assert.equal((await api('POST', `/api/v1/tasks/${t.id}/deadline`, { date: '2099-03-01' }, T.manish)).status, 403);
+  assert.equal((await api('POST', `/api/v1/tasks/${t.id}/extend`, { date: '2099-02-01', reason: 'client travelling' }, T.manish)).status, 400, 'must be later');
+  graphCalls.length = 0;
+  st = await api('POST', `/api/v1/tasks/${t.id}/extend`, { date: '2099-02-15', reason: 'Client travelling till 14th' }, T.manish);
+  await drain();
+  assert.ok(graphCalls.some(c => c.body.template?.name === 'mms_task_more_time'), 'manager asked on WhatsApp');
+  assert.equal((await api('POST', `/api/v1/tasks/${t.id}/extend_ok`, {}, T.manish)).status, 403, 'cannot approve own request');
+  st = await api('POST', `/api/v1/tasks/${t.id}/extend_ok`, {}, T.vikram);
+  let x = st.state.erp.tasks.find((y: any) => y.id === t.id);
+  assert.equal(x.deadline, '2099-02-15'); assert.equal(x.originalDeadline, due, 'original deadline kept'); assert.equal(x.ext, null);
+  // blocked: needs who must act and a follow-up date; that person can see and unblock
+  assert.equal((await api('POST', `/api/v1/tasks/${t.id}/block`, { reason: 'Waiting for customer', on: 'nobody' }, T.manish)).status, 400);
+  st = await api('POST', `/api/v1/tasks/${t.id}/block`, { reason: 'Waiting for another team', on: 'deepa', followUp: addDaysIso(3) }, T.manish);
+  x = st.state.erp.tasks.find((y: any) => y.id === t.id);
+  assert.equal(x.status, 'blocked'); assert.equal(x.blockedOn, 'deepa'); assert.ok(x.followUp);
+  const deepa = await login(P.deepa);
+  assert.ok((await api('POST', `/api/v1/tasks/${t.id}/unblock`, { note: 'Shared the shade card' }, deepa)).ok, 'the blocker can unblock');
+  // real proof: a typed note is not a photo
+  assert.equal((await api('POST', `/api/v1/tasks/${t.id}/done`, { note: 'photo.jpg' }, T.manish)).status, 400);
+  const ref = await upload(T.manish, 'image/jpeg');
+  graphCalls.length = 0;
+  st = await api('POST', `/api/v1/tasks/${t.id}/done`, { file: ref }, T.manish);
+  x = st.state.erp.tasks.find((y: any) => y.id === t.id);
+  assert.equal(x.status, 'done'); assert.ok(x.proofUrl); assert.equal(x.verifiedAt, null);
+  await drain(); assert.ok(graphCalls.some(c => c.body.template?.name === 'mms_task_update'), 'assigner asked to check');
+  // reopen with a reason, then done again and checked
+  st = await api('POST', `/api/v1/tasks/${t.id}/reopen`, { reason: 'Photo is of the wrong shutter' }, T.vikram);
+  assert.equal(st.state.erp.tasks.find((y: any) => y.id === t.id).status, 'todo');
+  await api('POST', `/api/v1/tasks/${t.id}/done`, { file: ref }, T.manish);
+  st = await api('POST', `/api/v1/tasks/${t.id}/verify`, {}, T.vikram);
+  x = st.state.erp.tasks.find((y: any) => y.id === t.id);
+  assert.ok(x.verifiedAt); assert.deepEqual(x.events.map((e: any) => e.e).filter((e: string) => ['extension', 'deadline', 'blocked', 'reopened', 'verified'].includes(e)), ['extension', 'deadline', 'blocked', 'reopened', 'verified']);
+  // escalation ladder: 7+ days late reaches manager, ops head and owner
+  const late = await api('POST', '/api/v1/tasks', { title: 'Ladder check task', assignee: 'manish', deadline: '2099-04-01', projectId: 'P101' }, T.vikram);
+  const lt = late.state.erp.tasks.find((y: any) => y.title === 'Ladder check task');
+  graphCalls.length = 0;
+  const r = await M.tasks.runReminders(new Date('2099-04-09T04:40:00Z')); // Thursday, 8 days late
+  assert.ok(r.sent.includes(`esc:${lt.id}:manager`) && r.sent.includes(`esc:${lt.id}:ops_head`) && r.sent.includes(`esc:${lt.id}:admin`), JSON.stringify(r.sent.filter((z: string) => z.includes(lt.id))));
+  const esc = (await api('GET', '/api/v1/state', undefined, owner)).erp.tasks.find((y: any) => y.id === lt.id).events.filter((e: any) => e.e === 'escalated').map((e: any) => e.to);
+  assert.ok(esc.includes('vikram') && esc.includes('meera') && esc.includes('owner'), JSON.stringify(esc));
+  // read receipt on WhatsApp marks Seen
+  const msg = await q1(`select wamid from wa_messages where related_type = 'task' and related_id = $1 and wamid is not null order by id limit 1`, [lt.id]);
+  if (msg) {
+    const body = JSON.stringify({ entry: [{ changes: [{ value: { statuses: [{ id: msg.wamid, status: 'read', timestamp: '1' }] } }] }] });
+    const sig = 'sha256=' + crypto.createHmac('sha256', SECRET).update(body).digest('hex');
+    await fetch(base + '/api/v1/webhooks/whatsapp', { method: 'POST', headers: { 'content-type': 'application/json', 'x-hub-signature-256': sig }, body });
+    assert.ok((await q1('select seen_at from tasks where id = $1', [lt.id])).seen_at, 'seen via WhatsApp read receipt');
+  }
+  // calendar repeats: a missed weekly task is closed as missed and the next one created
+  const rp = await api('POST', '/api/v1/tasks', { title: 'Weekly stock check', assignee: 'manish', deadline: '2099-05-04', repeat: 'weekly' }, T.vikram);
+  const rt = rp.state.erp.tasks.find((y: any) => y.title === 'Weekly stock check');
+  await M.tasks.runReminders(new Date('2099-05-06T04:40:00Z'));
+  assert.equal((await q1('select status from tasks where id = $1', [rt.id])).status, 'missed');
+  assert.ok(await q1(`select 1 from tasks where title = 'Weekly stock check' and status = 'todo' and deadline = '2099-05-11'`));
+  // stage targets are settings; waiting on the client pauses the item's clock
+  assert.equal((await api('PUT', '/api/v1/settings/stage-targets', { drawing: 6 }, T.manish)).status, 403);
+  st = await api('PUT', '/api/v1/settings/stage-targets', { drawing: 6 }, owner);
+  assert.equal(st.state.erp.settings.stageTargets.drawing, 6); assert.equal(st.state.erp.settings.stageTargets.pi, 2);
+  const it = st.state.erp.items.find((i: any) => i.stage !== 'closed');
+  assert.ok((await api('PATCH', `/api/v1/items/${it.id}`, { waiting: 'client_approval' }, meera)).ok);
+  let s2 = await api('GET', '/api/v1/state', undefined, meera);
+  assert.equal(s2.erp.items.find((i: any) => i.id === it.id).waiting, 'client_approval');
+  await api('PATCH', `/api/v1/items/${it.id}`, { waiting: '' }, meera);
+  s2 = await api('GET', '/api/v1/state', undefined, meera);
+  const after = s2.erp.items.find((i: any) => i.id === it.id); assert.equal(after.waiting, ''); assert.ok(after.waitingMs >= 0);
+  // weekly report goes to the owner on Monday
+  const mon = await M.tasks.runReminders(new Date('2099-05-11T04:40:00Z'));
+  assert.ok(mon.sent.includes('weekly'));
 });
 
 test('15. security basics: logout revokes, refresh rotation, headers', async () => {

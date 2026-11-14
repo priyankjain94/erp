@@ -353,7 +353,7 @@ tr.expand td{background:var(--warm);padding:14px}
 .me-box select{background:var(--surface);color:var(--ink);border:1px solid var(--line-2);border-radius:0;padding:8px;font-size:13px;width:100%}
 .me-box > span{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);font-weight:600}
 .sdot{width:9px;height:9px;border-radius:0;display:inline-block;flex:none;background:var(--line-2)}
-.sdot.ok{background:var(--ink)}.sdot.risk{background:transparent;box-shadow:inset 0 0 0 2px var(--red)}.sdot.late{background:var(--red)}.sdot.done{background:var(--line-2)}
+.sdot.ok{background:var(--ink)}.sdot.risk{background:transparent;box-shadow:inset 0 0 0 2px var(--red)}.sdot.late{background:var(--red)}.sdot.done{background:var(--line-2)}.sdot.waiting{background:var(--line-2);box-shadow:inset 0 0 0 2px var(--ink)}
 .pill{font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:0;background:transparent;border:1px solid var(--line-2);color:var(--ink);white-space:nowrap;display:inline-flex;align-items:center;gap:5px}
 .pill.good{background:transparent;border-color:var(--ink);color:var(--ink)}
 .pill.warn{background:transparent;border-color:var(--red);color:var(--red)}
@@ -518,6 +518,11 @@ button.mcard:hover{border-color:var(--ink)}
 .chips button[aria-pressed=true]{background:var(--ink);color:#fff;border-color:var(--ink)}
 .furn-note{display:grid;gap:3px;font-size:12px;font-weight:600}
 .round-big{display:flex;gap:12px;align-items:center}
+.cr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:14px;align-items:start}
+.cr-row{display:flex;align-items:center;gap:10px}.cr-row .cr-main{display:flex;align-items:center;gap:10px;flex:1;min-width:0;background:none;border:0;padding:0;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.cr-row .who{min-width:0}.cr-row .who span{overflow:hidden;text-overflow:ellipsis}
+button.kpi{text-align:left;font:inherit;cursor:pointer}
+.stage-age{font-size:11.5px;color:var(--muted)}.stage-age.over{color:var(--crit);font-weight:600}
 .sig{width:100%;height:120px;border:1px solid var(--line-2);border-radius:0;background:var(--surface);touch-action:none}
 .side-note{max-width:340px;display:grid;gap:12px;font-size:13.5px;color:var(--ink-2);padding-top:6px}
 .side-note h3{font-weight:600;font-size:12px;letter-spacing:.16em;text-transform:uppercase;margin:0}
@@ -572,7 +577,8 @@ const ymd = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-$
 const parseYmd = s => { const [y,m,d] = s.split('-').map(Number); return new Date(y, m-1, d); };
 const addDays = n => ymd(new Date(today.getTime() + n*DAY));
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const fmtDate = s => { const d = parseYmd(s); return `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
+const fmtDate = s => { if (!s) return '—'; const d = parseYmd(s); return `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
+const addDaysTo = (n, s) => ymd(new Date(parseYmd(s).getTime() + n*DAY + 12*HR));
 const daysFrom = s => Math.round((parseYmd(s) - today) / DAY);
 const minsAgo = m => NOW - m*60000;
 const ago = t => { const m = Math.round((Date.now()-t)/60000); if (m < 1) return 'now'; if (m < 60) return m + 'm'; const h = Math.round(m/60); if (h < 24) return h + 'h'; return Math.round(h/24) + 'd'; };
@@ -705,7 +711,7 @@ const PSTAGES = [
   {id:'order', name:'Hardware procurement and production', short:'Hardware', owner:'manish', days:10, color:'rgba(26,26,26,.44)'},
   {id:'dispatch', name:'Dispatch and delivery', short:'Dispatch', owner:'kiran', days:3, color:'rgba(26,26,26,.56)'},
   {id:'install', name:'Installation', short:'Install', owner:null, days:3, color:'rgba(26,26,26,.70)'},
-  {id:'handover', name:'Completion and handover', short:'Handover', owner:'vikram', days:2, color:'rgba(26,26,26,.84)'},
+  {id:'handover', name:'Completion and handover', short:'Handover', owner:null, days:2, color:'rgba(26,26,26,.84)'},
   {id:'closed', name:'Completed', short:'Done', owner:null, days:0, color:'#1A1A1A'}];
 const pstById = Object.fromEntries(PSTAGES.map(s => [s.id, s]));
 const PIDX = id => PSTAGES.findIndex(s => s.id === id);
@@ -734,12 +740,14 @@ const openSnags = it => it.snags.filter(s => s.status !== 'fixed');
 const fmtDT = t => `${dayLabel(t)}, ${clock(t)}`;
 function itemHealth(it){
   if (it.stage === 'closed') return 'done';
+  if (it.waiting) return 'waiting';
   const d = daysFrom(it.target);
   if (d < 0) return 'late';
+  if (stageInfo(it).over) return 'late';
   if (d <= 2 || it.flags.length || openSnags(it).length) return 'risk';
   return 'ok';
 }
-const HEALTH = {ok:'On track', risk:'At risk', late:'Late', done:'Completed'};
+const HEALTH = {ok:'On track', risk:'At risk', late:'Late', done:'Completed', waiting:'Waiting on client'};
 const stageTaskTitle = (stage, code) => ({survey:'Site survey', drawing:`Production drawing · ${code}`, pi:`Raise hardware + production PI · ${code}`, order:`Place order · ${code}`, dispatch:`Track dispatch and delivery · ${code}`, install:`Install ${code}`, handover:`Handover and sign-off · ${code}`})[stage] || code;
 
 function boxesFor(type){
@@ -859,7 +867,8 @@ function UsersAdmin({erp, ops, toast}){
   const ok = f && f.name.trim() && f.phone.replace(/\D/g,'').length === 10;
   const counts = Object.fromEntries(ROLES.map(r => [r.id, erp.users.filter(u => u.role === r.id && u.active !== false).length]));
   return html`<section className="view"><div className="stack">
-    <div className="seg" style=${{alignSelf:'start'}}>${[['users','Users'],['roles','Roles and access'],['audit','Change log'],['integrations','WhatsApp and Meta'],['company','Company profile'],['exports','Exports']].map(([id,n]) => html`<button key=${id} aria-pressed=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
+    <div className="seg" style=${{alignSelf:'start'}}>${[['users','Users'],['roles','Roles and access'],['work','Stages and templates'],['audit','Change log'],['integrations','WhatsApp and Meta'],['company','Company profile'],['exports','Exports']].map(([id,n]) => html`<button key=${id} aria-pressed=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
+    ${tab === 'work' && html`<${WorkSettings} erp=${erp} ops=${ops}/>`}
     ${tab === 'users' && html`<div className="stack">
       <div className="inline"><span style=${{color:'var(--muted)'}}>${erp.users.filter(u => u.active !== false).length} active users. Staff sign in with a WhatsApp code, or with Google if their email is set below. No passwords.</span><button className="btn primary small" style=${{marginLeft:'auto'}} onClick=${() => setF({name:'', phone:'', role:'installer', title:''})}><${Icon} n="plus" s=${14}/>Add user</button></div>
       <${PeopleBox} erp=${erp} ops=${ops}/>
@@ -1435,10 +1444,12 @@ function makeOps(erp, setErp, toast, leads, crm, app){
       if (!same(before.feedback, after.feedback) && after.feedback) run('POST', `/projects/${id}/feedback`, {rating:after.feedback.rating, comment:after.feedback.comment || ''});
     },
     assign: (itemIds, installer, target) => run('POST', '/assignments', {itemIds, installer, target:target || null}, res => `${itemIds.length} item${itemIds.length > 1 ? 's' : ''} assigned to ${uname(installer)}. WhatsApp sent.${res.warning ? ' ' + res.warning : ''}`),
-    addTask: f => run('POST', '/tasks', {title:f.title, projectId:f.projectId || null, itemId:f.itemId || null, assignee:f.assignee, deadline:f.deadline, priority:f.priority || 'normal', proof:f.proof || '', repeat:f.repeat || ''}, `Task assigned to ${uname(f.assignee)}. WhatsApp sent with Open / Start buttons.`),
+    addTask: f => run('POST', '/tasks', {title:f.title, projectId:f.projectId || null, itemId:f.itemId || null, assignee:f.assignee, deadline:f.deadline, priority:f.priority || 'normal', proof:f.proof || '', repeat:f.repeat || '', verify:!!f.verify, template:f.template || null}, `Task assigned to ${uname(f.assignee)}. WhatsApp sent with Open / Start buttons.`),
+    saveStageTargets: targets => run('PUT', '/settings/stage-targets', targets, 'Stage targets saved.'),
+    saveTaskTemplates: templates => run('PUT', '/settings/task-templates', {templates}, 'Task templates saved.'),
     taskDo(id, action, data = {}){
       const t0 = E().tasks.find(x => x.id === id);
-      const msg = {start:'Task started.', done:`Done: ${t0?.title}${t0?.repeat ? '. Next one scheduled.' : '.'}`, block:'Marked blocked. Reminders paused; assigner notified on WhatsApp.', unblock:'Unblocked.', handover:`Handed over to ${uname(data.to)}. WhatsApp sent.`, remind:'Reminder sent on WhatsApp.', deadline:'Deadline changed.'}[action];
+      const msg = {start:'Task started.', done:`Done: ${t0?.title}${t0?.verify ? '. Sent for checking.' : ''}${t0?.repeat ? ' Next one scheduled.' : ''}`, block:`Marked blocked. ${data.on === 'client' ? 'Waiting on the client' : 'The person you are waiting on is reminded every morning'}; follow-up ${data.followUp ? fmtDate(data.followUp) : 'in 2 days'}.`, unblock:'Unblocked.', handover:`Handed over to ${uname(data.to)}. WhatsApp sent.`, remind:'Reminder sent on WhatsApp.', deadline:'Deadline changed. The original deadline is kept for the scorecard.', extend:'Asked for more time. You will get the answer on WhatsApp.', extend_ok:'More time approved. They have been told on WhatsApp.', extend_no:'More time rejected. They have been told on WhatsApp.', verify:'Accepted.', reopen:'Reopened. They have been told on WhatsApp.'}[action];
       return run('POST', `/tasks/${id}/${action}`, data, msg);
     },
     async convert(lead, f){
@@ -1496,50 +1507,340 @@ function StageBar({items}){
 const StageLegend = () => html`<div className="st-legend">${PSTAGES.map(s => html`<span key=${s.id}><i style=${{background:s.color}}></i>${s.short}</span>`)}</div>`;
 
 /* ---------- Operations dashboard ---------- */
-function OpsDashboard({erp, ui, ops}){
-  const live = erp.items.filter(i => i.stage !== 'closed');
-  const late = live.filter(i => itemHealth(i) === 'late').sort((a,b) => a.target < b.target ? -1 : 1);
-  const openT = erp.tasks.filter(t => t.status !== 'done');
-  const overdueT = openT.filter(t => daysFrom(t.deadline) < 0 && t.status !== 'blocked');
-  const snags = erp.items.flatMap(i => openSnags(i).map(s => ({...s, it:i})));
-  const pend = erp.projects.flatMap(p => p.payments.filter(m => !m.received).map(m => ({...m, p})));
-  const dueNow = pend.filter(m => { const items = erp.items.filter(i => i.projectId === m.p.id); return m.gate === 'order' ? items.some(i => i.stage === 'pi') : m.label === 'Before dispatch' ? items.some(i => i.stage === 'order' || i.stage === 'dispatch') : m.label === 'On handover' ? items.some(i => i.stage === 'handover') : false; });
-  const byPerson = TEAM.map(u => ({u, n:overdueT.filter(t => t.assignee === u.id).length})).filter(x => x.n).sort((a,b) => b.n - a.n);
-  const maxS = Math.max(...PSTAGES.map(s => live.filter(i => i.stage === s.id).length), 1);
+/* ---------- v1.11 helpers: stage targets, waiting on client, task rules ---------- */
+const STAGE_TGT = {};
+const TASK_TPL = [];
+const WAIT_LABEL = {client_approval:'Client approval', client_payment:'Client payment', site_not_ready:'Site not ready', client_other:'Waiting on client'};
+function stageInfo(it){
+  const last = [...(it.log || [])].reverse().find(l => l.stage === it.stage && !l.out);
+  const inAt = last ? last.in : null;
+  const wait = (it.waitingMs || 0) + (it.waitingSince ? Date.now() - it.waitingSince : 0);
+  const age = inAt ? Math.max(0, (Date.now() - inAt - wait) / DAY) : 0;
+  const target = STAGE_TGT[it.stage] ?? pstById[it.stage]?.days ?? 0;
+  return {age, target, inAt, over: !!inAt && it.stage !== 'closed' && target > 0 && age > target};
+}
+const isMgr = (erp, t) => can(erp, 'tasksAll') || can(erp, 'assign') || (t.assigner === erp.me && (t.assignee !== erp.me || !t.auto)) || (!!t.projectId && erp.projects.find(p => p.id === t.projectId)?.pm === erp.me);
+const tOpen = t => ['todo','progress','blocked'].includes(t.status);
+const tLate = t => t.status === 'blocked' ? (t.followUp && daysFrom(t.followUp) < 0 ? -daysFrom(t.followUp) : 0) : tOpen(t) ? Math.max(0, -daysFrom(t.deadline)) : 0;
+const awaitingCheck = t => t.status === 'done' && t.verify && !t.verifiedAt;
+const doneDay = t => t.doneAt ? ymd(new Date(t.doneAt)) : null;
+const onOriginal = t => t.status === 'done' && doneDay(t) <= (t.originalDeadline || t.deadline);
+const ladderText = n => n >= 7 ? 'Owner informed' : n >= 4 ? 'Ops head informed' : n >= 2 ? 'Manager informed' : '';
+const whoOn = on => on === 'client' ? 'the client' : on ? uname(on) : '—';
+const phoneUser = ph => { const d = String(ph || '').replace(/\D/g, '').slice(-10); return TEAM.find(u => String(u.phone || '').replace(/\D/g, '').slice(-10) === d); };
+const MSG_NAME = {task_assigned:'New task', task_reminder:'Reminder', task_escalation:'Escalation', task_blocked:'Blocked', task_more_time:'More time asked', task_update:'Update', daily_digest:'Morning digest'};
+const msgName = t => { const k = String(t || '').replace(/^mms_/, ''); return MSG_NAME[k] || k.replace(/_/g, ' '); };
+const defaultPerson = (...roles) => { for (const r of roles) { const u = TEAM.find(x => x.role === r); if (u) return u.id; } return TEAM[0]?.id || ''; };
+
+/* ---------- Control room: what needs action now ---------- */
+function CRSection({title, hint, rows, empty}){
+  if (!rows.length) return null;
+  return html`<div className="panel"><h3>${title} · ${rows.length}</h3>${hint && html`<p className="hint">${hint}</p>`}<div className="task-list">${rows}</div></div>`;
+}
+function ControlRoom({erp, ui, ops}){
+  const all = can(erp, 'tasksAll') || can(erp, 'ops'), me = erp.me, money = can(erp, 'money');
+  const myProj = new Set(erp.projects.filter(p => all || p.pm === me).map(p => p.id));
+  const mine = t => all || t.assignee === me || t.assigner === me || t.blockedOn === me || (t.projectId && myProj.has(t.projectId));
+  const tasks = erp.tasks.filter(mine), open = tasks.filter(tOpen);
+  const unseen = open.filter(t => !t.seenAt && t.status !== 'blocked' && Date.now() - t.created > 4 * HR).sort((a,b) => a.created - b.created);
+  const overdue = open.filter(t => tLate(t) > 0).sort((a,b) => tLate(b) - tLate(a));
+  const blocked = open.filter(t => t.status === 'blocked' && !(tLate(t) > 0)).sort((a,b) => (a.blockedAt || 0) - (b.blockedAt || 0));
+  const decide = open.filter(t => t.ext && isMgr(erp, t));
+  const check = tasks.filter(t => awaitingCheck(t) && isMgr(erp, t) && t.assignee !== me);
+  const items = erp.items.filter(i => i.stage !== 'closed' && (all || myProj.has(i.projectId) || i.owner === me));
+  const stuck = items.filter(i => !i.waiting && stageInfo(i).over).sort((a,b) => (stageInfo(b).age - stageInfo(b).target) - (stageInfo(a).age - stageInfo(a).target));
+  const waiting = items.filter(i => i.waiting).sort((a,b) => (a.waitingSince || 0) - (b.waitingSince || 0));
+  const projOf = id => erp.projects.find(p => p.id === id);
+  const soon = [];
+  erp.projects.filter(p => myProj.has(p.id) || all).forEach(p => { if (p.survey.status !== 'submitted' && p.survey.scheduled) { const d = daysFrom(ymd(new Date(p.survey.scheduled))); if (d >= 0 && d <= 1) soon.push({k:'s' + p.id, when:d, what:'Site survey', who:p.survey.assignee, label:`${p.customer} · ${clock(p.survey.scheduled)}`, go:() => ui.openProject(p.id, 'survey')}); } });
+  items.forEach(i => { const p = projOf(i.projectId);
+    if (i.stage === 'dispatch' && i.dispatch?.date) { const d = daysFrom(i.dispatch.date); if (d >= 0 && d <= 1) soon.push({k:'d' + i.id, when:d, what:'Delivery', who:i.owner, label:`${i.code} · ${p.customer}`, go:() => ui.openItem(i.id)}); }
+    if (i.stage === 'install' && i.installer) { const d = daysFrom(i.target); if (d >= 0 && d <= 1) soon.push({k:'i' + i.id, when:d, what:'Installation', who:i.installer, label:`${i.code} · ${p.customer}`, go:() => ui.openItem(i.id)}); } });
+  const pend = money ? erp.projects.filter(p => myProj.has(p.id)).flatMap(p => p.payments.filter(m => !m.received).map(m => ({...m, p}))) : [];
+  const dueNow = pend.filter(m => { const its = erp.items.filter(i => i.projectId === m.p.id); return m.gate === 'order' ? its.some(i => i.stage === 'pi') : m.label === 'Before dispatch' ? its.some(i => i.stage === 'order' || i.stage === 'dispatch') : m.label === 'On handover' ? its.some(i => i.stage === 'handover') : false; });
+  const snags = items.flatMap(i => openSnags(i).map(s => ({...s, it:i})));
+  const tRow = (t, right, extra) => html`<div className="task cr-row" key=${t.id}><button className="cr-main" onClick=${() => ui.openTask(t.id)}><${Av} id=${t.assignee}/><span className="who"><b>${t.title}</b><span>${uname(t.assignee)}${t.projectId ? ' · ' + (projOf(t.projectId)?.customer || '') : ''}${extra ? ' · ' + extra : ''}</span></span></button>${right}</div>`;
+  const nudge = t => html`<button className="btn small" onClick=${() => ops.taskDo(t.id, 'remind')}>Nudge</button>`;
+  const sections = [
+    html`<${CRSection} key="dec" title="Decide: more time asked" hint="Approve or reject. The original deadline is kept for the scorecard either way." rows=${decide.map(t => tRow(t, html`<span className="inline"><button className="btn small primary" onClick=${() => ops.taskDo(t.id, 'extend_ok')}>Approve ${fmtDate(t.ext.date)}</button><button className="btn small" onClick=${() => ops.taskDo(t.id, 'extend_no')}>Reject</button></span>`, `due ${fmtDate(t.deadline)} · “${t.ext.reason}”`))}/>`,
+    html`<${CRSection} key="od" title="Overdue tasks" hint="Reminders go out every morning. Escalation: 2 days late → manager, 4 → ops head, 7 → owner." rows=${overdue.map(t => tRow(t, html`<span className="inline"><span className="due over">${tLate(t)}d late</span>${nudge(t)}</span>`, (t.status === 'blocked' ? 'blocked, follow-up passed · ' : '') + (ladderText(tLate(t)) || 'reminded daily')))}/>`,
+    html`<${CRSection} key="un" title="Not seen yet" hint="Given more than 4 working hours ago and not opened or read on WhatsApp. Call them." rows=${unseen.map(t => tRow(t, html`<span className="inline"><span className="due">${ago(t.created)} ago</span>${nudge(t)}</span>`))}/>`,
+    html`<${CRSection} key="bl" title="Blocked" hint="Shown with who has to act. They get a WhatsApp reminder every morning until the follow-up date." rows=${blocked.map(t => tRow(t, html`<span className="due">${t.blockedAt ? ago(t.blockedAt) : ''}</span>`, `waiting on ${whoOn(t.blockedOn)} · ${t.blockedReason}${t.followUp ? ' · follow up ' + fmtDate(t.followUp) : ''}`))}/>`,
+    html`<${CRSection} key="ck" title="Check finished work" hint="Accepted automatically after one working day if nobody checks." rows=${check.map(t => tRow(t, html`<span className="inline">${t.proofUrl && html`<a className="btn small ghost" href=${t.proofUrl} target="_blank" rel="noopener">Proof</a>`}<button className="btn small primary" onClick=${() => ops.taskDo(t.id, 'verify')}>Accept</button><button className="btn small" onClick=${() => ui.openTask(t.id)}>Reopen…</button></span>`, 'done ' + (t.doneAt ? ago(t.doneAt) + ' ago' : '')))}/>`,
+    html`<${CRSection} key="st" title="Stuck in a stage" hint="Items longer in their stage than its target (Users and access → Stages and templates). Waiting-on-client time is not counted." rows=${stuck.map(i => { const s = stageInfo(i), p = projOf(i.projectId); return html`<button className="task" key=${i.id} onClick=${() => ui.openItem(i.id)}><${Av} id=${i.owner}/><span className="who"><b className="mono" style=${{fontSize:12.5}}>${i.code} · ${typeById[i.type].name}</b><span>${p.customer} · ${pstById[i.stage].name} · ${uname(i.owner)}</span></span><span className="due over">${Math.floor(s.age)}d (target ${s.target})</span></button>`; })}/>`,
+    html`<${CRSection} key="wt" title="Waiting on the client" hint="The stage clock is paused. Call or message the client." rows=${waiting.map(i => { const p = projOf(i.projectId); return html`<button className="task" key=${i.id} onClick=${() => ui.openItem(i.id)}><span className="pill warn">${WAIT_LABEL[i.waiting]}</span><span className="who"><b className="mono" style=${{fontSize:12.5}}>${i.code}</b><span>${p.customer} · ${p.phone || ''}</span></span><span className="due">${i.waitingSince ? ago(i.waitingSince) : ''}</span></button>`; })}/>`,
+    html`<${CRSection} key="sn" title="Today and tomorrow" rows=${soon.sort((a,b) => a.when - b.when).map(s => html`<button className="task" key=${s.k} onClick=${s.go}><span className=${'pill ' + (s.when ? '' : 'acc')}>${s.when ? 'Tomorrow' : 'Today'}</span><span className="who"><b>${s.what}</b><span>${s.label} · ${uname(s.who)}</span></span></button>`)}/>`,
+    html`<${CRSection} key="pay" title="Payments due now" hint="Milestones whose stage has been reached. Before order blocks ordering." rows=${dueNow.map(m => html`<button className="task" key=${m.p.id + m.id} onClick=${() => ui.openProject(m.p.id, 'payments')}><span className=${'pill ' + (m.gate ? 'crit' : 'warn')}>${m.pct}%</span><span className="who"><b>${m.p.customer}</b><span>${m.label}${m.gate ? ' · blocks order' : ''}</span></span><span className="val">${inr(m.amount)}</span></button>`)}/>`,
+    html`<${CRSection} key="sg" title="Open snags" rows=${snags.map(s => html`<button className="task" key=${s.id} onClick=${() => ui.openItem(s.it.id)}><span className="pill crit">${s.type}</span><span className="who"><b>${s.part}</b><span className="mono">${s.it.code} · ${SNAG_LABEL[s.status]}</span></span><span className="due">${ago(s.at)} ago</span></button>`)}/>`];
+  const nothing = !(decide.length + overdue.length + unseen.length + blocked.length + check.length + stuck.length + waiting.length + soon.length + dueNow.length + snags.length);
   return html`<section className="view">
-    <p style=${{margin:'0 0 14px',color:'var(--muted)'}}>${live.length} items in progress across ${erp.projects.filter(p => erp.items.some(i => i.projectId === p.id && i.stage !== 'closed') || p.survey.status !== 'submitted').length} projects. ${late.length} items are past their target date and ${overdueT.length} tasks are overdue.</p>
+    <p style=${{margin:'0 0 14px',color:'var(--muted)'}}>${all ? 'Everything that needs action across the company.' : 'Things that need action on your projects and tasks.'} Work through it from the top.</p>
     <div className="kpis">
-      <div className="kpi"><span className="l">Items in progress</span><span className="v">${live.length}</span><span className="s">${erp.items.filter(i => i.stage === 'install').length} at installation</span></div>
-      <div className=${'kpi' + (overdueT.length ? ' alert' : '')}><span className="l">Overdue tasks</span><span className="v">${overdueT.length}</span><span className="s">${openT.filter(t => t.status === 'blocked').length} blocked</span></div>
-      <div className=${'kpi' + (snags.length ? ' alert' : '')}><span className="l">Open snags</span><span className="v">${snags.length}</span><span className="s">${late.length} items late</span></div>
-      <div className="kpi"><span className="l">Payments to collect now</span><span className="v">${lakh(dueNow.reduce((s,m) => s + m.amount, 0))}</span><span className="s">${dueNow.length} milestones due</span></div>
+      <button className=${'kpi' + (overdue.length ? ' alert' : '')} onClick=${() => ui.go('tasks')}><span className="l">Overdue tasks</span><span className="v">${overdue.length}</span><span className="s">${unseen.length} not seen · ${blocked.length} blocked</span></button>
+      <div className=${'kpi' + (stuck.length ? ' alert' : '')}><span className="l">Stuck items</span><span className="v">${stuck.length}</span><span className="s">over their stage target</span></div>
+      <div className="kpi"><span className="l">Waiting on client</span><span className="v">${waiting.length}</span><span className="s">clock paused</span></div>
+      <div className=${'kpi' + (decide.length + check.length ? ' alert' : '')}><span className="l">Your decisions</span><span className="v">${decide.length + check.length}</span><span className="s">${decide.length} more-time · ${check.length} to check</span></div>
     </div>
-    <div className="grid2">
-      <div className="stack">
-        <div className="panel"><h3>Items by stage</h3><p className="hint">Every wardrobe, kitchen and unit moves on its own. Bars show items waiting in each stage now.</p>
-          <div className="bars">${PSTAGES.filter(s => s.id !== 'closed').map(s => { const c = live.filter(i => i.stage === s.id); const lt = c.filter(i => itemHealth(i) === 'late').length;
-            return html`<div className="bar-row" key=${s.id}><span>${s.name}</span><div className="bar-track"><i style=${{width:((c.length-lt)/maxS*100)+'%', background:s.color}}></i><i style=${{width:(lt/maxS*100)+'%', background:'var(--crit)'}}></i></div><span className="n"><b>${c.length}</b>${lt ? ` · ${lt} late` : ''}</span></div>`; })}</div>
-          <div className="legend"><span><i style=${{background:'var(--crit)'}}></i>Past target date</span></div>
-        </div>
-        <div className="panel"><h3>Late items</h3><p className="hint">Past target date, oldest first. Open one to see what is holding it.</p>
-          <div className="task-list">${late.length ? late.map(i => { const p = erp.projects.find(x => x.id === i.projectId);
-            return html`<button className="task" key=${i.id} onClick=${() => ui.openItem(i.id)}><${Av} id=${i.owner}/><span className="who"><b className="mono" style=${{fontSize:12.5}}>${i.code} · ${typeById[i.type].name}</b><span>${p.customer} · ${pstById[i.stage].name} · ${uname(i.owner)}</span></span><span className="due over">${-daysFrom(i.target)}d late</span></button>`; }) : html`<p className="hint">Nothing late.</p>`}</div>
-        </div>
-      </div>
-      <div className="stack">
-        <div className="panel"><h3>Overdue tasks by person</h3><p className="hint">WhatsApp reminders repeat daily; the assigner is told after 2 days.</p>
-          <div className="task-list">${byPerson.length ? byPerson.map(x => html`<button className="task" key=${x.u.id} onClick=${() => ui.go('tasks', {person:x.u.id})}><${Av} id=${x.u.id}/><span className="who"><b>${x.u.name}</b><span>${x.u.roleName}</span></span><span className="due over">${x.n} overdue</span></button>`) : html`<p className="hint">No overdue tasks.</p>`}</div>
-        </div>
-        <div className="panel"><h3>Open snags</h3><p className="hint">An item cannot complete until its snags are fixed.</p>
-          <div className="task-list">${snags.length ? snags.map(s => html`<button className="task" key=${s.id} onClick=${() => ui.openItem(s.it.id)}><span className="pill crit">${s.type}</span><span className="who"><b>${s.part}</b><span className="mono">${s.it.code} · ${SNAG_LABEL[s.status]}</span></span><span className="due">${ago(s.at)} ago</span></button>`) : html`<p className="hint">No open snags.</p>`}</div>
-        </div>
-        <div className="panel"><h3>Payments due now</h3><p className="hint">Milestones whose stage has been reached. "Before order" blocks ordering.</p>
-          <div className="task-list">${dueNow.length ? dueNow.map(m => html`<button className="task" key=${m.p.id + m.id} onClick=${() => ui.openProject(m.p.id, 'payments')}><span className=${'pill ' + (m.gate ? 'crit' : 'warn')}>${m.pct}%</span><span className="who"><b>${m.p.customer}</b><span>${m.label}${m.gate ? ' · blocks order' : ''}</span></span><span className="val">${inr(m.amount)}</span></button>`) : html`<p className="hint">Nothing due.</p>`}</div>
-        </div>
-      </div>
-    </div>
+    ${nothing ? html`<div className="banner good">All clear. Nothing needs action right now.</div>` : html`<div className="cr-grid">${sections}</div>`}
   </section>`;
 }
+
+/* ---------- Tasks ---------- */
+const taskBucket = t => { if (t.status === 'done' || t.status === 'missed') return 'done'; if (t.status === 'blocked' && !(tLate(t) > 0)) return 'blocked'; if (tLate(t) > 0) return 'overdue'; return daysFrom(t.deadline) === 0 ? 'today' : 'upcoming'; };
+function TaskCard({t, erp, ui, showWho}){
+  const p = t.projectId && erp.projects.find(x => x.id === t.projectId);
+  const chg = t.events.filter(e => e.e === 'deadline').length;
+  return html`<button className=${'tcard' + (t.status === 'done' || t.status === 'missed' ? ' done' : '')} onClick=${() => ui.openTask(t.id)}>
+    <div className="card-row" style=${{alignItems:'flex-start'}}><b>${t.title}</b>${t.priority === 'urgent' ? html`<span className="pill crit">Urgent</span>` : null}</div>
+    <span className="meta">${p ? p.code + ' · ' + p.customer : 'General'}${showWho ? ' · ' + uname(t.assignee) : ' · from ' + uname(t.assigner)}</span>
+    <div className="card-foot">${t.status === 'missed' ? html`<span className="pill crit">Missed</span>` : awaitingCheck(t) ? html`<span className="pill warn">Awaiting check</span>` : t.status === 'done' ? html`<span className="due">Done</span>` : t.status === 'blocked' ? html`<span className="pill warn">Blocked · waiting on ${whoOn(t.blockedOn)}</span>` : html`<${Due} fu=${t.deadline}/>`}
+      ${t.status === 'progress' ? html`<span className="pill good">In progress</span>` : null}${tOpen(t) && !t.seenAt ? html`<span className="pill">Not seen</span>` : null}${t.ext ? html`<span className="pill acc">More time asked</span>` : null}
+      ${chg ? html`<span className="pill" title="Deadline changed">↻ ${chg}</span>` : null}${t.repeat ? html`<span className="pill">${t.repeat}</span>` : null}${t.reminders ? html`<span className="wa-pill" title="WhatsApp reminders sent">${t.reminders}× reminded</span>` : null}</div>
+  </button>`;
+}
+function Tasks({erp, ui, ops, init}){
+  const all = can(erp, 'tasksAll');
+  const [mode0, setMode] = useState(all ? (init?.mode || 'team') : 'mine');
+  const mode = !all && (mode0 === 'team' || mode0 === 'log') ? 'mine' : mode0;
+  const [person, setPerson] = useState(init?.person || 'all');
+  const [proj, setProj] = useState('all');
+  const [showDone, setShowDone] = useState(false);
+  const [bucket, setBucket] = useState('overdue');
+  const me = erp.me;
+  const base = erp.tasks.filter(t => (proj === 'all' || t.projectId === proj));
+  const order = t => ({overdue:0, today:1, blocked:2, upcoming:3, done:4})[taskBucket(t)] * 1e10 + parseYmd(t.deadline).getTime() / 1e4;
+  const mine = base.filter(t => t.assignee === me || (t.blockedOn === me && t.status === 'blocked'));
+  const people = TEAM.filter(u => base.some(t => t.assignee === u.id && (showDone || tOpen(t)))).filter(u => person === 'all' || u.id === person);
+  const decide = erp.tasks.filter(t => (t.ext && tOpen(t) && isMgr(erp, t)) || (awaitingCheck(t) && isMgr(erp, t) && t.assignee !== me));
+  return html`<section className=${'view' + (mode === 'team' ? ' board-view' : '')}>
+    <div className="toolbar">
+      <div className="seg" role="group" aria-label="View">${[['team','Team board'],['mine','My tasks'],['byme','Assigned by me'],['decide','Decide' + (decide.length ? ' · ' + decide.length : '')],['log','Reminder log']].filter(([id]) => all || id === 'mine' || id === 'byme' || (id === 'decide' && decide.length)).map(([id,n]) => html`<button key=${id} aria-pressed=${mode === id} onClick=${() => setMode(id)}>${n}</button>`)}</div>
+      ${mode === 'team' && html`<select className="sel" value=${person} onChange=${e => setPerson(e.target.value)} aria-label="Person"><option value="all">Everyone</option>${TEAM.map(u => html`<option key=${u.id} value=${u.id}>${u.name}</option>`)}</select>`}
+      ${mode !== 'log' && mode !== 'decide' && html`<select className="sel" value=${proj} onChange=${e => setProj(e.target.value)} aria-label="Project"><option value="all">All projects</option>${erp.projects.map(p => html`<option key=${p.id} value=${p.id}>${p.code} · ${p.customer}</option>`)}</select>`}
+      ${mode === 'team' && html`<label className="check" style=${{fontSize:12.5}}><input type="checkbox" checked=${showDone} onChange=${() => setShowDone(!showDone)}/>Show done</label>`}
+    </div>
+    ${mode === 'team' && html`<div className="people">${people.map(u => { const ts = base.filter(t => t.assignee === u.id && (showDone || tOpen(t))).sort((a,b) => order(a) - order(b)); const od = ts.filter(t => tLate(t) > 0).length;
+      return html`<div className="pcol" key=${u.id}><header><${Av} id=${u.id} s=${30}/><div style=${{minWidth:0}}><b>${u.name}</b><small>${u.roleName}</small></div><span style=${{marginLeft:'auto',display:'grid',justifyItems:'end',gap:2}}><span className="num" style=${{fontSize:12,color:'var(--muted)'}}>${ts.filter(tOpen).length} open</span>${od ? html`<span className="due over">${od} overdue</span>` : null}</span></header>
+        <div className="list">${ts.map(t => html`<${TaskCard} key=${t.id} t=${t} erp=${erp} ui=${ui}/>`)}</div></div>`; })}</div>`}
+    ${mode === 'mine' && html`<div style=${{maxWidth:680}}>
+      <p style=${{margin:'0 0 12px',color:'var(--muted)'}}>Signed in as <b style=${{color:'var(--ink)'}}>${uname(me)}</b>. This is the same list field staff see on the phone.</p>
+      <div className="chips" style=${{marginBottom:12}}>${[['overdue','Overdue'],['today','Today'],['upcoming','Upcoming'],['blocked','Blocked'],['done','Done']].map(([id,n]) => html`<button key=${id} className="chip" aria-pressed=${bucket === id} onClick=${() => setBucket(id)}>${n} <span className="n">${mine.filter(t => taskBucket(t) === id).length}</span></button>`)}</div>
+      <div className="stack" style=${{gap:8}}>${mine.filter(t => taskBucket(t) === bucket).sort((a,b) => order(a) - order(b)).map(t => html`<div key=${t.id} className="mcard">
+        <div className="card-row" style=${{alignItems:'flex-start'}}><button className="linkbtn" style=${{color:'var(--ink)',textDecoration:'none',fontSize:14,fontWeight:600,textAlign:'left',marginTop:0}} onClick=${() => ui.openTask(t.id)}>${t.title}</button>${t.status === 'blocked' ? html`<span className="pill warn">Blocked</span>` : t.status === 'missed' ? html`<span className="pill crit">Missed</span>` : t.status === 'done' ? html`<span className="due">${awaitingCheck(t) ? 'Awaiting check' : 'Done'}</span>` : html`<${Due} fu=${t.deadline}/>`}</div>
+        <span className="meta">From ${uname(t.assigner)}${t.projectId ? ' · ' + erp.projects.find(p => p.id === t.projectId).customer : ''}${t.blockedOn === me && t.assignee !== me ? ` · ${uname(t.assignee)} is waiting on you` : ''}${t.ext ? ' · more time asked, waiting for a decision' : ''}</span>
+        ${tOpen(t) && t.assignee === me && html`<div className="inline">${t.status === 'todo' && html`<button className="btn small" onClick=${() => ops.taskDo(t.id, 'start')}>Start</button>`}${t.status !== 'blocked' && html`<button className="btn small primary" onClick=${() => t.proof ? ui.openTask(t.id) : ops.taskDo(t.id, 'done')}>${t.proof ? 'Done (add ' + t.proof + ')' : 'Mark done'}</button>`}<button className="btn small ghost" onClick=${() => ui.openTask(t.id)}>More</button></div>`}
+        ${t.status === 'blocked' && t.blockedOn === me && t.assignee !== me && html`<div className="inline"><button className="btn small primary" onClick=${() => ops.taskDo(t.id, 'unblock')}>I've done my part · unblock</button></div>`}
+      </div>`)}${!mine.filter(t => taskBucket(t) === bucket).length && html`<p className="hint" style=${{color:'var(--muted)'}}>Nothing here.</p>`}</div></div>`}
+    ${mode === 'byme' && html`<div className="table-wrap"><table>
+      <thead><tr><th>Task</th><th>Assigned to</th><th>Deadline</th><th>Status</th><th>Seen</th><th>Last update</th></tr></thead>
+      <tbody>${base.filter(t => t.assigner === me).sort((a,b) => order(a) - order(b)).map(t => { const last = t.events[t.events.length-1];
+        return html`<tr key=${t.id} className="click" onClick=${() => ui.openTask(t.id)}><td><b>${t.title}</b><div className="sub">${t.projectId ? erp.projects.find(p => p.id === t.projectId).customer : 'General'}</div></td><td><span className="inline" style=${{gap:6}}><${Av} id=${t.assignee}/>${uname(t.assignee)}</span></td>
+          <td>${!tOpen(t) ? html`<span className="sub">${fmtDate(t.deadline)}</span>` : html`<${Due} fu=${t.deadline}/>`}${t.deadline !== t.originalDeadline ? html`<div className="sub">was ${fmtDate(t.originalDeadline)}</div>` : null}</td>
+          <td>${t.ext ? html`<span className="pill acc">More time asked</span>` : awaitingCheck(t) ? html`<span className="pill warn">Awaiting your check</span>` : {todo:'To do', progress:'In progress', blocked:'Blocked · waiting on ' + whoOn(t.blockedOn), done:'Done', missed:'Missed'}[t.status]}</td>
+          <td className="sub">${t.seenAt ? ago(t.seenAt) + ' ago' : html`<span style=${{color:'var(--crit)'}}>Not seen</span>`}</td><td className="sub">${EVT[last.e] || last.e} · ${ago(last.t)} ago</td></tr>`; })}</tbody></table>
+      ${!base.some(t => t.assigner === me) && html`<p style=${{padding:16,color:'var(--muted)',margin:0}}>You have not assigned any tasks yet.</p>`}</div>`}
+    ${mode === 'decide' && html`<div className="stack" style=${{maxWidth:760}}>${decide.map(t => html`<div key=${t.id} className="mcard">
+        <div className="card-row"><button className="linkbtn" style=${{color:'var(--ink)',textDecoration:'none',fontWeight:600,marginTop:0,textAlign:'left'}} onClick=${() => ui.openTask(t.id)}>${t.title}</button><span className="meta">${uname(t.assignee)}</span></div>
+        ${t.ext ? html`<span className="meta">Asks to move ${fmtDate(t.deadline)} → <b>${fmtDate(t.ext.date)}</b>: “${t.ext.reason}”</span><div className="inline"><button className="btn small primary" onClick=${() => ops.taskDo(t.id, 'extend_ok')}>Approve</button><button className="btn small" onClick=${() => ops.taskDo(t.id, 'extend_no')}>Reject</button></div>`
+          : html`<span className="meta">Marked done ${t.doneAt ? ago(t.doneAt) + ' ago' : ''}${t.proofNote ? ' · “' + t.proofNote + '”' : ''}</span><div className="inline">${t.proofUrl && html`<a className="btn small ghost" href=${t.proofUrl} target="_blank" rel="noopener">See proof</a>`}<button className="btn small primary" onClick=${() => ops.taskDo(t.id, 'verify')}>Accept</button><button className="btn small" onClick=${() => ui.openTask(t.id)}>Reopen…</button></div>`}
+      </div>`)}${!decide.length && html`<p className="hint">Nothing waiting for your decision.</p>`}</div>`}
+    ${mode === 'log' && html`<${ReminderLog} erp=${erp} ui=${ui}/>`}
+  </section>`;
+}
+const EVT = {assigned:'Assigned', seen:'Seen', started:'Started', handover:'Handed over', reminded:'WhatsApp reminder', blocked:'Blocked', done:'Done', deadline:'Deadline changed', extension:'More time asked', extension_no:'More time rejected', verified:'Checked', reopened:'Reopened', escalated:'Escalated', missed:'Missed'};
+function ReminderLog({erp, ui}){
+  const [who, setWho] = useState('all');
+  const rows = erp.tasks.flatMap(t => (t.msgs || []).map(m => ({...m, task:t}))).filter(m => who === 'all' || phoneUser(m.to)?.id === who).sort((a,b) => b.t - a.t).slice(0, 300);
+  const by = s => rows.filter(r => r.status === s).length;
+  return html`<div className="stack">
+    <div className="inline"><select className="sel" value=${who} onChange=${e => setWho(e.target.value)} aria-label="Person"><option value="all">Everyone</option>${TEAM.map(u => html`<option key=${u.id} value=${u.id}>${u.name}</option>`)}</select>
+      <span className="meta" style=${{color:'var(--muted)',fontSize:13}}>${rows.length} messages · ${by('read')} read · ${by('delivered')} delivered · ${by('sent')} sent · ${by('failed')} failed${by('simulated') ? ` · ${by('simulated')} simulated (WhatsApp not connected)` : ''}</span></div>
+    <div className="table-wrap"><table><thead><tr><th>When</th><th>To</th><th>Message</th><th>Task</th><th>Status</th></tr></thead><tbody>
+      ${rows.map((r, i) => html`<tr key=${i} className="click" onClick=${() => ui.openTask(r.task.id)}><td className="sub">${fmtDT(r.t)}</td><td>${phoneUser(r.to)?.name || r.to}</td><td>${msgName(r.template)}</td><td>${r.task.title}</td><td><span className=${'pill ' + (r.status === 'read' ? 'good' : r.status === 'failed' ? 'crit' : '')}>${r.status}</span></td></tr>`)}
+    </tbody></table>${!rows.length && html`<p style=${{padding:16,color:'var(--muted)',margin:0}}>No task messages yet.</p>`}</div>
+    <p className="hint">Times: 09:00 morning digest · 09:30 due today · 10:00 due tomorrow and overdue · 10:05 escalations · 19:00 owner summary · Monday 09:00 weekly report. No messages on Sundays and holidays.</p>
+  </div>`;
+}
+function PhotoProof({onRef, busy, setBusy}){
+  return html`<label className="btn" style=${{position:'relative',overflow:'hidden'}} aria-busy=${busy ? 'true' : 'false'}>${busy ? 'Uploading…' : 'Take or choose photo'}<input type="file" accept="image/*" capture="environment" disabled=${busy} style=${{position:'absolute',inset:0,opacity:0}} onChange=${e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; setBusy(true); compressPhoto(f, d => uploadDataUrl(d).then(sl => onRef(sl.ref, d)).catch(() => alert('Upload failed. Check the internet and try again.')).finally(() => setBusy(false))); }}/></label>`;
+}
+function TaskDrawer({t, erp, ops, close}){
+  useEffect(() => { const k = e => { if (e.key === 'Escape'){ e.stopImmediatePropagation(); close(); } }; window.addEventListener('keydown', k, true); return () => window.removeEventListener('keydown', k, true); }, []);
+  useEffect(() => { if (t.assignee === erp.me && !t.seenAt) ops.taskDo(t.id, 'seen'); }, [t.id]);
+  const me = erp.me, mgr = isMgr(erp, t), doer = t.assignee === me, open = tOpen(t);
+  const [form, setForm] = useState(null);   // 'done' | 'block' | 'extend' | 'handover' | 'deadline' | 'reopen'
+  const [f, setF] = useState({});
+  const [busy, setBusy] = useState(false);
+  const p = t.projectId && erp.projects.find(x => x.id === t.projectId), it = t.itemId && erp.items.find(x => x.id === t.itemId);
+  const go = (action, data) => ops.taskDo(t.id, action, data).then(r => { if (r) { setForm(null); setF({}); } });
+  const openForm = (n, init = {}) => { setForm(n); setF(init); };
+  const others = TEAM.filter(u => u.id !== t.assignee);
+  return html`<div><div className="scrim" onClick=${close}></div>
+    <aside className="drawer" role="dialog" aria-label=${t.title}>
+      <div className="d-head"><div className="d-title"><div style=${{minWidth:0}}><span className="mono" style=${{fontSize:12,color:'var(--muted)'}}>${t.id}${t.auto ? ' · created by the system' : ''}</span><h2>${t.title}</h2><div className="phone">${p ? p.code + ' · ' + p.customer : 'General task'}${it ? ' · ' + typeById[it.type].name : ''}</div></div><div className="d-actions"><button className="icon-btn" onClick=${close} aria-label="Close"><${Icon} n="x"/></button></div></div>
+        <div className="inline">${t.status === 'blocked' ? html`<span className="pill warn">Blocked · waiting on ${whoOn(t.blockedOn)}</span>` : t.status === 'missed' ? html`<span className="pill crit">Missed</span>` : awaitingCheck(t) ? html`<span className="pill warn">Done · awaiting check</span>` : t.status === 'done' ? html`<span className="pill good">Done${t.verifiedAt ? ' · checked' : ''}</span>` : t.status === 'progress' ? html`<span className="pill good">In progress</span>` : html`<span className="pill">To do</span>`}${open ? html`<${Due} fu=${t.deadline}/>` : null}${t.priority === 'urgent' ? html`<span className="pill crit">Urgent</span>` : null}${tLate(t) >= 2 ? html`<span className="pill crit">${ladderText(tLate(t))}</span>` : null}</div></div>
+      <div className="d-body"><div className="details">
+        <dl className="fields">
+          <div><dt>Assigned to</dt><dd>${uname(t.assignee)}</dd></div><div><dt>Assigned by</dt><dd>${uname(t.assigner)}${t.auto ? ' (automatic)' : ''}</dd></div>
+          <div><dt>Assigned on</dt><dd>${fmtDT(t.created)}</dd></div>
+          <div><dt>Deadline</dt><dd>${fmtDate(t.deadline)}${t.deadline !== t.originalDeadline ? html`<div className="sub">original ${fmtDate(t.originalDeadline)}</div>` : null}</dd></div>
+          <div><dt>Seen</dt><dd>${t.seenAt ? fmtDT(t.seenAt) : html`<span style=${{color:'var(--crit)'}}>Not yet</span>`}</dd></div><div><dt>Started</dt><dd>${t.startedAt ? fmtDT(t.startedAt) : '—'}</dd></div>
+          <div><dt>Proof needed</dt><dd>${t.proof ? 'A ' + t.proof : 'None'}</dd></div><div><dt>Checked by assigner</dt><dd>${t.verify ? (t.verifiedAt ? 'Yes, ' + fmtDT(t.verifiedAt) : 'Needed') : 'Not needed'}</dd></div>
+          <div><dt>Repeats</dt><dd>${t.repeat || 'No'}</dd></div>${t.blockedDays > 0.05 ? html`<div><dt>Time blocked</dt><dd>${t.blockedDays.toFixed(1)} days</dd></div>` : null}
+        </dl>
+        ${t.status === 'blocked' && html`<div className="banner warn">${t.blockedReason}. Waiting on <b>${whoOn(t.blockedOn)}</b> since ${t.blockedAt ? fmtDT(t.blockedAt) : '—'}. ${t.followUp ? `Follow-up ${fmtDate(t.followUp)}; after that it counts as late again.` : ''}
+          ${(doer || mgr || t.blockedOn === me) && html`<div style=${{marginTop:8}}><button className="btn small primary" onClick=${() => go('unblock')}>Unblock</button></div>`}</div>`}
+        ${t.ext && html`<div className="banner">${uname(t.assignee)} asked to move the deadline to <b>${fmtDate(t.ext.date)}</b>: “${t.ext.reason}”.${mgr && !doer ? html`<div className="inline" style=${{marginTop:8}}><button className="btn small primary" onClick=${() => go('extend_ok')}>Approve</button><button className="btn small" onClick=${() => go('extend_no')}>Reject</button></div>` : html` Waiting for ${uname(t.ext.to)}.`}</div>`}
+        ${!open && (t.proofUrl || t.proofNote) && html`<div className="box"><h4>Proof</h4>${t.proofUrl && html`<a href=${t.proofUrl} target="_blank" rel="noopener">${/\.(jpg|png|webp)/.test(t.proofUrl) || t.proof === 'photo' ? html`<img src=${t.proofUrl} alt="Proof" style=${{maxWidth:'100%',maxHeight:240,display:'block'}}/>` : 'Open the file'}</a>`}${t.proofNote && html`<p style=${{margin:'6px 0 0'}}>${t.proofNote}</p>`}</div>`}
+        ${awaitingCheck(t) && mgr && !doer && html`<div className="inline"><button className="btn primary" onClick=${() => go('verify')}>Accept</button><button className="btn" onClick=${() => openForm('reopen', {date:addDays(1)})}>Reopen</button></div>`}
+        ${!open && mgr && !awaitingCheck(t) && html`<div><button className="btn small ghost" onClick=${() => openForm('reopen', {date:addDays(1)})}>Reopen this task</button></div>`}
+        ${open && html`<div className="box"><h4>Update</h4>
+          <div className="row-btns">
+            ${doer && t.status === 'todo' && html`<button className="btn" onClick=${() => go('start')}>Start</button>`}
+            ${doer && t.status !== 'blocked' && html`<button className="btn primary" onClick=${() => t.proof ? openForm('done') : go('done')}>${t.proof ? 'Mark done (add ' + t.proof + ')' : 'Mark done'}</button>`}
+            ${doer && t.status !== 'blocked' && html`<button className="btn" onClick=${() => openForm('block', {reason:BLOCK_REASONS[0], on:t.assigner !== me ? t.assigner : '', followUp:addDays(2)})}>Blocked</button>`}
+            ${doer && !t.ext && !mgr && html`<button className="btn" onClick=${() => openForm('extend', {date:addDaysTo(1, t.deadline), reason:''})}>Need more time</button>`}
+            ${mgr && html`<button className="btn" onClick=${() => openForm('deadline', {date:t.deadline, reason:''})}>Change deadline</button>`}
+            ${(doer || mgr) && html`<button className="btn" onClick=${() => openForm('handover', {to:others[0]?.id || '', note:''})}>${doer ? 'Hand over' : 'Reassign'}</button>`}
+            ${!doer && html`<button className="btn ghost" onClick=${() => go('remind')}>Send WhatsApp reminder</button>`}
+          </div>
+          ${form === 'done' && html`<div className="stack" style=${{gap:8}}>
+            ${(t.proof === 'photo') && html`<div className="inline"><${PhotoProof} busy=${busy} setBusy=${setBusy} onRef=${(ref, d) => setF({...f, file:ref, preview:d})}/>${f.preview && html`<img src=${f.preview} alt="" style=${{height:56}}/>`}</div>`}
+            ${(t.proof === 'file') && html`<div className="inline"><${FilePick} label=${f.file ? 'Change file' : 'Attach file'} busy=${busy} onFile=${async file => { setBusy(true); try { const sl = await uploadFile(file); setF({...f, file:sl.ref, fname:file.name}); } catch(e){ alert(e.message); } setBusy(false); }}/>${f.fname && html`<span className="sub">${f.fname}</span>`}</div>`}
+            <input className="inp" placeholder=${t.proof === 'comment' ? 'Comment (required)' : 'Note (optional)'} value=${f.note || ''} onInput=${e => setF({...f, note:e.target.value})}/>
+            <div className="inline"><button className="btn primary" disabled=${busy || ((t.proof === 'photo' || t.proof === 'file') && !f.file) || (t.proof === 'comment' && !(f.note || '').trim())} onClick=${() => go('done', {file:f.file, note:(f.note || '').trim()})}>Submit as done</button><button className="btn ghost" onClick=${() => setForm(null)}>Cancel</button></div></div>`}
+          ${form === 'block' && html`<div className="form" style=${{padding:0}}>
+            <label>Reason<select value=${f.reason} onChange=${e => setF({...f, reason:e.target.value})}>${BLOCK_REASONS.map(r => html`<option key=${r}>${r}</option>`)}</select></label>
+            <label>Waiting on<select value=${f.on} onChange=${e => setF({...f, on:e.target.value})}><option value="">My manager</option><option value="client">The client</option>${TEAM.filter(u => u.id !== me).map(u => html`<option key=${u.id} value=${u.id}>${u.name}</option>`)}</select></label>
+            <label>Follow up on<input type="date" value=${f.followUp} min=${addDays(0)} max=${addDays(14)} onInput=${e => setF({...f, followUp:e.target.value})}/></label>
+            <div className="form-foot"><button className="btn ghost" onClick=${() => setForm(null)}>Cancel</button><button className="btn primary" onClick=${() => go('block', {reason:f.reason, on:f.on, followUp:f.followUp})}>Mark blocked</button></div></div>`}
+          ${form === 'extend' && html`<div className="form" style=${{padding:0}}>
+            <label>New date<input type="date" value=${f.date} min=${addDaysTo(1, t.deadline)} onInput=${e => setF({...f, date:e.target.value})}/></label>
+            <label className="full">Why<input value=${f.reason} onInput=${e => setF({...f, reason:e.target.value})} placeholder="e.g. Client travelling until Friday"/></label>
+            <div className="form-foot"><button className="btn ghost" onClick=${() => setForm(null)}>Cancel</button><button className="btn primary" disabled=${(f.reason || '').trim().length < 5} onClick=${() => go('extend', {date:f.date, reason:f.reason.trim()})}>Ask ${uname(t.assigner)}</button></div></div>`}
+          ${form === 'deadline' && html`<div className="form" style=${{padding:0}}>
+            <label>New deadline<input type="date" value=${f.date} min=${addDays(0)} onInput=${e => setF({...f, date:e.target.value})}/></label>
+            <label>Reason (recorded)<input value=${f.reason} onInput=${e => setF({...f, reason:e.target.value})}/></label>
+            <div className="form-foot"><button className="btn ghost" onClick=${() => setForm(null)}>Cancel</button><button className="btn primary" onClick=${() => go('deadline', {date:f.date, reason:f.reason})}>Change deadline</button></div></div>`}
+          ${form === 'handover' && html`<div className="form" style=${{padding:0}}>
+            <label>${doer ? 'Hand over to' : 'Reassign to'}<select value=${f.to} onChange=${e => setF({...f, to:e.target.value})}>${others.map(u => html`<option key=${u.id} value=${u.id}>${u.name}</option>`)}</select></label>
+            <label>Note (required)<input value=${f.note} onInput=${e => setF({...f, note:e.target.value})}/></label>
+            <div className="form-foot"><button className="btn ghost" onClick=${() => setForm(null)}>Cancel</button><button className="btn primary" disabled=${!(f.note || '').trim() || !f.to} onClick=${() => go('handover', {to:f.to, note:f.note.trim()})}>${doer ? 'Hand over' : 'Reassign'}</button></div></div>`}
+        </div>`}
+        ${form === 'reopen' && html`<div className="box"><h4>Reopen</h4><div className="form" style=${{padding:0}}>
+          <label className="full">What is wrong<input value=${f.reason || ''} onInput=${e => setF({...f, reason:e.target.value})} placeholder="e.g. Photo shows the wrong shutter"/></label>
+          <label>New deadline<input type="date" value=${f.date} min=${addDays(0)} onInput=${e => setF({...f, date:e.target.value})}/></label>
+          <div className="form-foot"><button className="btn ghost" onClick=${() => setForm(null)}>Cancel</button><button className="btn primary" disabled=${(f.reason || '').trim().length < 3} onClick=${() => go('reopen', {reason:f.reason.trim(), date:f.date})}>Reopen and notify</button></div></div></div>`}
+        ${(t.msgs || []).length > 0 && html`<div className="box"><h4>WhatsApp sent for this task</h4><ol className="chain">${t.msgs.map((m,i) => html`<li key=${i}><span><b>${msgName(m.template)}</b> to ${phoneUser(m.to)?.name || m.to} <span className=${'pill ' + (m.status === 'read' ? 'good' : m.status === 'failed' ? 'crit' : '')}>${m.status}</span></span><time>${fmtDT(m.t)}</time></li>`)}</ol></div>`}
+        <div className="box"><h4>History</h4><ol className="chain">${t.events.map((e,i) => html`<li key=${i}><span><b>${EVT[e.e] || e.e}</b>${e.e === 'assigned' || e.e === 'handover' ? ` by ${uname(e.by)} to ${uname(e.to)}` : e.e === 'reminded' ? ' sent' : e.e === 'escalated' ? ` to ${uname(e.to)}` : e.by === 'system' ? ' (automatic)' : ` by ${uname(e.by)}`}${e.note ? html`<span className="sub" style=${{color:'var(--muted)'}}> · ${e.note}</span>` : null}</span><time>${fmtDT(e.t)}</time></li>`)}</ol></div>
+      </div></div>
+    </aside></div>`;
+}
+function NewTask({erp, ops, close}){
+  const [f, setF] = useState({title:'', projectId:'', itemId:'', assignee:'', deadline:addDays(1), priority:'normal', proof:'', repeat:'', verify:false, template:''});
+  const its = erp.items.filter(i => i.projectId === f.projectId);
+  const ok = f.title.trim() && f.assignee && f.deadline && daysFrom(f.deadline) >= 0;
+  const load = TEAM.map(u => { const ts = erp.tasks.filter(t => t.assignee === u.id && tOpen(t)); return {u, open:ts.length, late:ts.filter(t => tLate(t) > 0).length}; });
+  const useTpl = i => { const x = TASK_TPL[i]; if (!x) return setF({...f, template:''}); setF({...f, template:x.title, title:x.title, deadline:addDays(x.days), proof:x.proof || '', verify:!!x.verify, priority:x.priority || 'normal'}); };
+  return html`<div className="modal" role="dialog" aria-modal="true" aria-label="New task"><div className="scrim" onClick=${close}></div>
+    <form className="sheet" onSubmit=${e => { e.preventDefault(); if (!ok) return; ops.addTask({...f, title:f.title.trim(), assigner:erp.me}); close(); }}>
+      <header><h2>New task</h2><p>What, who, by when. Reminders, escalation and the record happen automatically.</p></header>
+      <div className="form">
+        ${TASK_TPL.length > 0 && html`<label className="full">Start from a template<select value=${TASK_TPL.findIndex(x => x.title === f.template)} onChange=${e => useTpl(Number(e.target.value))}><option value="-1">— none —</option>${TASK_TPL.map((x, i) => html`<option key=${i} value=${i}>${x.title}</option>`)}</select></label>`}
+        <label className="full">Task<input autoFocus value=${f.title} onInput=${e => setF({...f, title:e.target.value})} placeholder="e.g. Share revised kitchen drawing with customer"/></label>
+        <label>Assign to<select value=${f.assignee} onChange=${e => setF({...f, assignee:e.target.value})}><option value="">Choose…</option>${load.map(({u, open, late}) => html`<option key=${u.id} value=${u.id}>${u.name} · ${u.roleName.split(' ·')[0]} · ${open} open${late ? `, ${late} late` : ''}</option>`)}</select></label>
+        <label>Deadline<input type="date" value=${f.deadline} min=${addDays(0)} onInput=${e => setF({...f, deadline:e.target.value})}/></label>
+        <label>Project (optional)<select value=${f.projectId} onChange=${e => setF({...f, projectId:e.target.value, itemId:''})}><option value="">General</option>${erp.projects.map(p => html`<option key=${p.id} value=${p.id}>${p.code} · ${p.customer}</option>`)}</select></label>
+        <label>Item (optional)<select value=${f.itemId} onChange=${e => setF({...f, itemId:e.target.value})} disabled=${!f.projectId}><option value="">Whole project</option>${its.map(i => html`<option key=${i.id} value=${i.id}>${i.code}</option>`)}</select></label>
+        <label>Priority<div className="seg"><button type="button" aria-pressed=${f.priority === 'normal'} onClick=${() => setF({...f, priority:'normal'})}>Normal</button><button type="button" aria-pressed=${f.priority === 'urgent'} onClick=${() => setF({...f, priority:'urgent'})}>Urgent</button></div></label>
+        <label>Proof to complete<select value=${f.proof} onChange=${e => setF({...f, proof:e.target.value})}><option value="">None</option><option value="photo">Photo (camera)</option><option value="file">File upload</option><option value="comment">Comment</option></select></label>
+        <label>Repeat<select value=${f.repeat} onChange=${e => setF({...f, repeat:e.target.value})}><option value="">Does not repeat</option><option value="daily">Daily</option><option value="weekly">Weekly (same weekday)</option><option value="monthly">Monthly (same date)</option></select></label>
+        <label className="check full" style=${{flexDirection:'row',alignItems:'center',gap:8}}><input type="checkbox" checked=${f.verify} onChange=${() => setF({...f, verify:!f.verify})}/>I'll check it before it counts as done (accepted automatically after one working day)</label>
+        <div className="form-foot"><button type="button" className="btn ghost" onClick=${close}>Cancel</button><button type="submit" className="btn primary" disabled=${!ok}>Assign and send WhatsApp</button></div>
+      </div></form></div>`;
+}
+
+/* ---------- Scorecards: the audit ---------- */
+function Team({erp}){
+  const [days, setDays] = useState(30);
+  const from = Date.now() - days * DAY;
+  const rows = TEAM.map(u => {
+    const ts = erp.tasks.filter(t => t.assignee === u.id), open = ts.filter(tOpen);
+    const done = ts.filter(t => t.status === 'done' && t.doneAt >= from), missed = ts.filter(t => t.status === 'missed' && parseYmd(t.deadline).getTime() >= from);
+    const late = done.filter(t => !onOriginal(t)).map(t => Math.max(0, daysFrom(doneDay(t), t.originalDeadline || t.deadline) * -1));
+    const recent = ts.filter(t => t.created >= from);
+    const ev = (name) => ts.reduce((n, t) => n + t.events.filter(e => e.e === name && e.t >= from).length, 0);
+    const seenH = recent.filter(t => t.seenAt).map(t => (t.seenAt - t.created) / HR);
+    const startH = recent.filter(t => t.startedAt).map(t => (t.startedAt - t.created) / HR);
+    const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+    const inst = erp.items.filter(i => i.installer === u.id && i.installDone && (i.installedAt || 0) >= from);
+    const w = inst.reduce((s,i) => s + workMs(i), 0) / HR, sd = inst.reduce((s,i) => s + typeById[i.type].std, 0);
+    return {u, given:recent.length, open:open.length, overdue:open.filter(t => tLate(t) > 0).length, done:done.length, missed:missed.length,
+      onTime:done.length ? Math.round(done.filter(onOriginal).length / done.length * 100) : null, avgLate:late.length ? avg(late) : null,
+      changes:ev('deadline'), asked:ev('extension'), reopened:ev('reopened'), escal:ev('escalated'),
+      seen:avg(seenH), start:avg(startH), blocked:ts.reduce((n, t) => n + (t.blockedDays || 0) + (t.status === 'blocked' && t.blockedAt ? (Date.now() - t.blockedAt) / DAY : 0), 0),
+      reminders:done.length ? avg(done.map(t => t.reminders || 0)) : null, inst:inst.length, w, sd};
+  }).filter(r => r.given || r.open || r.done || r.inst);
+  const segs = erp.items.flatMap(i => i.log.filter(l => l.out && l.out >= from).map(l => ({stage:l.stage, days:(l.out - l.in)/DAY})));
+  const cyc = PSTAGES.filter(s => s.id !== 'closed').map(s => { const x = segs.filter(z => z.stage === s.id); const tg = STAGE_TGT[s.id] ?? s.days; return {s, tg, n:x.length, avg:x.length ? x.reduce((a,b) => a + b.days, 0)/x.length : 0, over:x.filter(z => z.days > tg).length}; });
+  const cmax = Math.max(...cyc.map(c => Math.max(c.avg, c.tg)), 1);
+  const f1 = (v, s = '') => v == null ? '—' : (Math.round(v * 10) / 10) + s;
+  const csv = () => {
+    const head = ['Person','Role','Tasks given','Done','On time vs original %','Avg days late','Missed repeats','Deadline changes','More time asked','Reopened','Escalations','Hours to seen','Hours to start','Days blocked','Reminders per task','Open now','Overdue now'];
+    const lines = [head, ...rows.map(r => [r.u.name, r.u.roleName, r.given, r.done, r.onTime ?? '', f1(r.avgLate), r.missed, r.changes, r.asked, r.reopened, r.escal, f1(r.seen), f1(r.start), f1(r.blocked), f1(r.reminders), r.open, r.overdue])];
+    const b = new Blob([lines.map(l => l.map(x => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\n')], {type:'text/csv'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `mms-scorecards-${days}d-${todayYmd()}.csv`; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  };
+  const red = (v, bad) => ({color: v != null && bad(v) ? 'var(--crit)' : null, fontWeight: v != null && bad(v) ? 600 : 400});
+  return html`<section className="view"><div className="stack">
+    <div className="toolbar" style=${{margin:0}}><div className="seg">${[[7,'Last 7 days'],[30,'Last 30 days'],[90,'Last 90 days']].map(([d, n]) => html`<button key=${d} aria-pressed=${days === d} onClick=${() => setDays(d)}>${n}</button>`)}</div><button className="btn small" onClick=${csv}>Export to Excel (CSV)</button>
+      <span className="meta" style=${{color:'var(--muted)',fontSize:12.5}}>On time is measured against the <b>original</b> deadline, so moved deadlines do not hide delays.</span></div>
+    <div className="table-wrap"><table>
+      <thead><tr><th>Person</th><th className="r">Given</th><th className="r">Done</th><th className="r">On time</th><th className="r">Avg late</th><th className="r">Missed</th><th className="r">Deadline moved</th><th className="r">Reopened</th><th className="r">Escalated</th><th className="r">To seen</th><th className="r">To start</th><th className="r">Blocked</th><th className="r">Reminders / task</th><th className="r">Open · overdue</th></tr></thead>
+      <tbody>${rows.map(r => html`<tr key=${r.u.id}><td><span className="inline" style=${{gap:8}}><${Av} id=${r.u.id}/><span><b>${r.u.name}</b><div className="sub">${r.u.roleName}</div></span></span></td>
+        <td className="r num">${r.given}</td><td className="r num">${r.done}</td><td className="r num" style=${red(r.onTime, v => v < 80)}>${r.onTime == null ? '—' : r.onTime + '%'}</td><td className="r num">${r.avgLate ? f1(r.avgLate, ' d') : '—'}</td>
+        <td className="r num" style=${red(r.missed, v => v > 0)}>${r.missed || '—'}</td><td className="r num" style=${red(r.changes, v => v >= 3)}>${r.changes || '—'}${r.asked ? html`<div className="sub">${r.asked} asked</div>` : null}</td><td className="r num" style=${red(r.reopened, v => v > 0)}>${r.reopened || '—'}</td><td className="r num" style=${red(r.escal, v => v > 0)}>${r.escal || '—'}</td>
+        <td className="r num">${f1(r.seen, ' h')}</td><td className="r num">${f1(r.start, ' h')}</td><td className="r num">${r.blocked > 0.05 ? f1(r.blocked, ' d') : '—'}</td><td className="r num">${f1(r.reminders)}</td>
+        <td className="r num">${r.open}${r.overdue ? html` · <span style=${{color:'var(--crit)',fontWeight:600}}>${r.overdue}</span>` : ''}</td></tr>`)}</tbody></table>
+      ${!rows.length && html`<p style=${{padding:16,color:'var(--muted)',margin:0}}>No tasks in this period.</p>`}</div>
+    ${rows.some(r => r.inst) && html`<div className="table-wrap"><table><thead><tr><th>Installation team</th><th className="r">Items installed</th><th className="r">Work vs standard</th><th className="r">Snag rate</th></tr></thead><tbody>
+      ${rows.filter(r => r.inst).map(r => { const inst = erp.items.filter(i => i.installer === r.u.id && i.installDone && (i.installedAt || 0) >= from); const sn = Math.round(inst.filter(i => i.snags.length).length / inst.length * 100);
+        return html`<tr key=${r.u.id}><td>${r.u.name}</td><td className="r num">${r.inst}</td><td className="r num">${r.w.toFixed(1)} / ${r.sd} h<div className="sub" style=${{color:r.w > r.sd*1.15 ? 'var(--crit)' : 'var(--good)'}}>${r.w ? Math.round(r.sd / r.w * 100) : 100}% efficiency</div></td><td className="r num">${sn}%</td></tr>`; })}</tbody></table></div>`}
+    <div className="panel"><h3>Days per stage</h3><p className="hint">Items that left each stage in this period. The thin mark is the stage target (Users and access → Stages and templates). Red bars are over target.</p>
+      <div className="bars">${cyc.map(c => html`<div className="bar-row" key=${c.s.id}><span>${c.s.name}</span><div className="bar-track" style=${{position:'relative'}}><i style=${{width:(c.avg/cmax*100)+'%', background:c.avg > c.tg ? 'var(--crit)' : c.s.color}}></i><span style=${{position:'absolute',left:(c.tg/cmax*100)+'%',top:-2,bottom:-2,width:2,background:'var(--ink)'}} title=${'Target ' + c.tg + ' days'}></span></div><span className="n"><b>${c.n ? c.avg.toFixed(1) + ' d' : '—'}</b> · target ${c.tg}${c.over ? ` · ${c.over} over` : ''}</span></div>`)}</div>
+    </div>
+  </div></section>`;
+}
+
+/* ---------- settings: stage targets and task templates ---------- */
+function WorkSettings({erp, ops}){
+  const admin = can(erp, 'admin'), assign = can(erp, 'assign') || admin;
+  const [tg, setTg] = useState(() => ({...STAGE_TGT}));
+  const [tp, setTp] = useState(() => TASK_TPL.map(x => ({...x})));
+  const stages = PSTAGES.filter(s => s.id !== 'closed');
+  const upd = (i, k, v) => setTp(l => l.map((x, j) => j === i ? {...x, [k]:v} : x));
+  return html`<div className="stack">
+    <div className="box"><h4>Stage targets (days)</h4><p className="hint">An item is shown as stuck when it stays in a stage longer than this. Automatic stage tasks get this deadline. Time waiting on the client is not counted.</p>
+      <div className="form" style=${{padding:0,gridTemplateColumns:'repeat(auto-fill,minmax(170px,1fr))'}}>${stages.map(s => html`<label key=${s.id}>${s.name}<input type="number" min="0" max="90" value=${tg[s.id] ?? s.days} disabled=${!admin} onInput=${e => setTg({...tg, [s.id]:e.target.value})}/></label>`)}</div>
+      ${admin && html`<div className="inline" style=${{marginTop:10}}><button className="btn primary small" onClick=${() => ops.saveStageTargets(Object.fromEntries(stages.map(s => [s.id, Number(tg[s.id] ?? s.days)])))}>Save stage targets</button></div>`}</div>
+    <div className="box"><h4>Task templates</h4><p className="hint">Shown in New task. Picking one fills the title, deadline, proof and check.</p>
+      <div className="table-wrap"><table><thead><tr><th>Title</th><th>Days</th><th>Proof</th><th>Check</th><th>Priority</th><th></th></tr></thead><tbody>
+        ${tp.map((x, i) => html`<tr key=${i}><td><input className="inp" style=${{width:'100%'}} value=${x.title} disabled=${!assign} onInput=${e => upd(i, 'title', e.target.value)}/></td><td><input className="inp" type="number" min="0" max="60" style=${{width:64}} value=${x.days} disabled=${!assign} onInput=${e => upd(i, 'days', Number(e.target.value))}/></td>
+          <td><select className="sel" value=${x.proof} disabled=${!assign} onChange=${e => upd(i, 'proof', e.target.value)}><option value="">None</option><option value="photo">Photo</option><option value="file">File</option><option value="comment">Comment</option></select></td>
+          <td><input type="checkbox" checked=${!!x.verify} disabled=${!assign} onChange=${() => upd(i, 'verify', !x.verify)}/></td>
+          <td><select className="sel" value=${x.priority} disabled=${!assign} onChange=${e => upd(i, 'priority', e.target.value)}><option value="normal">Normal</option><option value="urgent">Urgent</option></select></td>
+          <td>${assign && html`<button className="btn small ghost" onClick=${() => setTp(l => l.filter((_, j) => j !== i))}>Remove</button>`}</td></tr>`)}</tbody></table></div>
+      ${assign && html`<div className="inline" style=${{marginTop:10}}><button className="btn small" onClick=${() => setTp(l => [...l, {title:'', days:1, proof:'', verify:false, priority:'normal'}])}>Add template</button><button className="btn primary small" disabled=${tp.some(x => x.title.trim().length < 2)} onClick=${() => ops.saveTaskTemplates(tp.map(x => ({...x, title:x.title.trim(), days:Number(x.days) || 0})))}>Save templates</button></div>`}</div>
+    <div className="box"><h4>How reminders and escalation work</h4><div style=${{fontSize:13,lineHeight:1.6}}>
+      Person doing the task: WhatsApp the day before, on the day, then every morning while late.<br/>
+      2 days late: the person who gave the task. For automatic tasks and tasks people give themselves, the project's PM.<br/>
+      4 days late: the ops head. 7 days late: the owner.<br/>
+      Blocked: the person it is waiting on is reminded every morning; after the follow-up date it counts as late again.<br/>
+      Deadlines: only the person who gave the task, the project's PM or a manager can change them. The person doing it asks with "Need more time". The original deadline is kept for the scorecard.<br/>
+      No messages on Sundays and holidays.</div></div>
+  </div>`;
+}
+
 
 /* ---------- Projects ---------- */
 function Projects({erp, ui, ops}){
@@ -1580,6 +1881,7 @@ function Projects({erp, ui, ops}){
               <div className="card-row"><span className="code">${i.code}</span><i className=${'sdot ' + itemHealth(i)} title=${HEALTH[itemHealth(i)]}></i></div>
               <span className="t">${typeById[i.type].name}</span>
               <span className="meta">${p.customer} · ${i.roomName}, wall ${i.wall}</span>
+              ${st.id !== 'closed' && (() => { const si = stageInfo(i); return i.waiting ? html`<span className="pill warn" style=${{justifySelf:'start'}}>${WAIT_LABEL[i.waiting]}</span>` : html`<span className=${'stage-age' + (si.over ? ' over' : '')}>${Math.floor(si.age)}d in stage · target ${si.target}</span>`; })()}
               ${i.flags.length ? html`<span className="flagtxt">${i.flags[0]}</span>` : null}
               <div className="card-foot">${st.id === 'closed' ? html`<span className="due">Done</span>` : html`<${Due} fu=${i.target}/>`}${sn ? html`<span className="pill crit">${sn} snag</span>` : null}${running(i) ? html`<span className="pill good">Working</span>` : null}<span className="avatar" title=${uname(i.owner)}>${i.owner ? uname(i.owner).slice(0,2).toUpperCase() : '?'}</span></div>
             </button>`; }) : html`<div className="col-empty">No items</div>`}</div>
@@ -1871,7 +2173,9 @@ function ItemModal({it, erp, ops, close, ui}){
     <div className="sheet wide">
       <button className="icon-btn x" onClick=${close} aria-label="Close"><${Icon} n="x"/></button>
       <header><h2 className="mono" style=${{textTransform:'none',letterSpacing:0,fontWeight:500}}>${it.code}</h2><p>${typeById[it.type].name}${it.desc ? ' · ' + it.desc : ''} · ${it.roomName}, wall ${it.wall} · <button className="linkbtn" style=${{color:'var(--accent)',marginTop:0,fontSize:13}} onClick=${() => { close(); ui.openProject(p.id); }}>${p.code} ${p.customer}</button></p></header>
-      <div style=${{padding:'4px 20px 12px'}}><div className="stepper">${PSTAGES.map((s,i) => html`<span key=${s.id} className=${'step' + (i === k ? ' cur' : i < k ? ' done' : '')}>${s.short}</span>`)}</div></div>
+      <div style=${{padding:'4px 20px 12px'}}><div className="stepper">${PSTAGES.map((s,i) => html`<span key=${s.id} className=${'step' + (i === k ? ' cur' : i < k ? ' done' : '')}>${s.short}</span>`)}</div>
+        ${it.stage !== 'closed' && (() => { const si = stageInfo(it); return html`<div className="inline" style=${{marginTop:8,gap:10,flexWrap:'wrap'}}><span className=${'stage-age' + (si.over && !it.waiting ? ' over' : '')}>${Math.floor(si.age)} day${Math.floor(si.age) === 1 ? '' : 's'} in ${pstById[it.stage].short} · target ${si.target}${it.waiting ? ' · clock paused' : ''}</span>
+          <label className="inline" style=${{gap:6,fontSize:12.5}}>Waiting on client<select className="sel" disabled=${!edit} value=${it.waiting || ''} onChange=${e => ops.patchItem(it.id, {waiting:e.target.value}, e.target.value ? 'Marked as waiting on the client. The stage clock is paused.' : 'No longer waiting. The stage clock is running.')}><option value="">No</option>${Object.entries(WAIT_LABEL).map(([k, v]) => html`<option key=${k} value=${k}>${v}</option>`)}</select></label></div>`; })()}</div>
       <div className="sec"><dl className="kv">
         <div><dt>Stage</dt><dd>${pstById[it.stage].name}</dd></div>
         <div><dt>Responsible now</dt><dd><select className="sel" disabled=${!edit} value=${it.owner || ''} onChange=${e => up(x => { x.owner = e.target.value; if (x.stage === 'install') x.installer = e.target.value; }, `responsible changed to ${uname(e.target.value)}`)} aria-label="Responsible">${!it.owner && html`<option value="">Choose</option>`}${TEAM.filter(u => u.role !== 'sales').map(u => html`<option key=${u.id} value=${u.id}>${u.name} · ${u.roleName.split(' ·')[0]}</option>`)}</select></dd></div>
@@ -1928,7 +2232,7 @@ function ItemModal({it, erp, ops, close, ui}){
 /* ---------- Convert lead / new project ---------- */
 function ConvertBox({lead, erp, ops, ui}){
   const existing = erp.projects.find(p => p.leadId === lead.id);
-  const [f, setF] = useState({pm:'vikram', target:addDays(45), surveyDate:addDays(1), advance:true, address:lead.area ? lead.area + ', Raipur' : ''});
+  const [f, setF] = useState({pm:defaultPerson('pm', 'ops_head', 'admin'), target:addDays(45), surveyDate:addDays(1), advance:true, address:lead.area ? lead.area + ', Raipur' : ''});
   if (existing) return html`<div className="box"><h4>Project</h4><div className="inline"><span className="mono">${existing.code}</span><span className="sub" style=${{color:'var(--muted)'}}>${erp.items.filter(i => i.projectId === existing.id).length} items · target ${fmtDate(existing.target)}</span><button className="btn small" onClick=${() => ui.openProject(existing.id)}>Open project</button></div></div>`;
   return html`<div className="box"><h4>Convert to project</h4>
     <span style=${{fontSize:13,color:'var(--muted)'}}>Copies customer, phone, address and source. Books the site survey and messages the customer.</span>
@@ -1944,7 +2248,7 @@ function ConvertBox({lead, erp, ops, ui}){
 }
 function NewProject({leads, erp, ops, close, ui}){
   const won = leads.filter(l => l.stage === 'won' && !erp.projects.some(p => p.leadId === l.id));
-  const [f, setF] = useState({lead:won[0]?.id || '', customer:'', phone:'', address:'', value:'', pm:'vikram', target:addDays(45), surveyDate:addDays(1), advance:true});
+  const [f, setF] = useState({lead:won[0]?.id || '', customer:'', phone:'', address:'', value:'', pm:defaultPerson('pm', 'ops_head', 'admin'), target:addDays(45), surveyDate:addDays(1), advance:true});
   const lead = leads.find(l => l.id === f.lead);
   const ok = lead ? f.address.trim() : f.customer.trim() && f.phone.replace(/\D/g,'').length >= 10 && f.address.trim();
   const submit = e => { e.preventDefault(); if (!ok) return; ops.convert(lead || null, lead ? {...f, customer:lead.name, phone:lead.phone, value:lead.value} : f).then(id => { if (id){ close(); ui.openProject(id); } }); };
@@ -1963,135 +2267,6 @@ function NewProject({leads, erp, ops, close, ui}){
 }
 
 /* ---------- Tasks ---------- */
-const taskBucket = t => { if (t.status === 'done') return 'done'; const d = daysFrom(t.deadline); return d < 0 ? 'overdue' : d === 0 ? 'today' : 'upcoming'; };
-function TaskCard({t, erp, ui, showWho}){
-  const p = t.projectId && erp.projects.find(x => x.id === t.projectId);
-  return html`<button className=${'tcard' + (t.status === 'done' ? ' done' : '')} onClick=${() => ui.openTask(t.id)}>
-    <div className="card-row" style=${{alignItems:'flex-start'}}><b>${t.title}</b>${t.priority === 'urgent' ? html`<span className="pill crit">Urgent</span>` : null}</div>
-    <span className="meta">${p ? p.code + ' · ' + p.customer : 'General'}${showWho ? ' · ' + uname(t.assignee) : ' · from ' + uname(t.assigner)}</span>
-    <div className="card-foot">${t.status === 'done' ? html`<span className="due">Done</span>` : t.status === 'blocked' ? html`<span className="pill warn">Blocked · ${t.blockedReason}</span>` : html`<${Due} fu=${t.deadline}/>`}${t.status === 'progress' ? html`<span className="pill good">In progress</span>` : null}${t.repeat ? html`<span className="pill">${t.repeat}</span>` : null}${t.reminders ? html`<span className="wa-pill" title="WhatsApp reminders sent">${t.reminders}× reminded</span>` : null}</div>
-  </button>`;
-}
-function Tasks({erp, ui, ops, init}){
-  const all = can(erp, 'tasksAll');
-  const [mode0, setMode] = useState(all ? (init?.mode || 'team') : 'mine');
-  const mode = !all && (mode0 === 'team' || mode0 === 'wa') ? 'mine' : mode0;
-  const [person, setPerson] = useState(init?.person || 'all');
-  const [proj, setProj] = useState('all');
-  const [showDone, setShowDone] = useState(false);
-  const [bucket, setBucket] = useState('overdue');
-  const me = erp.me;
-  const base = erp.tasks.filter(t => (proj === 'all' || t.projectId === proj));
-  const order = t => ({overdue:0, today:1, upcoming:2, done:3})[taskBucket(t)] * 1e10 + parseYmd(t.deadline).getTime() / 1e4;
-  const mine = base.filter(t => t.assignee === me);
-  const people = TEAM.filter(u => base.some(t => t.assignee === u.id && (showDone || t.status !== 'done'))).filter(u => person === 'all' || u.id === person);
-  return html`<section className=${'view' + (mode === 'team' ? ' board-view' : '')}>
-    <div className="toolbar">
-      <div className="seg" role="group" aria-label="View">${[['team','Team board'],['mine','My tasks'],['byme','Assigned by me'],['wa','WhatsApp reminders']].filter(([id]) => all || id === 'mine' || id === 'byme').map(([id,n]) => html`<button key=${id} aria-pressed=${mode === id} onClick=${() => setMode(id)}>${n}</button>`)}</div>
-      ${mode === 'team' && html`<select className="sel" value=${person} onChange=${e => setPerson(e.target.value)} aria-label="Person"><option value="all">Everyone</option>${TEAM.map(u => html`<option key=${u.id} value=${u.id}>${u.name}</option>`)}</select>`}
-      ${mode !== 'wa' && html`<select className="sel" value=${proj} onChange=${e => setProj(e.target.value)} aria-label="Project"><option value="all">All projects</option>${erp.projects.map(p => html`<option key=${p.id} value=${p.id}>${p.code} · ${p.customer}</option>`)}</select>`}
-      ${mode === 'team' && html`<label className="check" style=${{fontSize:12.5}}><input type="checkbox" checked=${showDone} onChange=${() => setShowDone(!showDone)}/>Show done</label>`}
-    </div>
-    ${mode === 'team' && html`<div className="people">${people.map(u => { const ts = base.filter(t => t.assignee === u.id && (showDone || t.status !== 'done')).sort((a,b) => order(a) - order(b)); const od = ts.filter(t => taskBucket(t) === 'overdue' && t.status !== 'blocked').length;
-      return html`<div className="pcol" key=${u.id}><header><${Av} id=${u.id} s=${30}/><div style=${{minWidth:0}}><b>${u.name}</b><small>${u.roleName}</small></div><span style=${{marginLeft:'auto',display:'grid',justifyItems:'end',gap:2}}><span className="num" style=${{fontSize:12,color:'var(--muted)'}}>${ts.filter(t => t.status !== 'done').length} open</span>${od ? html`<span className="due over">${od} overdue</span>` : null}</span></header>
-        <div className="list">${ts.map(t => html`<${TaskCard} key=${t.id} t=${t} erp=${erp} ui=${ui}/>`)}</div></div>`; })}</div>`}
-    ${mode === 'mine' && html`<div style=${{maxWidth:640}}>
-      <p style=${{margin:'0 0 12px',color:'var(--muted)'}}>Signed in as <b style=${{color:'var(--ink)'}}>${uname(me)}</b>. This is the same list field staff see on the phone.</p>
-      <div className="chips" style=${{marginBottom:12}}>${[['overdue','Overdue'],['today','Today'],['upcoming','Upcoming'],['done','Done']].map(([id,n]) => html`<button key=${id} className="chip" aria-pressed=${bucket === id} onClick=${() => setBucket(id)}>${n} <span className="n">${mine.filter(t => taskBucket(t) === id).length}</span></button>`)}</div>
-      <div className="stack" style=${{gap:8}}>${mine.filter(t => taskBucket(t) === bucket).map(t => html`<div key=${t.id} className="mcard">
-        <div className="card-row" style=${{alignItems:'flex-start'}}><button className="linkbtn" style=${{color:'var(--ink)',textDecoration:'none',fontSize:14,fontWeight:600,textAlign:'left',marginTop:0}} onClick=${() => ui.openTask(t.id)}>${t.title}</button>${t.status === 'blocked' ? html`<span className="pill warn">Blocked</span>` : t.status === 'done' ? html`<span className="due">Done</span>` : html`<${Due} fu=${t.deadline}/>`}</div>
-        <span className="meta">From ${uname(t.assigner)}${t.projectId ? ' · ' + erp.projects.find(p => p.id === t.projectId).customer : ''}</span>
-        ${t.status !== 'done' && html`<div className="inline">${t.status === 'todo' && html`<button className="btn small" onClick=${() => ops.taskDo(t.id, 'start')}>Start</button>`}${t.status !== 'blocked' && html`<button className="btn small primary" onClick=${() => t.proof ? ui.openTask(t.id) : ops.taskDo(t.id, 'done')}>${t.proof ? 'Done (add ' + t.proof + ')' : 'Mark done'}</button>`}<button className="btn small ghost" onClick=${() => ui.openTask(t.id)}>More</button></div>`}
-      </div>`)}${!mine.filter(t => taskBucket(t) === bucket).length && html`<p className="hint" style=${{color:'var(--muted)'}}>Nothing here.</p>`}</div></div>`}
-    ${mode === 'byme' && html`<div className="table-wrap"><table>
-      <thead><tr><th>Task</th><th>Assigned to</th><th>Deadline</th><th>Status</th><th>Seen</th><th>Last update</th></tr></thead>
-      <tbody>${base.filter(t => t.assigner === me).sort((a,b) => order(a) - order(b)).map(t => { const seen = t.events.find(e => e.e === 'seen'); const last = t.events[t.events.length-1];
-        return html`<tr key=${t.id} className="click" onClick=${() => ui.openTask(t.id)}><td><b>${t.title}</b><div className="sub">${t.projectId ? erp.projects.find(p => p.id === t.projectId).customer : 'General'}</div></td><td><span className="inline" style=${{gap:6}}><${Av} id=${t.assignee}/>${uname(t.assignee)}</span></td>
-          <td>${t.status === 'done' ? html`<span className="sub">${fmtDate(t.deadline)}</span>` : html`<${Due} fu=${t.deadline}/>`}</td><td>${{todo:'To do', progress:'In progress', blocked:'Blocked · ' + t.blockedReason, done:'Done'}[t.status]}</td><td className="sub">${seen ? ago(seen.t) + ' ago' : html`<span style=${{color:'var(--crit)'}}>Not seen</span>`}</td><td className="sub">${EVT[last.e]} · ${ago(last.t)} ago</td></tr>`; })}</tbody></table>
-      ${!base.some(t => t.assigner === me) && html`<p style=${{padding:16,color:'var(--muted)',margin:0}}>${uname(me)} has not assigned any tasks. Switch “Signed in as” in the sidebar.</p>`}</div>`}
-    ${mode === 'wa' && html`<${Reminders} erp=${erp} ops=${ops} ui=${ui}/>`}
-  </section>`;
-}
-const EVT = {assigned:'Assigned', seen:'Seen', started:'Started', handover:'Handed over', reminded:'WhatsApp reminder', blocked:'Blocked', done:'Done', deadline:'Deadline changed'};
-function reminderPlan(erp){
-  const out = [];
-  erp.tasks.filter(t => t.status !== 'done').forEach(t => {
-    const d = daysFrom(t.deadline);
-    if (t.status === 'blocked') { out.push({time:'09:30', to:t.assigner, t, kind:'Blocked', text:`${uname(t.assignee)} is blocked: ${t.blockedReason}`}); return; }
-    if (d === 1) out.push({time:'10:00', to:t.assignee, t, kind:'Due tomorrow', text:'Due tomorrow'});
-    if (d === 0) out.push({time:'09:30', to:t.assignee, t, kind:'Due today', text:'Due today'});
-    if (d < 0) out.push({time:'10:00', to:t.assignee, t, kind:'Overdue', text:`Overdue by ${-d} day${d < -1 ? 's' : ''}`});
-    if (d <= -2) out.push({time:'10:05', to:t.assigner, t, kind:'Escalation', text:`${uname(t.assignee)} is ${-d} days late`});
-  });
-  return out.sort((a,b) => a.time < b.time ? -1 : 1);
-}
-function Reminders({erp, ops, ui}){
-  const plan = reminderPlan(erp);
-  const people = [...new Set(plan.map(r => r.to))];
-  const [who, setWho] = useState(people[0]);
-  const mine = plan.filter(r => r.to === (who || people[0]));
-  const myTasks = erp.tasks.filter(t => t.assignee === who && t.status !== 'done');
-  return html`<div className="split">
-    <div className="panel"><h3>Today's WhatsApp reminders · ${plan.length}</h3><p className="hint">Repeats every day until the task is done or blocked. After 2 days overdue the assigner gets an escalation. No messages on Sundays or holidays.</p>
-      <div>${plan.map((r,i) => html`<div className="rem-row" key=${i}><time>${r.time}</time><div style=${{minWidth:0}}><b style=${{fontWeight:600}}>${uname(r.to)}</b> <span className=${'pill ' + (r.kind === 'Escalation' || r.kind === 'Overdue' ? 'crit' : r.kind === 'Blocked' ? 'warn' : 'acc')}>${r.kind}</span><div className="sub" style=${{fontSize:12,color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${r.t.title}</div></div><button className="btn small ghost" onClick=${() => setWho(r.to)}>Preview</button></div>`)}</div>
-      <div className="box" style=${{marginTop:14}}><h4>Fixed daily messages</h4><div style=${{fontSize:13}}>09:00 · each person gets one digest of overdue and today's tasks<br/>19:00 · the owner gets the day summary: done, overdue, items moved, snags raised</div></div>
-    </div>
-    <div className="panel"><h3>${uname(who)}'s WhatsApp</h3><p className="hint">Buttons work: tapping Mark done here completes the task in the system.</p>
-      <select className="sel" value=${who} onChange=${e => setWho(e.target.value)} style=${{marginBottom:10}} aria-label="Person">${TEAM.map(u => html`<option key=${u.id} value=${u.id}>${u.name}</option>`)}</select>
-      <div className="wa-phone">
-        <div className="wa-msg"><span className="tpl">Template · daily_digest</span><span>Good morning ${uname(who)}. You have ${myTasks.filter(t => daysFrom(t.deadline) < 0).length} overdue and ${myTasks.filter(t => daysFrom(t.deadline) === 0).length} due today.</span></div>
-        ${mine.map((r,i) => html`<div className="wa-msg" key=${i}><span className="tpl">Template · ${r.kind === 'Escalation' ? 'task_escalation' : r.kind === 'Blocked' ? 'task_blocked' : 'task_reminder'}</span><span><b>${r.text}</b><br/>${r.t.title}${r.t.projectId ? html`<br/><span style=${{color:'var(--muted)'}}>${erp.projects.find(p => p.id === r.t.projectId).customer}</span>` : null}</span>
-          ${r.kind === 'Escalation' || r.kind === 'Blocked' ? html`<div className="wa-btns"><button onClick=${() => ui.openTask(r.t.id)}>Open task</button><button onClick=${() => ops.taskDo(r.t.id, 'remind')}>Nudge ${uname(r.t.assignee)}</button></div>`
-            : html`<div className="wa-btns"><button disabled=${!!r.t.proof} title=${r.t.proof ? 'Needs a ' + r.t.proof + ', open the app' : ''} onClick=${() => ops.taskDo(r.t.id, 'done', {by:r.t.assignee, note:'Marked done from WhatsApp'})}>${r.t.proof ? 'Needs ' + r.t.proof : 'Mark done'}</button><button onClick=${() => ops.taskDo(r.t.id, 'block', {by:r.t.assignee, reason:'Waiting for another team'})}>Blocked</button></div>`}</div>`)}
-        ${!mine.length && html`<div className="wa-msg">No reminders for ${uname(who)} today.</div>`}
-      </div>
-    </div>
-  </div>`;
-}
-function TaskDrawer({t, erp, ops, close}){
-  useEffect(() => { const k = e => { if (e.key === 'Escape'){ e.stopImmediatePropagation(); close(); } }; window.addEventListener('keydown', k, true); return () => window.removeEventListener('keydown', k, true); }, []);
-  useEffect(() => { if (t.assignee === erp.me) ops.taskDo(t.id, 'seen'); }, [t.id]);
-  const [ho, setHo] = useState(null), [bl, setBl] = useState(null), [note, setNote] = useState('');
-  const p = t.projectId && erp.projects.find(x => x.id === t.projectId), it = t.itemId && erp.items.find(x => x.id === t.itemId);
-  return html`<div><div className="scrim" onClick=${close}></div>
-    <aside className="drawer" role="dialog" aria-label=${t.title}>
-      <div className="d-head"><div className="d-title"><div style=${{minWidth:0}}><span className="mono" style=${{fontSize:12,color:'var(--muted)'}}>${t.id}${t.auto ? ' · created by the system' : ''}</span><h2>${t.title}</h2><div className="phone">${p ? p.code + ' · ' + p.customer : 'General task'}${it ? ' · ' + typeById[it.type].name : ''}</div></div><div className="d-actions"><button className="icon-btn" onClick=${close} aria-label="Close"><${Icon} n="x"/></button></div></div>
-        <div className="inline">${t.status === 'blocked' ? html`<span className="pill warn">Blocked · ${t.blockedReason}</span>` : t.status === 'done' ? html`<span className="pill good">Done</span>` : t.status === 'progress' ? html`<span className="pill good">In progress</span>` : html`<span className="pill">To do</span>`}${t.status !== 'done' ? html`<${Due} fu=${t.deadline}/>` : null}${t.priority === 'urgent' ? html`<span className="pill crit">Urgent</span>` : null}</div></div>
-      <div className="d-body"><div className="details">
-        <dl className="fields">
-          <div><dt>Assigned to</dt><dd>${uname(t.assignee)}</dd></div><div><dt>Assigned by</dt><dd>${uname(t.assigner)}</dd></div>
-          <div><dt>Assigned on</dt><dd>${fmtDT(t.created)}</dd></div><div><dt>Deadline</dt><dd>${t.status === 'done' ? fmtDate(t.deadline) : html`<input type="date" className="inp" value=${t.deadline} onChange=${e => ops.taskDo(t.id, 'deadline', {date:e.target.value})} aria-label="Deadline"/>`}</dd></div>
-          <div><dt>Proof needed</dt><dd>${t.proof ? 'A ' + t.proof : 'None'}</dd></div><div><dt>Repeats</dt><dd>${t.repeat || 'No'}</dd></div>
-        </dl>
-        ${t.status !== 'done' && html`<div className="box"><h4>Update</h4>
-          <div className="row-btns">${t.status === 'todo' && html`<button className="btn" onClick=${() => ops.taskDo(t.id, 'start')}>Start</button>`}${t.status === 'blocked' ? html`<button className="btn" onClick=${() => ops.taskDo(t.id, 'unblock')}>Unblock</button>` : html`<button className="btn" onClick=${() => { setBl(BLOCK_REASONS[0]); setHo(null); }}>Blocked</button>`}<button className="btn" onClick=${() => { setHo('vikram'); setBl(null); }}>Hand over</button></div>
-          ${bl && html`<div className="inline"><select className="sel" value=${bl} onChange=${e => setBl(e.target.value)} aria-label="Reason">${BLOCK_REASONS.map(r => html`<option key=${r}>${r}</option>`)}</select><button className="btn small primary" onClick=${() => { ops.taskDo(t.id, 'block', {reason:bl}); setBl(null); }}>Mark blocked</button></div>`}
-          ${ho && html`<div className="inline"><select className="sel" value=${ho} onChange=${e => setHo(e.target.value)} aria-label="Hand over to">${TEAM.filter(u => u.id !== t.assignee).map(u => html`<option key=${u.id} value=${u.id}>${u.name}</option>`)}</select><input className="inp" style=${{flex:1}} placeholder="Handover note (required)" value=${note} onInput=${e => setNote(e.target.value)}/><button className="btn small primary" disabled=${!note.trim()} onClick=${() => { ops.taskDo(t.id, 'handover', {to:ho, note:note.trim()}); setHo(null); setNote(''); }}>Hand over</button></div>`}
-          <div className="inline">${t.proof && html`<input className="inp" style=${{flex:1}} placeholder=${t.proof === 'photo' ? 'Photo attached (name or note)' : t.proof === 'file' ? 'File name, e.g. GBR-WR-01_R1.pdf' : 'Comment'} value=${note} onInput=${e => setNote(e.target.value)}/>`}<button className="btn primary" disabled=${t.status === 'blocked' || (t.proof && !note.trim())} onClick=${() => { ops.taskDo(t.id, 'done', {note:note.trim()}); setNote(''); }}>Mark done</button><button className="btn ghost small" onClick=${() => ops.taskDo(t.id, 'remind')}>Send WhatsApp reminder</button></div>
-        </div>`}
-        <div className="box"><h4>History</h4><ol className="chain">${t.events.map((e,i) => html`<li key=${i}><span><b>${EVT[e.e]}</b>${e.e === 'assigned' ? ` by ${uname(e.by)} to ${uname(e.to)}` : e.e === 'handover' ? ` by ${uname(e.by)} to ${uname(e.to)}` : e.e === 'reminded' ? ' sent' : ` by ${uname(e.by)}`}${e.note ? html`<span className="sub" style=${{color:'var(--muted)'}}> · ${e.note}</span>` : null}</span><time>${fmtDT(e.t)}</time></li>`)}</ol></div>
-      </div></div>
-    </aside></div>`;
-}
-function NewTask({erp, ops, close}){
-  const [f, setF] = useState({title:'', projectId:'', itemId:'', assignee:'vikram', deadline:addDays(1), priority:'normal', proof:'', repeat:''});
-  const its = erp.items.filter(i => i.projectId === f.projectId);
-  const ok = f.title.trim() && f.assignee && f.deadline;
-  return html`<div className="modal" role="dialog" aria-modal="true" aria-label="New task"><div className="scrim" onClick=${close}></div>
-    <form className="sheet" onSubmit=${e => { e.preventDefault(); if (!ok) return; ops.addTask({...f, title:f.title.trim(), assigner:erp.me}); close(); }}>
-      <header><h2>New task</h2><p>What, who, by when. Everything else is recorded automatically.</p></header>
-      <div className="form">
-        <label className="full">Task<input autoFocus value=${f.title} onInput=${e => setF({...f, title:e.target.value})} placeholder="e.g. Share revised kitchen drawing with customer"/></label>
-        <label>Assign to<select value=${f.assignee} onChange=${e => setF({...f, assignee:e.target.value})}>${TEAM.map(u => html`<option key=${u.id} value=${u.id}>${u.name} · ${u.roleName.split(' ·')[0]}</option>`)}</select></label>
-        <label>Deadline<input type="date" value=${f.deadline} onInput=${e => setF({...f, deadline:e.target.value})}/></label>
-        <label>Project (optional)<select value=${f.projectId} onChange=${e => setF({...f, projectId:e.target.value, itemId:''})}><option value="">General</option>${erp.projects.map(p => html`<option key=${p.id} value=${p.id}>${p.code} · ${p.customer}</option>`)}</select></label>
-        <label>Item (optional)<select value=${f.itemId} onChange=${e => setF({...f, itemId:e.target.value})} disabled=${!f.projectId}><option value="">Whole project</option>${its.map(i => html`<option key=${i.id} value=${i.id}>${i.code}</option>`)}</select></label>
-        <label>Priority<div className="seg"><button type="button" aria-pressed=${f.priority === 'normal'} onClick=${() => setF({...f, priority:'normal'})}>Normal</button><button type="button" aria-pressed=${f.priority === 'urgent'} onClick=${() => setF({...f, priority:'urgent'})}>Urgent</button></div></label>
-        <label>Proof to complete<select value=${f.proof} onChange=${e => setF({...f, proof:e.target.value})}><option value="">None</option><option value="photo">Photo</option><option value="file">File</option><option value="comment">Comment</option></select></label>
-        <label>Repeat<select value=${f.repeat} onChange=${e => setF({...f, repeat:e.target.value})}><option value="">Does not repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
-        <div className="form-foot"><button type="button" className="btn ghost" onClick=${close}>Cancel</button><button type="submit" className="btn primary" disabled=${!ok}>Assign and send WhatsApp</button></div>
-      </div></form></div>`;
-}
 
 /* ---------- mobile helpers ---------- */
 function compressPhoto(file, cb){
@@ -2636,34 +2811,6 @@ function InstallApp({erp, ops}){
 }
 
 /* ---------- Team performance ---------- */
-function Team({erp}){
-  const rows = TEAM.map(u => {
-    const ts = erp.tasks.filter(t => t.assignee === u.id), open = ts.filter(t => t.status !== 'done');
-    const done = ts.filter(t => t.status === 'done').map(t => { const e = [...t.events].reverse().find(x => x.e === 'done'); return {t, at:e ? e.t : Date.now()}; });
-    const onTime = done.filter(x => x.at <= parseYmd(x.t.deadline).getTime() + DAY);
-    const lateDays = done.filter(x => x.at > parseYmd(x.t.deadline).getTime() + DAY).map(x => (x.at - parseYmd(x.t.deadline).getTime()) / DAY);
-    const inst = erp.items.filter(i => i.installer === u.id && i.installDone);
-    const w = inst.reduce((s,i) => s + workMs(i), 0) / HR, sd = inst.reduce((s,i) => s + typeById[i.type].std, 0);
-    return {u, open:open.length, overdue:open.filter(t => daysFrom(t.deadline) < 0 && t.status !== 'blocked').length, blocked:open.filter(t => t.status === 'blocked').length, done:done.length,
-      onTime:done.length ? Math.round(onTime.length / done.length * 100) : null, avgLate:lateDays.length ? (lateDays.reduce((a,b) => a + b, 0) / lateDays.length).toFixed(1) : null,
-      inst:inst.length, w, sd, snag:inst.length ? Math.round(inst.filter(i => i.snags.length).length / inst.length * 100) : null};
-  });
-  const segs = erp.items.flatMap(i => i.log.filter(l => l.out).map(l => ({stage:l.stage, days:(l.out - l.in)/DAY})));
-  const cyc = PSTAGES.filter(s => s.id !== 'closed').map(s => { const x = segs.filter(z => z.stage === s.id); return {s, n:x.length, avg:x.length ? x.reduce((a,b) => a + b.days, 0)/x.length : 0}; });
-  const cmax = Math.max(...cyc.map(c => Math.max(c.avg, c.s.days)), 1);
-  return html`<section className="view"><div className="stack">
-    <div className="table-wrap"><table>
-      <thead><tr><th>Person</th><th className="r">Open</th><th className="r">Overdue</th><th className="r">Blocked</th><th className="r">Done</th><th className="r">On time</th><th className="r">Avg delay</th><th className="r">Items installed</th><th className="r">Work vs standard</th><th className="r">Snag rate</th></tr></thead>
-      <tbody>${rows.map(r => html`<tr key=${r.u.id}><td><span className="inline" style=${{gap:8}}><${Av} id=${r.u.id}/><span><b>${r.u.name}</b><div className="sub">${r.u.roleName}</div></span></span></td>
-        <td className="r num">${r.open}</td><td className="r num" style=${{color:r.overdue ? 'var(--crit)' : null, fontWeight:r.overdue ? 600 : 400}}>${r.overdue}</td><td className="r num">${r.blocked || '—'}</td><td className="r num">${r.done}</td>
-        <td className="r num">${r.onTime == null ? '—' : r.onTime + '%'}</td><td className="r num">${r.avgLate ? r.avgLate + ' d' : '—'}</td>
-        <td className="r num">${r.u.role === 'installer' ? r.inst : '—'}</td><td className="r num">${r.u.role === 'installer' && r.inst ? html`${r.w.toFixed(1)} / ${r.sd} h<div className="sub" style=${{color:r.w > r.sd*1.15 ? 'var(--crit)' : 'var(--good)'}}>${Math.round(r.sd / r.w * 100)}% efficiency</div>` : '—'}</td>
-        <td className="r num">${r.u.role === 'installer' && r.snag != null ? r.snag + '%' : '—'}</td></tr>`)}</tbody></table></div>
-    <div className="panel"><h3>Average days per stage</h3><p className="hint">From the automatic stage record of every item. The thin mark is the target set in stage settings.</p>
-      <div className="bars">${cyc.map(c => html`<div className="bar-row" key=${c.s.id}><span>${c.s.name}</span><div className="bar-track" style=${{position:'relative'}}><i style=${{width:(c.avg/cmax*100)+'%', background:c.avg > c.s.days ? 'var(--crit)' : c.s.color}}></i><span style=${{position:'absolute',left:(c.s.days/cmax*100)+'%',top:-2,bottom:-2,width:2,background:'var(--ink)'}} title=${'Target ' + c.s.days + ' days'}></span></div><span className="n"><b>${c.n ? c.avg.toFixed(1) + ' d' : '—'}</b> · target ${c.s.days}</span></div>`)}</div>
-    </div>
-  </div></section>`;
-}
 
 /* ---------- App ---------- */
 const VIEWS = [
@@ -2672,13 +2819,13 @@ const VIEWS = [
   {id:'inbox', name:'Inbox', icon:'chat'},
   {id:'partners', name:'Partners', icon:'users'},
   {id:'automations', name:'Automations', icon:'bolt'},
-  {id:'ops', name:'Operations', icon:'chart', g:'ops', title:'Operations dashboard'},
+  {id:'ops', name:'Control room', icon:'chart', g:'ops', title:'Control room · what needs action now'},
   {id:'projects', name:'Projects', icon:'folder', g:'ops'},
   {id:'tasks', name:'Tasks', icon:'tasks', g:'ops'},
   {id:'support', name:'Support', icon:'chat', g:'ops', title:'Customer support desk'},
   {id:'survey', name:'Survey app', icon:'ruler', g:'ops', title:'Site survey app · mobile'},
   {id:'install', name:'Installer app', icon:'tool', g:'ops', title:'Installer app · mobile'},
-  {id:'team', name:'Team', icon:'users', g:'ops', title:'Team performance'},
+  {id:'team', name:'Scorecards', icon:'users', g:'ops', title:'Scorecards · who delivers on time'},
   {id:'customer', name:'Customer app', icon:'phone', g:'ops', title:'Customer app · preview'},
   {id:'installers', name:'Installer management', icon:'tool', g:'admin', title:'Installer management'},
   {id:'users', name:'Users and access', icon:'lock', g:'admin', title:'Users and access control'}];
@@ -2714,6 +2861,9 @@ function App(){
     // keep survey rooms the surveyor is still typing (saved separately, debounced)
     const projects = st.erp.projects.map(p => app.surveyDraft[p.id] && p.survey.status !== 'submitted' ? {...p, survey:{...p.survey, rooms:app.surveyDraft[p.id]}} : p);
     syncTeam(st.erp.users);
+    const sg = st.erp.settings || {};
+    Object.keys(STAGE_TGT).forEach(k => delete STAGE_TGT[k]); Object.assign(STAGE_TGT, sg.stageTargets || {});
+    TASK_TPL.splice(0, TASK_TPL.length, ...(sg.taskTemplates || []));
     PARTNERS.splice(0, PARTNERS.length, ...st.crm.partners); Object.keys(partnerById).forEach(k => delete partnerById[k]); st.crm.partners.forEach(p => { partnerById[p.id] = p; });
     OWNERS.splice(0, OWNERS.length, ...st.erp.users.filter(u => u.role === 'sales' && u.active !== false).map(u => u.name));
     setErp({...st.erp, projects}); setLeads(st.crm.leads); setAutos(st.crm.autos);
@@ -2798,7 +2948,7 @@ function App(){
       ${view === 'inbox' && html`<${Inbox} leads=${leads} open=${open} send=${send}/>`}
       ${view === 'partners' && html`<${Partners} leads=${leads} open=${open} call=${call} erp=${erp}/>`}
       ${view === 'automations' && html`<${Automations} autos=${autos} toggle=${toggleAuto}/>`}
-      ${view === 'ops' && html`<${OpsDashboard} erp=${erp} ui=${ui} ops=${ops}/>`}
+      ${view === 'ops' && html`<${ControlRoom} erp=${erp} ui=${ui} ops=${ops}/>`}
       ${view === 'projects' && html`<${Projects} erp=${erp} ui=${ui} ops=${ops}/>`}
       ${userById[erp.me]?.role === 'guest' && html`<div className="panel" style=${{margin:'16px 16px 0',borderLeft:'4px solid var(--accent)'}}><h3>Welcome to Make My Space</h3><p className="hint">Your account is active, but you don't have a role yet. ${SERVER.signup === 'open' ? 'An admin has been told you joined' : 'An admin will set it shortly'}; once they do, the screens for your work appear here. Until then you only see tasks given to you.</p></div>`}
       ${view === 'tasks' && !can(erp, 'admin') && can(erp, 'people') && html`<div style=${{margin:'16px 16px 0'}}><${PeopleBox} erp=${erp} ops=${ops}/></div>`}

@@ -11,27 +11,31 @@ import { onInbound, sendText, type Inbound } from './whatsapp.js';
    tapped the button owns the record (assignee for tasks, project customer for drawings and ratings). */
 async function handleButton(m: Inbound) {
   const [kind, id, extra] = String(m.buttonPayload).split(':');
-  const user = await one(db, 'select id, name from users where phone = $1 and active', [m.from]);
+  const user = await one(db, 'select id, name, role from users where phone = $1 and active', [m.from]);
   const link = `${config.APP_BASE_URL}`;
   try {
     if (kind.startsWith('TASK_')) {
       const t = await one(db, 'select t.*, a.phone a_phone, s.phone s_phone from tasks t join users a on a.id = t.assignee_id join users s on s.id = t.assigner_id where t.id = $1', [id]);
       if (!t || !user) return;
       const isAssignee = t.a_phone === m.from, isAssigner = t.s_phone === m.from;
+      const isLead = isAssigner || ['admin', 'ops_head', 'pm'].includes(user.role) || t.ext_request?.to === user.id;
       if (kind === 'TASK_DONE' && isAssignee) {
         if (t.proof) { await sendText(m.from, `“${t.title}” needs a ${t.proof} to complete. Please open the app: ${link}`); return; }
         await tx(q => taskAction(q, user.id, id, 'done', { note: 'Marked done from WhatsApp' }));
         await sendText(m.from, `Done: ${t.title}. Thank you!`);
       } else if (kind === 'TASK_BLOCKED' && isAssignee) {
         await tx(q => taskAction(q, user.id, id, 'block', { reason: 'Waiting for another team' }));
-        await sendText(m.from, `Marked blocked. ${'Your manager has been told.'} Update the reason in the app if needed: ${link}`);
+        await sendText(m.from, `Marked blocked. Your manager has been told and will follow up in 2 days. Update who you are waiting on in the app: ${link}`);
       } else if (kind === 'TASK_START' && isAssignee) {
         await tx(q => taskAction(q, user.id, id, 'start'));
         await sendText(m.from, `Started: ${t.title}.`);
-      } else if (kind === 'TASK_NUDGE' && isAssigner) {
+      } else if ((kind === 'TASK_EXTOK' || kind === 'TASK_EXTNO') && isLead) {
+        try { await tx(q => taskAction(q, user.id, id, kind === 'TASK_EXTOK' ? 'extend_ok' : 'extend_no', {}, new Set(user.role === 'admin' || user.role === 'ops_head' ? ['tasksAll'] : []))); await sendText(m.from, kind === 'TASK_EXTOK' ? `Approved. ${t.title} now has the new deadline.` : `Rejected. The deadline for ${t.title} stays the same.`); }
+        catch (e: any) { await sendText(m.from, e?.message || 'Could not update the task.'); }
+      } else if (kind === 'TASK_NUDGE' && isLead) {
         await tx(q => taskAction(q, user.id, id, 'remind', {}, new Set(['tasksAll'])));
         await sendText(m.from, 'Reminder sent.');
-      } else if (kind === 'TASK_OPEN' && (isAssignee || isAssigner)) {
+      } else if (kind === 'TASK_OPEN' && (isAssignee || isLead)) {
         await sendText(m.from, `Open the task here: ${link}`);
       }
       return;

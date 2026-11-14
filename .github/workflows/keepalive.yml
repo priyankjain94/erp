@@ -1,0 +1,15 @@
+# Keeps the free Render server awake so WhatsApp reminders and escalations run on time.
+# Not needed once the server is on a paid (always-on) plan — then delete this file.
+name: keep-server-awake
+on:
+  schedule:
+    - cron: '*/10 0-17 * * 1-6'   # every 10 min, 05:30–23:20 IST, Monday–Saturday
+    - cron: '0 3 * * 0'           # once on Sunday morning for daily housekeeping
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping the app
+        run: curl -fsS --retry 3 --retry-delay 20 --max-time 90 https://mms-erp-test.onrender.com/api/health || true

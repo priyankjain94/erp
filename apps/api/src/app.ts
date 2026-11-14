@@ -17,7 +17,7 @@ import { taskRoutes } from './modules/tasks.js';
 
 export function buildApp() {
   const r = new Router();
-  r.get('/api/health', async () => { await db.query('select 1'); return { ok: true, time: new Date().toISOString(), version: '1.5.0' }; });
+  r.get('/api/health', async () => { await db.query('select 1'); return { ok: true, time: new Date().toISOString(), version: '1.11.0' }; });
 
   // Meta webhooks: GET handshake + signed POSTs. Always answer 200 quickly; processing happens in jobs.
   r.get('/api/v1/webhooks/whatsapp', ctx => {

@@ -177,6 +177,10 @@ export async function ingestWhatsAppWebhook(payload: any) {
         await db.query(`update wa_messages set status = $2, pricing = coalesce($3, pricing), error = $4, updated_at = now() where wamid = $1`,
           [s.id, s.status, s.pricing || null, s.errors?.[0] ? `${s.errors[0].code} ${s.errors[0].title}` : null]);
         await db.query(`update lead_messages set status = $2 where wamid = $1`, [s.id, s.status]);
+        if (s.status === 'read') {   // a task message read on WhatsApp counts as Seen
+          const wm = await one(db, `select m.related_id from wa_messages m join tasks t on t.id = m.related_id join users u on u.id = t.assignee_id and u.phone = m.phone where m.wamid = $1 and m.related_type = 'task' and t.seen_at is null`, [s.id]);
+          if (wm) { await db.query('update tasks set seen_at = now() where id = $1 and seen_at is null', [wm.related_id]); await db.query(`insert into task_events(task_id, e, by_id, note) values ($1, 'seen', (select assignee_id from tasks where id = $1), 'Read on WhatsApp')`, [wm.related_id]); }
+        }
         await db.query(`update webhook_events set processed_at = now() where source = 'wa.status' and external_id = $1`, [key]);
       }
     }

@@ -148,6 +148,9 @@ export const WA_TEMPLATES: Record<string, { category: 'UTILITY' | 'MARKETING' | 
   task_reminder: { category: 'UTILITY', body: 'Reminder from Make My Space. Your task is {{1}}: {{2}}. Project: {{3}}. Tap Mark done once it is finished, or Blocked if something is stopping you.', buttons: ['Mark done', 'Blocked'] },
   task_escalation: { category: 'UTILITY', body: 'Escalation from Make My Space: {{1}} is now {{2}} days late on the task {{3}}. Please check with them and help them finish it today.', buttons: ['Open task', 'Nudge'] },
   task_blocked: { category: 'UTILITY', body: 'Update from Make My Space: {{1}} has marked the task "{{2}}" as blocked. Reason given: {{3}}. Please help them clear it.' },
+  task_more_time: { category: 'UTILITY', body: 'Request from Make My Space: {{1}} is asking for more time on the task {{2}}. Current deadline {{3}}, new date asked for {{4}}. Reason given: {{5}}. Tap Approve or Reject.', buttons: ['Approve', 'Reject'] },
+  task_update: { category: 'UTILITY', body: 'Update from Make My Space on your task {{1}}: {{2}}. Open the app to see the details.' },
+  weekly_owner_report: { category: 'UTILITY', body: 'Your Make My Space weekly report. Tasks completed: {{1}}. Completed by the original deadline: {{2}} percent. Still overdue: {{3}}. Items over their stage target: {{4}}. Most late work: {{5}}. Open the app for the scorecards.' },
   daily_digest: { category: 'UTILITY', body: 'Good morning {{1}}. You have {{2}} overdue and {{3}} due today. Open the app to see them.' },
   owner_day_summary: { category: 'UTILITY', body: 'Your Make My Space summary for today. Tasks completed: {{1}}. Tasks overdue: {{2}}. Furniture items moved to the next stage: {{3}}. New snags raised: {{4}}. Open the app for the full picture.' },
   project_welcome: { category: 'UTILITY', body: 'Hello {{1}}, welcome to Make My Space! Your project {{2}} is booked. Our surveyor will visit on {{3}} to measure every wall.' },
@@ -223,3 +226,16 @@ export function quoteTotals(lines: { qty: number; rate: number }[], discount: nu
   const total = Math.round(taxable * (1 + (Number(gstPct) || 0) / 100));
   return { subtotal, taxable, total };
 }
+
+/* stage targets (days) — editable in Settings; these are the defaults */
+export const STAGE_TARGETS_DEFAULT: Record<string, number> = Object.fromEntries(STAGES.filter(s => s.id !== 'closed').map(s => [s.id, s.days]));
+export const WAITING_REASONS = ['', 'client_approval', 'client_payment', 'site_not_ready', 'client_other'] as const;
+/* reusable task templates for the New task form — editable in Settings */
+export const TASK_TEMPLATES_DEFAULT = [
+  { title: 'Share revised drawing with the client', days: 1, proof: 'file', verify: false, priority: 'normal' },
+  { title: 'Collect payment from the client', days: 2, proof: 'comment', verify: true, priority: 'urgent' },
+  { title: 'Site readiness check (civil, electrical, paint, flooring)', days: 2, proof: 'photo', verify: true, priority: 'normal' },
+  { title: 'Call the client about pending approval', days: 1, proof: 'comment', verify: false, priority: 'normal' },
+  { title: 'Follow up factory on production status', days: 1, proof: 'comment', verify: false, priority: 'normal' },
+  { title: 'Daily site visit report', days: 1, proof: 'photo', verify: false, priority: 'normal' }
+];

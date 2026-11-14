@@ -3,6 +3,7 @@ import { prettyPhone } from '../core/util.js';
 import { CUSTOMER_STAGE, DEFAULT_ROLES, PERMS } from '../domain.js';
 import type { Principal } from './auth.js';
 import { signedFileUrl } from '../integrations/storage.js';
+import { stageTargets, taskTemplates } from './tasks.js';
 import { partnerStats } from './business.js';
 import { customerTickets, loadTickets } from './support.js';
 
@@ -87,6 +88,7 @@ async function loadItems(q: Q, where: string, params: unknown[]) {
     checklist: i.checklist || {}, afterPhoto: i.after_photo ? signedFileUrl(i.after_photo) : false, installDone: i.install_done, signedOff: i.signed_off, installedAt: ms(i.installed_at),
     snags: (n.get(i.id) || []).map(x => ({ id: x.id, part: x.part, type: x.type, note: x.note, photo: signedFileUrl(x.photo), status: x.status, raisedBy: x.raised_by, at: ms(x.created_at), vendor: x.vendor || '', cost: x.cost === null || x.cost === undefined ? null : Number(x.cost), payer: x.payer || '' })),
     productionSteps: i.production_steps || {}, warrantyUntil: i.warranty_until || null,
+    waiting: i.waiting || '', waitingSince: ms(i.waiting_since), waitingMs: Number(i.waiting_ms || 0),
     log: (l.get(i.id) || []).map(x => ({ stage: x.stage, in: ms(x.in_at), out: ms(x.out_at), by: x.by_id, override: x.override || undefined })),
     flags: i.flags || []
   }));
@@ -96,9 +98,13 @@ async function loadTasks(q: Q, where: string, params: unknown[]) {
   const tasks = await many(q, `select * from tasks ${where} order by created_at desc, id`, params);
   if (!tasks.length) return [];
   const ev = group(await many(q, 'select * from task_events where task_id = any($1::text[]) order by created_at, id', [tasks.map(t => t.id)]), 'task_id');
+  const msg = group(await many(q, `select related_id, phone, template, kind, status, created_at from wa_messages where related_type = 'task' and direction = 'out' and related_id = any($1::text[]) order by id`, [tasks.map(t => t.id)]), 'related_id');
   return tasks.map(t => ({
     id: t.id, title: t.title, projectId: t.project_id, itemId: t.item_id, assignee: t.assignee_id, assigner: t.assigner_id, created: ms(t.created_at),
-    deadline: t.deadline, priority: t.priority, status: t.status, blockedReason: t.blocked_reason, auto: t.auto, proof: t.proof, repeat: t.repeat, reminders: t.reminders,
+    deadline: t.deadline, originalDeadline: t.original_deadline || t.deadline, priority: t.priority, status: t.status, blockedReason: t.blocked_reason, auto: t.auto, proof: t.proof, repeat: t.repeat, reminders: t.reminders,
+    verify: t.verify, verifiedAt: ms(t.verified_at), blockedOn: t.blocked_on || null, followUp: t.follow_up || null, blockedAt: ms(t.blocked_at), blockedDays: Number(t.blocked_days || 0),
+    proofNote: t.proof_note || '', proofUrl: t.proof_ref ? signedFileUrl(t.proof_ref) : null, ext: t.ext_request || null, seenAt: ms(t.seen_at), startedAt: ms(t.started_at), doneAt: ms(t.done_at), template: t.template || null,
+    msgs: (msg.get(t.id) || []).map(m => ({ t: ms(m.created_at), to: m.phone, template: m.template || m.kind, status: m.status })),
     events: (ev.get(t.id) || []).map(e => ({ e: e.e, by: e.by_id, to: e.to_id || undefined, note: e.note || undefined, t: ms(e.created_at) }))
   }));
 }
@@ -159,7 +165,8 @@ export async function staffState(p: Extract<Principal, { type: 'user' }>, q: Q =
   } : { leads: [], partners: [], autos: [] };
   const wa = await one(q, `select count(*) filter (where status = 'simulated') sim, count(*) filter (where status in ('sent','delivered','read')) sent, count(*) filter (where status = 'failed') failed from wa_messages where created_at > now() - interval '30 days'`);
   const tickets = await loadTickets(q, p);
-  return { erp: { me, projects, items, tasks, users, roles, audit, accessRequests, tickets }, crm, server: { wa } };
+  const settings = { stageTargets: await stageTargets(q), taskTemplates: await taskTemplates(q) };
+  return { erp: { me, projects, items, tasks, users, roles, audit, accessRequests, tickets, settings }, crm, server: { wa } };
 }
 
 /** What a customer sees: only their own projects, in customer-friendly terms. */

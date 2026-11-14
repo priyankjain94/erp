@@ -3,11 +3,11 @@ import { config } from '../core/config.js';
 import { db, many, one, tx, type Q } from '../core/db.js';
 import { parse, type Ctx, type Router } from '../core/http.js';
 import { addDays, bad, conflict, first, fmtDate, forbidden, HttpError, normPhone, notFound, prettyPhone } from '../core/util.js';
-import { BOXES, CHECKLIST, DEFAULT_PAYMENTS, DOC_CATEGORIES, DOC_CATEGORY_IDS, gatesFor, MATERIAL_FIELDS, ITEM_TYPES, OBSTRUCTIONS, PAUSE_REASONS, SNAG_FLOW, SNAG_TYPES, stageById, stageIdx, stageProof, STAGES, stageTaskTitle, typeName, TYPE_IDS } from '../domain.js';
+import { WAITING_REASONS, BOXES, CHECKLIST, DEFAULT_PAYMENTS, DOC_CATEGORIES, DOC_CATEGORY_IDS, gatesFor, MATERIAL_FIELDS, ITEM_TYPES, OBSTRUCTIONS, PAUSE_REASONS, SNAG_FLOW, SNAG_TYPES, stageById, stageIdx, stageProof, STAGES, stageTaskTitle, typeName, TYPE_IDS } from '../domain.js';
 import { sendTemplate } from '../integrations/whatsapp.js';
 import { audit, can, checkOtp, issueOtp, staff, userOf, type Principal } from './auth.js';
 import { staffState } from './state.js';
-import { closeAutoTasks, pushTask } from './tasks.js';
+import { closeAutoTasks, pushTask, stageTargets } from './tasks.js';
 
 type U = Extract<Principal, { type: 'user' }>;
 export const act = (q: Q, pid: string, text: string) => q.query('insert into project_activity(project_id, text) values ($1,$2)', [pid, text]);
@@ -73,11 +73,12 @@ export async function moveIn(q: Q, itemId: string, to: string, byId: string, not
   await q.query(`insert into item_stage_log(item_id, stage, in_at, note) values ($1, $2, now(), nullif($3, ''))`, [itemId, to, note]);
   await closeAutoTasks(q, itemId, byId === 'system' ? it.installer_id || it.owner_id : byId, 'Stage completed');
   const owner = await ownerFor(q, it, to);
-  await q.query('update items set stage = $2, owner_id = $3 where id = $1', [itemId, to, owner]);
+  await q.query(`update items set stage = $2, owner_id = $3, waiting = '', waiting_since = null, waiting_ms = 0 where id = $1`, [itemId, to, owner]);
+  const targets = await stageTargets(q);
   const st = stageById[to as keyof typeof stageById];
   const assigner = byId === 'system' ? (await one(q, 'select pm_id from projects where id = $1', [it.project_id]))!.pm_id : byId;
   if (to !== 'closed') {
-    if (owner) await pushTask(q, { title: stageTaskTitle(to, it.code), projectId: it.project_id, itemId, assignee: owner, assigner, deadline: to === 'install' ? it.target : addDays(st.days), auto: true, proof: stageProof(to) });
+    if (owner) await pushTask(q, { title: stageTaskTitle(to, it.code), projectId: it.project_id, itemId, assignee: owner, assigner, deadline: to === 'install' ? it.target : addDays(targets[to] ?? st.days), auto: true, proof: stageProof(to) });
     else {
       const pm = (await one(q, 'select pm_id from projects where id = $1', [it.project_id]))!.pm_id;
       await pushTask(q, { title: `Assign installer · ${it.code}`, projectId: it.project_id, itemId, assignee: pm, assigner: pm, deadline: addDays(1), auto: true });
@@ -198,7 +199,8 @@ const ProjectZ = z.object({ leadId: z.string().optional().nullable(), customer: 
   pm: z.string(), target: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), surveyDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), advance: z.boolean().default(false) });
 const fileRef = z.string().regex(/^upload:[A-Za-z0-9_-]+\.(pdf|jpg|png|webp)$/, 'Upload the file first');
 const ItemPatchZ = z.object({ prodPiNo: z.string().trim().max(60).optional(), prodPiAmount: z.coerce.number().min(0).max(1e9).nullable().optional(), prodPiDoc: fileRef.nullable().optional(), hwVendor: z.string().trim().max(80).optional(), hwPoDoc: fileRef.nullable().optional(), hwReceived: z.boolean().optional(), productionDone: z.boolean().optional(), spec: z.record(z.string(), z.string().max(300)).optional(), owner: z.string().optional(), target: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), hwPI: z.boolean().optional(), prodPI: z.boolean().optional(), po: z.string().max(60).optional(),
-  dispatch: z.object({ vehicle: z.string().max(40).default(''), boxes: z.coerce.number().int().min(0).max(500).nullable().default(null), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null) }).optional(), delivered: z.boolean().optional() }).strict();
+  dispatch: z.object({ vehicle: z.string().max(40).default(''), boxes: z.coerce.number().int().min(0).max(500).nullable().default(null), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null) }).optional(), delivered: z.boolean().optional(),
+  waiting: z.enum(WAITING_REASONS).optional() }).strict();
 
 export function opsRoutes(r: Router) {
   const done = async (ctx: Ctx, extra: Record<string, unknown> = {}) => ({ ok: true, ...extra, state: await staffState(userOf(ctx)) });
@@ -260,6 +262,13 @@ export function opsRoutes(r: Router) {
         await q.query('update items set spec = $2 where id = $1', [it.id, JSON.stringify(clean)]);
       }
       if (b.dispatch) await q.query('update items set dispatch_vehicle = $2, dispatch_boxes = $3, dispatch_date = $4 where id = $1', [it.id, b.dispatch.vehicle, b.dispatch.boxes, b.dispatch.date]);
+      if (b.waiting !== undefined && b.waiting !== it.waiting) {
+        const W: Record<string, string> = { client_approval: 'client approval', client_payment: 'client payment', site_not_ready: 'site not ready', client_other: 'the client' };
+        if (b.waiting && !it.waiting) await q.query(`update items set waiting = $2, waiting_since = now() where id = $1`, [it.id, b.waiting]);
+        else if (b.waiting) await q.query(`update items set waiting = $2 where id = $1`, [it.id, b.waiting]);
+        else await q.query(`update items set waiting = '', waiting_ms = waiting_ms + coalesce((extract(epoch from (now() - waiting_since)) * 1000)::bigint, 0), waiting_since = null where id = $1`, [it.id]);
+        logs.push(b.waiting ? `waiting on ${W[b.waiting]} (stage clock paused)` : 'no longer waiting on the client (clock running)');
+      }
       if (b.delivered !== undefined) { await q.query('update items set delivered = $2 where id = $1', [it.id, b.delivered]); logs.push(b.delivered ? 'material delivered at site' : 'delivery unmarked'); }
       for (const l of logs) await act(q, it.project_id, `${it.code}: ${l} (${p.user.name})`);
     });
