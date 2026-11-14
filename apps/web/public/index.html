@@ -424,6 +424,24 @@ textarea.inp{resize:vertical;width:100%}
 .chain time{font-size:12px;color:var(--muted);white-space:nowrap}
 /* ---------- phone (field apps: surveyor, installer, customer) ---------- */
 .phone-wrap{display:flex;gap:32px;justify-content:center;align-items:flex-start}
+.cust-web{min-height:100%;background:var(--bg);display:flex;flex-direction:column}
+.cw-top{display:flex;align-items:center;gap:16px;padding:12px 28px;background:var(--white);border-bottom:2px solid var(--ink);position:sticky;top:0;z-index:5}
+.cw-logo{width:44px;height:auto}.cw-brand{display:grid;line-height:1.25}.cw-brand b{font-size:17px;font-weight:600}
+.cw-proj{margin-left:auto;color:var(--muted);font-size:13px}
+.cw-main{display:grid;grid-template-columns:240px 1fr;gap:28px;padding:24px 28px;max-width:1280px;width:100%;margin:0 auto;flex:1}
+.cw-nav{display:grid;gap:2px;align-content:start;position:sticky;top:92px}
+.cw-nav button{display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;padding:11px 14px;background:transparent;border:0;border-left:3px solid transparent;font:inherit;font-size:14.5px;color:var(--ink);cursor:pointer}
+.cw-nav button:hover{background:var(--surface)}.cw-nav button[aria-current=page]{border-left-color:var(--accent);background:var(--white);font-weight:600}
+.cw-badge{font-size:12px;min-width:22px;text-align:center;padding:1px 7px;background:var(--surface);border:1px solid var(--line)}.cw-badge.alert{background:var(--accent);color:#fff;border-color:var(--accent)}
+.cw-help{font-size:12.5px;color:var(--muted);padding:14px;margin:8px 0 0;border-top:1px solid var(--line)}
+.cw-page .phoneframe{width:auto;height:auto;min-height:0;border:0;border-radius:0;background:transparent;overflow:visible;position:static}
+.cw-page .ph-head{background:transparent;border-bottom:2px solid var(--ink);padding:0 0 12px;min-height:0;margin-bottom:18px}
+.cw-page .ph-head b{font-size:26px;font-weight:400;letter-spacing:-.01em}.cw-page .ph-head small{font-size:14px}
+.cw-page .ph-head .back,.cw-page .ph-head .right{display:none}
+.cw-page .ph-body{overflow:visible;padding:0;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px;align-items:start}
+.cw-page .ph-body>.big,.cw-page .ph-body>.banner,.cw-page .ph-body>p{grid-column:1/-1;justify-self:start;min-width:280px}
+.cw-page .sheet-m{position:fixed;inset:0;z-index:50;display:grid;place-items:center}.cw-page .sheet-m .in{width:min(520px,92vw)}
+@media (max-width:899px){.cust-web .cw-main{grid-template-columns:1fr}}
 .phoneframe{width:390px;height:min(800px,calc(100vh - 140px));min-height:560px;border:10px solid var(--ink);border-radius:36px;background:var(--bg);overflow:hidden;display:flex;flex-direction:column;flex:none;position:relative}
 .ph-head{background:var(--white);color:var(--ink);padding:12px 14px;display:flex;align-items:center;gap:10px;min-height:58px;border-bottom:2px solid var(--ink)}
 .ph-head b{font-weight:600;font-size:16px;display:block;line-height:1.25}
@@ -761,6 +779,7 @@ function LoginScreen({audience = 'staff', onLogin, title = 'Team login'}){
           ${err && html`<span className="err">${err}</span>`}
           <button className="btn primary" type="submit" disabled=${busy} style=${{justifyContent:'center'}}>${busy ? 'Sending…' : 'Send OTP on WhatsApp'}</button>
           ${audience === 'staff' && cfg.googleClientId && html`<div style=${{display:'grid',gap:8,justifyItems:'center'}}><span style=${{fontSize:12,color:'var(--muted)'}}>or</span><div ref=${gBtn} style=${{width:'100%',display:'flex',justifyContent:'center',minHeight:44}}></div></div>`}
+          <p style=${{fontSize:13,color:'var(--muted)',margin:'4px 0 0'}}>${audience === 'staff' ? html`Are you a Make My Space customer? <a href="/c">Customer login</a>` : html`Make My Space team member? <a href="/">Team login</a>`}</p>
           ${audience === 'staff' && cfg.signup !== 'closed' && html`<p style=${{fontSize:13,color:'var(--muted)',margin:'4px 0 0'}}>New to the team? <button type="button" className="linkbtn" onClick=${() => { setErr(''); setReq({name:'', phone:phone, roleWanted:'', note:''}); }}>Request access</button></p>`}
           ${demo.length > 0 && html`<details style=${{fontSize:12,color:'var(--muted)'}}><summary>Demo numbers</summary><div style=${{display:'grid',gap:2,marginTop:6}}>${demo.map(u => html`<button type="button" key=${u.phone} className="linkbtn" style=${{color:'var(--muted)',textAlign:'left',marginTop:0}} onClick=${() => setPhone(u.phone)}>${u.name}${u.role ? ' · ' + (roleById[u.role]?.name || u.role) : ''} · ${u.phone}</button>`)}</div></details>`}
         </form>`
@@ -975,6 +994,9 @@ function CustomerApp({erp, toast: toastIn, live}){
   const load = async projectId => { try { const r = await API.call('GET', '/customer/state' + (projectId ? '?projectId=' + projectId : '')); setState(r.state); setPid(projectId || r.state.projects[0]?.id || null); } catch(e){ toast(e.message, 'err'); } };
   const act = async (path, body, msg) => { try { const r = await API.call('POST', path, body); setState(r.state); if (msg) toast(msg); return true; } catch(e){ toast(e.message, 'err'); return false; } };
   const [authed, setAuthed] = useState(!live);
+  const [wide, setWide] = useState(() => window.matchMedia('(min-width: 900px)').matches);
+  useEffect(() => { const m = window.matchMedia('(min-width: 900px)'); const f = () => setWide(m.matches); m.addEventListener('change', f); return () => m.removeEventListener('change', f); }, []);
+  let nav = null;
   useEffect(() => { if (live){ API.setAudience('customer'); API.refresh().then(ok => { if (ok){ setAuthed(true); load(); } }); } }, []);
   const steps = ['Customer logs in with the WhatsApp number on their order; OTP on WhatsApp.','Home shows progress, the next visit and anything waiting for them.','Approve drawings or ask for a change; the designer gets a task.','See payment milestones and installation dates with the team name.','Raise a complaint (goes to the PM as an urgent task) and rate the work after handover.'];
   let screen;
@@ -992,6 +1014,7 @@ function CustomerApp({erp, toast: toastIn, live}){
     const tix = (state.tickets || []).filter(t => t.projectId === p.id);
     const openSvc = tix.filter(t => t.status !== 'closed');
     const out = async () => { if (live){ try { await API.call('POST', '/auth/logout'); } catch(e){} setAuthed(false); setState(null); } else { setPid(null); setState(null); } };
+    nav = {p, out, items:[['home','Overview'],['items','Your furniture', its.length],['approve','Approvals', toApprove.length, true],['docs','Documents'],['pay','Payments', due.length],['changes','Changes to your order', pendingCo.length, true],['service','Complaints and service', openSvc.length]]};
     const back = view !== 'home' ? () => setView('home') : null;
     if (view === 'home') screen = html`<${Phone} title=${'Hello ' + first(p.customer)} sub=${p.code + ' · ' + p.address} right=${html`<button className="btn small" style=${{background:'var(--rail-2)',color:'var(--rail-ink)',border:0}} onClick=${out}>${live ? 'Log out' : 'Close'}</button>`}>
       ${state.projects.length > 1 && html`<select className="sel" value=${p.id} onChange=${e => setPid(e.target.value)}>${state.projects.map(x => html`<option key=${x.id} value=${x.id}>${x.code} · ${x.address}</option>`)}</select>`}
@@ -1047,6 +1070,15 @@ function CustomerApp({erp, toast: toastIn, live}){
       screen = React.cloneElement(screen, {overlay});
     }
   }
+  const toastEl = html`<div className="toasts" role="status" aria-live="polite">${toasts.map(t => html`<div className=${'toast' + (t.kind === 'err' ? ' err' : '')} key=${t.id}><${Icon} n=${t.kind === 'err' ? 'x' : 'check'} s=${16}/><span>${t.text}</span></div>`)}</div>`;
+  if (live && wide && nav) return html`<div className="cust-web">
+    <header className="cw-top"><${Mark} cls="cw-logo"/><div className="cw-brand"><span className="kicker">Customer portal</span><b>${nav.p.customer}</b></div>
+      ${state.projects.length > 1 && html`<select className="sel" value=${nav.p.id} onChange=${e => { setPid(e.target.value); setView('home'); }} aria-label="Project">${state.projects.map(x => html`<option key=${x.id} value=${x.id}>${x.code} · ${x.address}</option>`)}</select>`}
+      <span className="cw-proj">${nav.p.code} · ${nav.p.address}</span>
+      <button className="btn small" onClick=${nav.out}>Log out</button></header>
+    <div className="cw-main"><nav className="cw-nav" aria-label="Customer portal">${nav.items.map(([id, n, c, alert]) => html`<button key=${id} aria-current=${view === id ? 'page' : undefined} onClick=${() => setView(id)}><span>${n}</span>${c > 0 && html`<span className=${'cw-badge' + (alert ? ' alert' : '')}>${c}</span>`}</button>`)}
+      <p className="cw-help">Questions? Call your project manager${state.staff.find(x => x.id === nav.p.pm)?.phone ? ': ' + state.staff.find(x => x.id === nav.p.pm).phone : '.'}</p></nav>
+      <main className="cw-page">${screen}</main></div>${toastEl}</div>`;
   if (live) return html`<div style=${{minHeight:'100%',display:'grid',placeItems:'start center',padding:'12px 0',background:'var(--bg)'}}>${screen}<div className="toasts" role="status" aria-live="polite">${toasts.map(t => html`<div className=${'toast' + (t.kind === 'err' ? ' err' : '')} key=${t.id}><${Icon} n=${t.kind === 'err' ? 'x' : 'check'} s=${16}/><span>${t.text}</span></div>`)}</div></div>`;
   return html`<section className="view"><div className="phone-wrap">${screen}<${SideNote} title="Customer app flow" steps=${steps}/></div></section>`;
 }
