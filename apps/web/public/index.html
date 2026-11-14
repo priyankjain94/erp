@@ -1259,7 +1259,12 @@ const SERVER = {demoMode:false, whatsappLive:false};
 fetch('/api/v1/auth/config').then(r => r.json()).then(c => Object.assign(SERVER, c)).catch(() => {});
 
 async function uploadDataUrl(dataUrl){
-  const blob = await (await fetch(dataUrl)).blob();
+  // decode in memory (fetch() of a data: URL is blocked by the page's security policy)
+  const [head, b64] = String(dataUrl).split(',');
+  const mime = (/data:([^;]+)/.exec(head) || [])[1] || 'image/jpeg';
+  const bin = atob(b64 || ''), bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const blob = new Blob([bytes], {type:mime});
   const type = blob.type || 'image/jpeg';
   const slot = await API.call('POST', '/uploads', {contentType:type, size:blob.size});
   const r = await fetch(slot.uploadUrl, {method:'PUT', body:blob, headers:{'Content-Type':type}});
@@ -2056,7 +2061,7 @@ function compressPhoto(file, cb){
 }
 function PhotoBox({src, onPick, label}){
   return html`<div className="photo-drop">${src ? (src === 'sample' ? html`<div style=${{height:190,width:'100%',display:'grid',placeItems:'center',background:'linear-gradient(135deg,var(--surface-2),var(--line-2))'}}>Sample photo (demo)</div>` : html`<img src=${src} alt=${label}/>`) : html`<div style=${{padding:16}}><${Icon} n="plus" s=${28}/><div style=${{fontWeight:600,color:'var(--ink)'}}>Take photo</div><div>${label}</div></div>`}
-    <input type="file" accept="image/*" capture="environment" aria-label=${label} onChange=${e => { const f = e.target.files[0]; if (f) compressPhoto(f, onPick); }}/></div>`;
+    <input type="file" accept="image/*" capture="environment" aria-label=${label} onChange=${e => { const f = e.target.files[0]; e.target.value = ''; if (f) compressPhoto(f, onPick); }}/></div>`;
 }
 function Phone({title, sub, back, right, children, foot, overlay}){
   return html`<div className="phoneframe">
@@ -2084,7 +2089,8 @@ function SurveyApp({erp, ops}){
   const steps = ['Open the job and tap Check in (time and GPS recorded).','Add each room, pick its shape; walls are labelled A, B, C… clockwise from the door.','For each wall: photo, width and height in mm, obstructions.','Tag which furniture goes on which wall.','Review flags missing data and mismatched walls, then submit.'];
   let screen;
 
-  if (scr.n === 'list') screen = html`<${Phone} title="My surveys" sub="Sana · Site surveyor" right=${sync}>
+  if (scr.n === 'list') screen = html`<${Phone} title="My surveys" sub=${uname(erp.me) + ' · ' + (userById[erp.me]?.roleName || '')} right=${sync}>
+    ${!jobs.length && html`<div className="banner">No site surveys yet. A survey appears here when a won lead is converted to a project with a survey date${userById[erp.me].role === 'surveyor' ? ' and assigned to you' : ''}: Leads → open the lead → Convert to project.</div>`}
     ${jobs.map(j => { const s = j.survey; return html`<button key=${j.id} className="mcard" onClick=${() => setScr({n:'job', pid:j.id})}>
       <div className="card-row"><b>${j.customer}</b>${s.status === 'submitted' ? html`<span className="pill good">Submitted</span>` : s.status === 'in-progress' ? html`<span className="pill warn">In progress</span>` : html`<span className="pill acc">${dayLabel(s.scheduled)} ${clock(s.scheduled)}</span>`}</div>
       <span className="meta">${j.address} · ${j.code}</span>
@@ -2099,6 +2105,7 @@ function SurveyApp({erp, ops}){
       ${done ? html`<div className="banner good">Submitted ${fmtDT(s.at)} · ${s.mins} min on site. Read-only.</div>` : !s.checkIn ? html`<div className="banner">Scheduled ${fmtDT(s.scheduled)}. Check in when you reach the site; the survey timer starts then.</div>`
         : html`<div className="banner"><b>Wall rule:</b> stand at the room's entry door. The wall with the door is <b>A</b>, then go clockwise: B, C, D…</div>`}
       ${p.notes && html`<div className="banner warn">${p.notes}</div>`}
+      ${!done && html`<div className="mcard" style=${{fontSize:13}}><b>Steps</b>${[['Check in at site', !!s.checkIn], ['Add each room', s.rooms.length > 0], ['Photo + width + height for every wall', s.rooms.length > 0 && s.rooms.every(rm => rm.walls.every(wallOk))], ['Tag furniture on walls', s.rooms.some(rm => rm.items.length)], ['Review and submit', false]].map(([t, ok], i) => html`<div key=${i} className="mrow"><span className=${'wall-letter sm' + (ok ? ' ok' : '')}>${ok ? '✓' : i + 1}</span><span className="grow">${t}</span></div>`)}</div>`}
       ${s.rooms.map(rm => { const ok = rm.walls.filter(wallOk).length; return html`<button key=${rm.id} className="mcard" onClick=${() => setScr({n:'room', pid:p.id, rid:rm.id})}>
         <div className="card-row"><b>${rm.name}</b><span className=${'pill ' + (ok === rm.walls.length ? 'good' : 'warn')}>${ok}/${rm.walls.length} walls</span></div>
         <span className="meta">${rm.items.length ? rm.items.map(x => `${typeById[x.type].name} on ${x.wall}`).join(' · ') : 'No furniture tagged yet'}</span></button>`; })}
@@ -2122,7 +2129,7 @@ function SurveyApp({erp, ops}){
     const setW = (k, v) => updRoom(y => { y.walls[wi][k] = v; });
     screen = html`<${Phone} title=${`${r.name} · Wall ${w.label}`} sub=${wi === 0 ? 'Wall with the entry door' : 'Clockwise from wall A'} back=${() => setScr({n:'room', pid:p.id, rid:r.id})} right=${html`<span className="wall-letter sm">${w.label}</span>`}
       foot=${html`<button className="big" disabled=${wi === 0} onClick=${() => setScr({...scr, label:r.walls[wi-1].label})}>‹ ${wi > 0 ? r.walls[wi-1].label : ''}</button><button className="big pri" onClick=${() => wi < r.walls.length - 1 ? setScr({...scr, label:r.walls[wi+1].label}) : setScr({n:'room', pid:p.id, rid:r.id})}>${wi < r.walls.length - 1 ? 'Next: wall ' + r.walls[wi+1].label : 'Done'}</button>`}>
-      <${PhotoBox} src=${photoSrc(w.photo, w.photoUrl)} label=${'Wide photo of wall ' + w.label} onPick=${d => { setW('photo', d); uploadDataUrl(d).then(sl => updRoom(y => { const ww = y.walls.find(z => z.label === w.label); if (ww && ww.photo === d){ ww.photo = sl.ref; ww.photoUrl = sl.viewUrl; } })).catch(() => {}); }}/>
+      <${PhotoBox} key=${r.id + w.label} src=${photoSrc(w.photo, w.photoUrl)} label=${'Wide photo of wall ' + w.label} onPick=${d => { setW('photo', d); uploadDataUrl(d).then(sl => updRoom(y => { const ww = y.walls.find(z => z.label === w.label); if (ww && ww.photo === d){ ww.photo = sl.ref; ww.photoUrl = sl.viewUrl; } })).catch(() => {}); }}/>
       ${SERVER.demoMode && !w.photo && !done && html`<button className="linkbtn" style=${{color:'var(--muted)',marginTop:-4}} onClick=${() => setW('photo', 'sample')}>Demo: use a sample photo</button>`}
       <div className="mm">
         <label>Width (mm)<input inputMode="numeric" value=${w.w} onInput=${e => setW('w', e.target.value.replace(/\D/g,''))} placeholder="e.g. 3600" disabled=${done}/></label>
