@@ -560,6 +560,8 @@ button.kpi{text-align:left;font:inherit;cursor:pointer}
 .draft-note{font-size:12px;color:var(--muted);margin-right:auto}
 .toast-act{margin-left:10px;background:transparent;border:1px solid currentColor;color:inherit;padding:4px 10px;font:600 12px Inter,sans-serif;cursor:pointer}
 @media (max-width:700px){.ws{top:0;height:100vh;width:100vw;border:0}}
+.done-hero{display:grid;place-items:center;gap:6px;padding:14px 6px 4px;text-align:center}.done-hero b{font-size:18px;font-weight:600}
+.done-check{width:64px;height:64px;border-radius:50%;background:var(--ink);color:#fff;display:grid;place-items:center;font-size:30px;font-weight:600}.done-check.warn{background:var(--red)}
 .sig{width:100%;height:120px;border:1px solid var(--line-2);border-radius:0;background:var(--surface);touch-action:none}
 .side-note{max-width:340px;display:grid;gap:12px;font-size:13.5px;color:var(--ink-2);padding-top:6px}
 .side-note h3{font-weight:600;font-size:12px;letter-spacing:.16em;text-transform:uppercase;margin:0}
@@ -2871,7 +2873,7 @@ function SurveyApp({erp, ops}){
     const done = p.survey.status === 'submitted', noPhoto = r.walls.filter(w => !w.photo).length;
     const firstOpen = r.walls.find(w => !wallOk(w)) || r.walls[0];
     screen = html`<${Phone} title=${r.name} sub=${`${r.walls.length} walls · ceiling ${fmtLen(r.ceiling, unit)}`} back=${() => setScr({n:'job', pid:p.id})} right=${sync}
-      foot=${done ? null : html`<button className="big" onClick=${() => setScr({n:'round', pid:p.id, rid:r.id})}><${Icon} n="camera" s=${18}/>${noPhoto ? 'Photo round' : 'Retake photos'}</button><button className="big pri" onClick=${() => setScr({n:'wall', pid:p.id, rid:r.id, label:firstOpen.label})}>Measure ${firstOpen.label}</button>`}>
+      foot=${done ? null : html`<button className="big" onClick=${() => setScr({n:'round', pid:p.id, rid:r.id})}><${Icon} n="camera" s=${18}/>${noPhoto ? 'Photo round' : 'Retake photos'}</button>${r.walls.every(wallOk) ? html`<button className="big pri" onClick=${() => setScr({n:'roomdone', pid:p.id, rid:r.id})}>Finish room ✓</button>` : html`<button className="big pri" onClick=${() => setScr({n:'wall', pid:p.id, rid:r.id, label:firstOpen.label})}>Measure ${firstOpen.label}</button>`}`}>
       <div style=${{display:'grid',placeItems:'center'}}><${SketchSVG} r=${r} size=${180}/></div>
       ${!done && noPhoto === r.walls.length && html`<div className="banner">Fastest way: tap <b>Photo round</b>, stand in the middle of the room and shoot walls ${r.walls.map(w => w.label).join(', ')} one after another. Measure after.</div>`}
       ${r.walls.map(w => html`<button key=${w.label} className="mcard" onClick=${() => setScr({n:'wall', pid:p.id, rid:r.id, label:w.label})}>
@@ -2911,7 +2913,7 @@ function SurveyApp({erp, ops}){
     };
     const addShot = d => { updRoom(y => { const ww = y.walls[wi]; ww.photos = [...(ww.photos || []), {ref:d, tag:''}].slice(0, 6); }); uploadInto(p.id, r.id, w.label, d).catch(() => {}); setSheet({n:'shot', wi, k:(w.photos || []).length}); };
     screen = html`<${Phone} title=${`${r.name} · Wall ${w.label}`} sub=${wi === 0 ? 'Wall with the entry door' : 'Clockwise from wall A'} back=${() => setScr({n:'room', pid:p.id, rid:r.id})} right=${sync}
-      foot=${html`<button className="big" disabled=${wi === 0} onClick=${() => go(-1)}>‹ ${wi > 0 ? r.walls[wi-1].label : ''}</button><button className="big pri" onClick=${() => wi < r.walls.length - 1 ? go(1) : setScr({n:'room', pid:p.id, rid:r.id})}>${wi < r.walls.length - 1 ? 'Next: wall ' + r.walls[wi+1].label + ' ›' : 'Done'}</button>`}>
+      foot=${html`<button className="big" disabled=${wi === 0} onClick=${() => go(-1)}>‹ ${wi > 0 ? r.walls[wi-1].label : ''}</button><button className="big pri" onClick=${() => wi < r.walls.length - 1 ? go(1) : setScr(done ? {n:'room', pid:p.id, rid:r.id} : {n:'roomdone', pid:p.id, rid:r.id})}>${wi < r.walls.length - 1 ? 'Next: wall ' + r.walls[wi+1].label + ' ›' : done ? 'Done' : 'Finish room ✓'}</button>`}>
       <div style=${{display:'grid',gap:12}} onTouchStart=${e => { touch.current = [e.touches[0].clientX, e.touches[0].clientY]; }} onTouchEnd=${e => { const t = touch.current; if (!t) return; const dx = e.changedTouches[0].clientX - t[0], dy = e.changedTouches[0].clientY - t[1]; if (Math.abs(dx) > 70 && Math.abs(dy) < 50) go(dx < 0 ? 1 : -1); touch.current = null; }}>
       <div className="wdots">${r.walls.map(x => html`<button key=${x.label} className=${'wall-letter sm' + (wallOk(x) ? ' ok' : '')} aria-current=${x.label === w.label} onClick=${() => setScr({...scr, label:x.label})}>${x.label}</button>`)}</div>
       ${w.photo ? html`<div style=${{display:'grid',gap:6}}>
@@ -2941,6 +2943,52 @@ function SurveyApp({erp, ops}){
     <//>`;
   }
 
+  else if (scr.n === 'roomdone' && r){
+    const s = p.survey, measured = r.walls.filter(wallOk).length;
+    const sc = (p.scope || []).filter(x => x.roomCode === r.code && !x.itemId);
+    const placed = sc.filter(x => r.items.some(i => i.scopeId === x.id));
+    const issues = [...r.walls.filter(w => !wallOk(w)).map(w => `Wall ${w.label}: ${[!w.photo && 'photo', !(Number(w.w) > 0) && 'width', !(Number(w.h) > 0) && 'height'].filter(Boolean).join(', ')} missing`),
+      ...r.walls.flatMap((w, wi) => wallChecks(r, wi).filter(c => !c.startsWith('Opposite') || wi < 2).map(c => `Wall ${w.label}: ${c}`)),
+      ...sc.filter(x => !placed.includes(x)).map(x => `${scopeLabel(x)}: not placed on a wall`)];
+    const scopeRooms = [...new Map((p.scope || []).filter(x => !x.itemId).map(x => [x.roomCode, x])).values()];
+    const unset = scopeRooms.filter(x => !s.rooms.some(rm => rm.code === x.roomCode));
+    const openRoom = s.rooms.find(rm => rm.id !== r.id && !rm.walls.every(wallOk));
+    const saved = !online ? 'Saved on this phone. It uploads when the internet is back.' : waiting ? 'Saved on this phone. Uploading now…' : 'Saved to the server.';
+    screen = html`<${Phone} title=${r.name} sub="Room complete" back=${() => setScr({n:'job', pid:p.id})} right=${sync}
+      foot=${html`<button className="big" onClick=${() => setScr({n:'room', pid:p.id, rid:r.id})}>Edit ${r.name}</button>
+        ${unset.length ? html`<button className="big pri" onClick=${() => setSheet({n:'room', name:unset[0].room, code:unset[0].roomCode, fixed:true, shape:'rect', count:4, ceiling:r.ceiling || 2900, floor:r.floor || FLOORS[0]})}>Set up ${unset[0].room}</button>`
+          : openRoom ? html`<button className="big pri" onClick=${() => setScr({n:'room', pid:p.id, rid:openRoom.id})}>Next: ${openRoom.name}</button>`
+          : html`<button className="big pri" onClick=${() => setScr({n:'review', pid:p.id})}>Review and submit</button>`}`}>
+      <div className="done-hero"><span className=${'done-check' + (issues.length ? ' warn' : '')}>${issues.length ? '!' : '✓'}</span><b>${r.name} ${issues.length ? 'saved, with things to check' : 'saved'}</b><span className="meta">${saved}</span></div>
+      <div className="mcard" style=${{fontSize:13.5}}>
+        <div className="card-row"><span>Walls measured with photo</span><b>${measured} of ${r.walls.length}</b></div>
+        <div className="card-row"><span>Obstructions marked</span><b>${r.walls.reduce((n, w) => n + w.obs.length, 0)}</b></div>
+        <div className="card-row"><span>Close-up photos</span><b>${r.walls.reduce((n, w) => n + (w.photos || []).length, 0)}</b></div>
+        ${sc.length > 0 && html`<div className="card-row"><span>Scope items placed</span><b>${placed.length} of ${sc.length}</b></div>`}
+        ${sc.map(x => { const at = r.items.find(i => i.scopeId === x.id); return html`<div key=${x.id} className="mrow"><span className=${'wall-letter sm' + (at ? ' ok' : '')}>${at ? at.wall : '·'}</span><span className="grow">${scopeLabel(x)}</span></div>`; })}
+        ${!sc.length && html`<span className="meta">Extra room: measured only, nothing in it is made.</span>`}
+      </div>
+      ${issues.length > 0 && html`<div className="mcard" style=${{borderColor:'var(--red)'}}><b>Check before you leave the site</b>${issues.map((t, i) => html`<span key=${i} className="meta" style=${{color:'var(--ink)'}}>• ${t}</span>`)}</div>`}
+      <div className="inline" style=${{justifyContent:'center'}}><button className="btn small ghost" onClick=${() => setScr({n:'job', pid:p.id})}>All rooms</button><button className="btn small ghost" onClick=${() => setSheet({n:'room', name:'', code:'', shape:'rect', count:4, ceiling:r.ceiling || 2900, floor:FLOORS[0]})}>Add extra room</button></div>
+    <//>`;
+  }
+
+  else if (scr.n === 'submitted'){
+    const s = p.survey, its = erp.items.filter(i => i.projectId === p.id);
+    screen = html`<${Phone} title="Survey submitted" sub=${p.customer} back=${() => setScr({n:'list'})} right=${sync}
+      foot=${html`<button className="big" onClick=${() => openPrint('survey', p.id)}>Customer summary (PDF)</button><button className="big pri" onClick=${() => setScr({n:'list'})}>My surveys</button>`}>
+      <div className="done-hero"><span className="done-check">✓</span><b>Survey submitted</b><span className="meta">${s.at ? fmtDT(s.at) : 'Just now'}${s.mins ? ` · ${s.mins} min on site` : ''}</span></div>
+      <div className="mcard" style=${{fontSize:13.5}}>
+        <div className="card-row"><span>Rooms measured</span><b>${s.rooms.length}</b></div>
+        <div className="card-row"><span>Walls measured</span><b>${s.rooms.reduce((n, rm) => n + rm.walls.length, 0)}</b></div>
+        <div className="card-row"><span>Items sent to drawing</span><b>${scr.created ?? its.length}</b></div>
+        ${s.signed && html`<div className="card-row"><span>Customer signature</span><b>Signed</b></div>`}
+      </div>
+      <div className="banner good">The designers have their drawing tasks and the client has a WhatsApp update. Share the summary PDF with the client so they can check the sizes.</div>
+      <span className="meta" style=${{textAlign:'center',fontSize:12}}>The survey is now read-only. If something needs changing, ask the project manager.</span>
+    <//>`;
+  }
+
   else if (scr.n === 'review'){
     const errs = [], warns = [];
     p.survey.rooms.forEach(rm => {
@@ -2955,7 +3003,7 @@ function SurveyApp({erp, ops}){
     const n = scope.length;
     const jump = e => e.rid && setScr(e.label ? {n:'wall', pid:p.id, rid:e.rid, label:e.label} : {n:'room', pid:p.id, rid:e.rid});
     screen = html`<${Phone} title="Review and submit" sub=${p.customer} back=${() => setScr({n:'job', pid:p.id})} right=${sync}
-      foot=${html`<button className="big go" disabled=${errs.length > 0 || !n} onClick=${() => { ops.submitSurvey(p.id, sheet === 'signed'); setSheet(null); setScr({n:'job', pid:p.id}); }}>Submit survey</button>`}>
+      foot=${html`<button className="big go" disabled=${errs.length > 0 || !n} onClick=${async () => { const res = await ops.submitSurvey(p.id, sheet === 'signed'); setSheet(null); if (res) setScr({n:'submitted', pid:p.id, created:res.created}); }}>Submit survey</button>`}>
       <div className=${'banner ' + (errs.length ? 'crit' : 'good')}>${errs.length ? `${errs.length} thing${errs.length > 1 ? 's' : ''} to fix before submitting. Tap one to go there.` : `All ${p.survey.rooms.reduce((s,rm) => s + rm.walls.length, 0)} walls have a photo and measurements. ${n} item${n === 1 ? "" : "s"} from the scope will go to production drawing.`}</div>
       ${localPhotos > 0 && html`<div className="banner warn">${localPhotos} photo${localPhotos > 1 ? 's are' : ' is'} still on the phone. ${online ? 'Uploading now; submit when it says Saved.' : 'Connect to the internet to upload before submitting.'}</div>`}
       ${errs.map((e,i) => html`<button key=${i} className="mcard" style=${{borderColor:'var(--crit)'}} onClick=${() => jump(e)}><span style=${{fontSize:13}}>${e.t} ›</span></button>`)}
