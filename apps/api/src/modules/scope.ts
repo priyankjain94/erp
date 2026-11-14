@@ -40,8 +40,9 @@ export async function createItemFromScope(q: Q, s: any, room: { code: string; na
   const id = 'I' + (await one(q, `select nextval('item_seq') n`))!.n;
   const code = `${room.code}-${s.type}-${String(same + 1).padStart(2, '0')}`;
   const descr = [s.descr, s.size, note].filter(Boolean).join(' · ');
-  await q.query(`insert into items(id, code, project_id, room_code, room_name, type, wall, descr, stage, owner_id, designer_id, target, value, scope_id) values ($1,$2,$3,$4,$5,$6,$7,$8,'drawing',$9,$9,$10,$11,$12)`,
-    [id, code, s.project_id, room.code, room.name, s.type, wall, descr, designer, target, s.value, s.id]);
+  const palette = { ...((await one(q, 'select palette from projects where id = $1', [s.project_id]))?.palette || {}), ...(s.size ? { size: s.size } : {}) };
+  await q.query(`insert into items(id, code, project_id, room_code, room_name, type, wall, descr, stage, owner_id, designer_id, target, value, scope_id, spec) values ($1,$2,$3,$4,$5,$6,$7,$8,'drawing',$9,$9,$10,$11,$12,$13)`,
+    [id, code, s.project_id, room.code, room.name, s.type, wall, descr, designer, target, s.value, s.id, JSON.stringify(palette)]);
   await q.query(`insert into item_stage_log(item_id, stage, in_at, out_at, by_id) values ($1, 'survey', $2, now(), $3)`, [id, startedAt || new Date(), byId]);
   await q.query(`insert into item_stage_log(item_id, stage, in_at) values ($1, 'drawing', now())`, [id]);
   let n = 1; for (const label of BOXES[s.type] || BOXES.OT) await q.query('insert into item_boxes(item_id, n, label) values ($1,$2,$3)', [id, n++, label]);

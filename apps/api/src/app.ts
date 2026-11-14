@@ -15,10 +15,11 @@ import { customerRoutes } from './modules/customer.js';
 import { opsRoutes } from './modules/ops.js';
 import { taskRoutes } from './modules/tasks.js';
 import { scopeRoutes } from './modules/scope.js';
+import { workflowRoutes } from './modules/workflow.js';
 
 export function buildApp() {
   const r = new Router();
-  r.get('/api/health', async () => { await db.query('select 1'); return { ok: true, time: new Date().toISOString(), version: '1.13.0' }; });
+  r.get('/api/health', async () => { await db.query('select 1'); return { ok: true, time: new Date().toISOString(), version: '1.14.0' }; });
 
   // Meta webhooks: GET handshake + signed POSTs. Always answer 200 quickly; processing happens in jobs.
   r.get('/api/v1/webhooks/whatsapp', ctx => {
@@ -44,7 +45,7 @@ export function buildApp() {
     return { ok: true, queued: n };
   });
 
-  authRoutes(r); adminRoutes(r); crmRoutes(r); opsRoutes(r); taskRoutes(r); scopeRoutes(r); customerRoutes(r); businessRoutes(r); supportRoutes(r); storageRoutes(r);
+  authRoutes(r); adminRoutes(r); crmRoutes(r); opsRoutes(r); taskRoutes(r); scopeRoutes(r); workflowRoutes(r); customerRoutes(r); businessRoutes(r); supportRoutes(r); storageRoutes(r);
   installInbound();
   return createServer(r);
 }

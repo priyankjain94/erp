@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { db, one, tx, type Q } from '../core/db.js';
+import { db, many, one, tx, type Q } from '../core/db.js';
 import { parse, type Ctx, type Router } from '../core/http.js';
 import { addDays, bad, forbidden, notFound, todayStr } from '../core/util.js';
 import { audit, customerOrPreview } from './auth.js';
@@ -40,6 +40,17 @@ export function customerRoutes(r: Router) {
       const it = await one(q, 'select project_id from items where id = $1', [ctx.params.id]); if (!it) throw notFound();
       const p = await accessProject(q, ctx, it.project_id);
       await approveDrawing(q, ctx.params.id, via(ctx), ctx.auth?.type === 'user' ? ctx.auth.user.name : 'customer');
+      return p.customer_id;
+    });
+    return reply(cid);
+  });
+  /* approve every drawing waiting in one go (the approval form) */
+  r.post('/api/v1/customer/projects/:id/approve-all', customerOrPreview, async ctx => {
+    const cid = await tx(async q => {
+      const p = await accessProject(q, ctx, ctx.params.id);
+      const items = await many(q, `select i.id from items i where i.project_id = $1 and i.stage = 'drawing' and exists (select 1 from documents d where d.item_id = i.id and d.kind = 'drawing' and d.approved_at is null and d.id = (select max(id) from documents where item_id = i.id and kind = 'drawing'))`, [p.id]);
+      if (!items.length) throw bad('There is nothing waiting for your approval.');
+      for (const i of items) await approveDrawing(q, i.id, via(ctx), ctx.auth?.type === 'user' ? ctx.auth.user.name : 'customer');
       return p.customer_id;
     });
     return reply(cid);

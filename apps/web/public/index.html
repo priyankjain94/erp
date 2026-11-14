@@ -549,6 +549,17 @@ button.kpi{text-align:left;font:inherit;cursor:pointer}
 .pg-here.late{background:var(--red)}.pg-here.wait{background:var(--white);color:var(--ink);box-shadow:inset 0 0 0 1.5px var(--ink)}
 .pg-legend{display:flex;flex-wrap:wrap;gap:16px;padding:10px 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line)}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.ws{position:fixed;z-index:41;left:50%;top:2.5vh;transform:translateX(-50%);width:min(1180px,96vw);height:95vh;background:var(--bg);border:1px solid var(--ink);box-shadow:0 20px 60px rgba(0,0,0,.25);display:flex;flex-direction:column;overflow:hidden}
+.ws .d-head{background:var(--white)}.ws .d-body{flex:1;overflow-y:auto}
+.ws-steps{display:flex;gap:4px;overflow-x:auto;margin-top:10px}.ws-steps .pg-step{cursor:pointer;font:inherit;color:inherit;text-align:left;border-left:0;border-right:0;border-bottom:0;min-width:96px}
+.ws-steps .pg-step.on{background:var(--surface);box-shadow:inset 0 -3px 0 var(--ink)}
+.next-step{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;padding:8px 12px;background:var(--bg);border-left:3px solid var(--red);font-size:13.5px}
+.next-step .ns-k{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:var(--muted)}.next-step .ns-who{font-weight:600}.next-step .ns-t{flex:1;min-width:200px}
+.ws-item{padding:0 0 20px}.ws-item header{padding:16px 20px 4px}
+.dropzone{border:1.5px dashed var(--line-2);background:var(--white);padding:18px;display:grid;gap:8px;text-align:center}.dropzone.over{border-color:var(--ink);background:var(--surface)}
+.draft-note{font-size:12px;color:var(--muted);margin-right:auto}
+.toast-act{margin-left:10px;background:transparent;border:1px solid currentColor;color:inherit;padding:4px 10px;font:600 12px Inter,sans-serif;cursor:pointer}
+@media (max-width:700px){.ws{top:0;height:100vh;width:100vw;border:0}}
 .sig{width:100%;height:120px;border:1px solid var(--line-2);border-radius:0;background:var(--surface);touch-action:none}
 .side-note{max-width:340px;display:grid;gap:12px;font-size:13.5px;color:var(--ink-2);padding-top:6px}
 .side-note h3{font-weight:600;font-size:12px;letter-spacing:.16em;text-transform:uppercase;margin:0}
@@ -1127,7 +1138,8 @@ function CustomerApp({erp, toast: toastIn, live}){
       </div>`)}
       ${!tix.length && html`<p className="meta">No complaints so far. If anything needs attention, raise it here and you'll get a complaint number on WhatsApp right away.</p>`}
       <div className="mcard"><b>Warranty</b>${its.filter(i => i.warrantyUntil).map(i => html`<div key=${i.id} className="card-row" style=${{fontSize:13}}><span>${typeById[i.type].name} · ${i.roomName}</span><span className="meta">until ${fmtDate(String(i.warrantyUntil).slice(0,10))}</span></div>`)}${!its.some(i => i.warrantyUntil) && html`<span className="meta">Starts when each piece is handed over.</span>`}</div><//>`;
-    else if (view === 'approve') screen = html`<${Phone} title="Approve drawings" sub=${p.customer} back=${back}>
+    else if (view === 'approve') screen = html`<${Phone} title="Approval form" sub=${p.customer} back=${back}>
+      ${toApprove.length > 1 && html`<div className="mcard"><b>${toApprove.length} drawings are waiting for you</b><span className="meta">Check each drawing and its materials below. Approve them one by one, or all together.</span><button className="big go" onClick=${() => act(`/customer/projects/${p.id}/approve-all`, {}, 'All drawings approved. Production can begin.')}>Approve all ${toApprove.length}</button></div>`}
       ${toApprove.map(i => { const wall = p.survey.rooms.find(r => r.code === i.room)?.walls.find(w => w.label === i.wall); return html`<div key=${i.id} className="mcard"><b>${typeById[i.type].name} · ${i.roomName}</b><span className="meta">Drawing ${latestDrawing(i).rev}${i.desc ? ' · ' + i.desc : ''}</span>${latestDrawing(i).url ? html`<a className="btn small" href=${latestDrawing(i).url} target="_blank" rel="noopener">Open drawing</a>` : html`<${Elevation} it=${i} wall=${wall}/>`}
         ${['size','carcass','shutter','finish','hardware','accessories'].some(k => (i.spec || {})[k]) && html`<div style=${{fontSize:13}}><span className="meta" style=${{display:'block',marginBottom:4}}>Materials you are approving</span>${['size','finish','carcass','shutter','hardware','accessories'].filter(k => (i.spec || {})[k]).map(k => html`<div key=${k}><span className="meta">${MATERIAL_FIELDS.find(m => m.id === k).label}:</span> ${i.spec[k]}</div>`)}</div>`}
         <div className="inline"><button className="big" onClick=${() => setSheet({n:'change', id:i.id, text:''})}>Ask for a change</button><button className="big go" onClick=${() => act(`/customer/items/${i.id}/approve`, {}, 'Approved. Your designer has been notified.')}>Approve</button></div></div>`; })}
@@ -1408,7 +1420,17 @@ const rs = n => '₹' + Math.round(Number(n) || 0).toLocaleString('en-IN');
 
 function makeOps(erp, setErp, toast, leads, crm, app){
   const me = erp.me;
-  const apply = res => { if (res && res.state) app.applyState(res.state); return res; };
+  const apply = res => {
+    if (res && res.state) {
+      const before = Object.fromEntries((E().items || []).map(i => [i.id, i.stage]));
+      app.applyState(res.state);
+      // items that moved on their own (all required checks done): tell the person, with Undo
+      const moved = (res.state.erp?.items || []).filter(i => before[i.id] && before[i.id] !== i.stage && PIDX(i.stage) > PIDX(before[i.id]) && /^auto/.test((i.log || []).at(-1)?.note || '') && Date.now() - ((i.log || []).at(-1)?.in || 0) < 20000);
+      if (moved.length) toast(`${moved.length === 1 ? moved[0].code : moved.length + ' items'} moved on to ${pstById[moved[0].stage].short} by itself: every required check is done.`, 'ok',
+        {label:'Undo', fn:() => Promise.all(moved.map(i => API.call('POST', `/items/${i.id}/transition`, {direction:'back', reason:'Undo automatic move'}).catch(e => toast(e.message, 'err')))).then(() => app.reload())});
+    }
+    return res;
+  };
   const run = async (method, path, body, msg, opts) => {
     try { const res = apply(await API.call(method, path, body, opts)); if (res && res.queued) toast('Saved on this phone. It will sync when the internet is back.'); else if (msg) toast(typeof msg === 'function' ? msg(res) : msg); return res || {}; }
     catch(e){ toast(e.message || 'Something went wrong.', 'err'); return null; }
@@ -1602,6 +1624,7 @@ function ControlRoom({erp, ui, ops}){
     html`<${CRSection} key="sg" title="Open snags" rows=${snags.map(s => html`<button className="task" key=${s.id} onClick=${() => ui.openItem(s.it.id)}><span className="pill crit">${s.type}</span><span className="who"><b>${s.part}</b><span className="mono">${s.it.code} · ${SNAG_LABEL[s.status]}</span></span><span className="due">${ago(s.at)} ago</span></button>`)}/>`];
   const nothing = !(decide.length + overdue.length + unseen.length + blocked.length + check.length + stuck.length + waiting.length + soon.length + dueNow.length + snags.length);
   return html`<section className="view">
+    <${MyWork} erp=${erp} ui=${ui}/>
     <p style=${{margin:'0 0 14px',color:'var(--muted)'}}>${all ? 'Everything that needs action across the company.' : 'Things that need action on your projects and tasks.'} Work through it from the top.</p>
     <div className="kpis">
       <button className=${'kpi' + (overdue.length ? ' alert' : '')} onClick=${() => ui.go('tasks')}><span className="l">Overdue tasks</span><span className="v">${overdue.length}</span><span className="s">${unseen.length} not seen · ${blocked.length} blocked</span></button>
@@ -1641,6 +1664,7 @@ function Tasks({erp, ui, ops, init}){
   const people = TEAM.filter(u => base.some(t => t.assignee === u.id && (showDone || tOpen(t)))).filter(u => person === 'all' || u.id === person);
   const decide = erp.tasks.filter(t => (t.ext && tOpen(t) && isMgr(erp, t)) || (awaitingCheck(t) && isMgr(erp, t) && t.assignee !== me));
   return html`<section className=${'view' + (mode === 'team' ? ' board-view' : '')}>
+    ${mode === 'mine' && html`<${MyWork} erp=${erp} ui=${ui}/>`}
     <div className="toolbar">
       <div className="seg" role="group" aria-label="View">${[['team','Team board'],['mine','My tasks'],['byme','Assigned by me'],['decide','Decide' + (decide.length ? ' · ' + decide.length : '')],['log','Reminder log']].filter(([id]) => all || id === 'mine' || id === 'byme' || (id === 'decide' && decide.length)).map(([id,n]) => html`<button key=${id} aria-pressed=${mode === id} onClick=${() => setMode(id)}>${n}</button>`)}</div>
       ${mode === 'team' && html`<select className="sel" value=${person} onChange=${e => setPerson(e.target.value)} aria-label="Person"><option value="all">Everyone</option>${TEAM.map(u => html`<option key=${u.id} value=${u.id}>${u.name}</option>`)}</select>`}
@@ -1945,11 +1969,6 @@ function ProgressTab({p, its, erp, ops, ui, setTab}){
   const edit = can(erp, 'edit');
   const rooms = [...new Set(its.map(i => i.roomName))];
   const here = its.filter(i => i.stage === st).length;
-  const steps = [
-    {id:'scope', name:'Scope', big:'✓', sub:`${(p.scope || []).length} items`, cls:'passed'},
-    {id:'survey', name:'Survey', big:p.survey.status === 'submitted' ? '✓' : '·', sub:p.survey.status === 'submitted' ? `Done ${fmtDate(ymd(new Date(p.survey.at)))} · ${uname(p.survey.assignee)}` : p.survey.checkIn ? 'In progress' : p.survey.scheduled ? fmtDT(p.survey.scheduled) : 'Not booked', cls:p.survey.status === 'submitted' ? 'passed' : st === 'survey' ? 'cur' : ''},
-    ...ITEM_STAGES.map(s => { const n = its.filter(i => i.stage === s.id).length, past = its.filter(i => PIDX(i.stage) > PIDX(s.id)).length;
-      return {id:s.id, name:s.short, big:String(n), sub:n && past ? `${past} passed · ${n} here` : n ? 'here now' : past ? `${past} passed` : 'not reached', cls:st === s.id ? 'cur' : its.length && past === its.length ? 'passed' : ''}; })];
   const gates = it => gatesFor(it, p).filter(g => !g.ok && g.hard);
   const chosen = its.filter(i => sel.includes(i.id) && i.stage !== 'closed');
   const ready = chosen.filter(i => !gates(i).length), notReady = chosen.filter(i => gates(i).length);
@@ -1961,7 +1980,6 @@ function ProgressTab({p, its, erp, ops, ui, setTab}){
   return html`<div className="details">
     <div className="inline" style=${{flexWrap:'wrap',gap:10,alignItems:'baseline'}}><h3 style=${{margin:0,fontSize:19,fontWeight:600}}>Stage: ${stageLong(st)}</h3><span className=${'pill ' + (h.cls === 'late' ? 'crit' : h.cls === 'wait' ? 'warn' : '')}>${h.text}</span>
       ${its.length > 0 && st !== 'closed' && html`<span className="sub">${its.length - here} of ${its.length} items have moved past ${pstById[st]?.short || stageName(st)}. ${here} item${here === 1 ? ' is' : 's are'} holding the project here.</span>`}</div>
-    <div className="pg-steps">${steps.map(s => html`<div key=${s.id} className=${'pg-step ' + s.cls}><span className="n">${s.name}</span><span className="b">${s.big}</span><span className="s">${s.sub}</span></div>`)}</div>
     ${blk && html`<div className="banner warn"><b>What is holding the project:</b> ${blk}</div>`}
     ${!its.length ? html`<div className="banner">Items appear here when the site survey is submitted. ${(p.scope || []).length} item${(p.scope || []).length === 1 ? '' : 's'} in the scope: ${(p.scope || []).map(s => typeById[s.type].name + ' · ' + s.room).join(', ')}.</div>`
     : html`<div className="pg-box">
@@ -1977,6 +1995,180 @@ function ProgressTab({p, its, erp, ops, ui, setTab}){
             ${ITEM_STAGES.map(s => cell(it, s))}</tr>`)}<//>`)}</tbody></table></div>
       <div className="pg-legend"><span><b>✓</b> done (hover for date and who)</span><span><span className="pg-here">5d</span> here now · days in stage</span><span><span className="pg-here late">9d</span> over the stage target</span><span><span className="pg-here wait">waiting</span> waiting on client</span><span className="pg-todo">○ not reached yet</span>${edit ? html`<span>Tick items to move them together.</span>` : null}</div>
     </div>`}
+  </div>`;
+}
+
+/* ---------- v1.14 workflow: drafts, stage panels, batch forms, approval form ---------- */
+/* every form saves as you go; the author, the project's PM and the item's owner can see the draft */
+function useDraft(erp, key, init, meta){
+  const all = erp.drafts || [];
+  const mine = all.find(d => d.key === key && d.mine);
+  const others = all.filter(d => d.key === key && !d.mine);
+  const [v, setV] = useState(() => mine && mine.data ? {...init, ...mine.data} : init);
+  const [status, setStatus] = useState(mine ? 'saved' : '');
+  const t = useRef(null), first = useRef(true), live = useRef(true);
+  const sig = JSON.stringify(v);
+  useEffect(() => () => { live.current = false; }, []);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    setStatus('saving'); clearTimeout(t.current);
+    t.current = setTimeout(() => API.call('PUT', '/drafts', {key, kind:meta.kind, title:meta.title, projectId:meta.projectId || null, itemId:meta.itemId || null, data:v}, {queue:true, dedupe:'draft:' + key})
+      .then(r => live.current && setStatus(r && r.queued ? 'offline' : 'saved')).catch(() => live.current && setStatus('error')), 900);
+  }, [sig]);
+  const clear = () => { clearTimeout(t.current); first.current = true; API.call('DELETE', '/drafts/' + encodeURIComponent(key)).catch(() => {}); setStatus(''); };
+  const adopt = d => setV({...init, ...(d.data || {})});
+  return [v, setV, status, clear, others, adopt];
+}
+const DraftNote = ({status, others, adopt}) => html`<span className="draft-note">
+  ${status === 'saving' ? 'Saving draft…' : status === 'saved' ? 'Draft saved' : status === 'offline' ? 'Saved on this device · will sync' : status === 'error' ? 'Could not save the draft' : ''}
+  ${others && others.length > 0 && html`<span> · Draft by ${others[0].byName}, ${ago(others[0].at)} ago <button type="button" className="linkbtn" style=${{marginTop:0}} onClick=${() => adopt(others[0])}>Continue it</button></span>`}</span>`;
+
+const STAGE_TODO = {drawing:'Upload drawings and get client approval', pi:'Raise the factory PI', order:'Place the hardware PO and track production', dispatch:'Plan dispatch and delivery', install:'Install', handover:'Hand over and close'};
+function projSteps(p, its, st){
+  return [
+    {id:'scope', name:'Scope', big:'✓', sub:`${(p.scope || []).length} items`, cls:(p.scope || []).length ? 'passed' : st === 'scope' ? 'cur' : ''},
+    {id:'survey', name:'Survey', big:p.survey.status === 'submitted' ? '✓' : '·', sub:p.survey.status === 'submitted' ? `Done ${p.survey.at ? fmtDate(ymd(new Date(p.survey.at))) : ''}` : p.survey.checkIn ? 'In progress' : p.survey.scheduled ? fmtDT(p.survey.scheduled) : 'Not booked', cls:p.survey.status === 'submitted' ? 'passed' : st === 'survey' ? 'cur' : ''},
+    ...ITEM_STAGES.map(s => { const n = its.filter(i => i.stage === s.id).length, past = its.filter(i => PIDX(i.stage) > PIDX(s.id)).length;
+      return {id:s.id, name:s.short, big:String(n), sub:n && past ? `${past} passed · ${n} here` : n ? 'here now' : past ? `${past} passed` : 'not reached', cls:st === s.id ? 'cur' : its.length && past === its.length ? 'passed' : ''}; })];
+}
+/** the next step for whoever is looking at the project */
+function nextStepFor(p, its, erp){
+  const me = erp.me, mine = its.filter(i => i.owner === me && i.stage !== 'closed');
+  if (mine.length) { const s = mine.reduce((m, i) => PIDX(i.stage) < PIDX(m) ? i.stage : m, mine[0].stage); const n = mine.filter(i => i.stage === s).length;
+    return {who:'You', text:`${STAGE_TODO[s] || pstById[s].short} · ${n} item${n === 1 ? '' : 's'}`, stage:s}; }
+  const st = projStage(p, its);
+  if (st === 'scope') return {who:p.pm === me ? 'You' : uname(p.pm), text:'Add the scope of work', tab:'scope'};
+  if (st === 'survey') return {who:uname(p.survey.assignee), text:p.survey.checkIn ? 'Finish the site survey' : `Site survey ${p.survey.scheduled ? fmtDT(p.survey.scheduled) : 'to be booked'}`, tab:'survey'};
+  if (st === 'closed') return {who:'', text:'Project completed', tab:'progress'};
+  const here = its.filter(i => i.stage === st), w = here.find(i => i.waiting);
+  if (w) return {who:'Client', text:`${WAIT_LABEL[w.waiting]} · ${w.code}`, stage:st};
+  const owners = [...new Set(here.map(i => i.owner).filter(Boolean))];
+  return {who:owners.length ? owners.map(uname).join(', ') : 'Not assigned', text:`${STAGE_TODO[st] || pstById[st].short} · ${here.length} item${here.length === 1 ? '' : 's'}`, stage:st};
+}
+function NextStepCard({p, its, erp, setTab}){
+  const n = nextStepFor(p, its, erp);
+  return html`<div className="next-step"><span className="ns-k">Next step</span><span className="ns-who">${n.who}</span><span className="ns-t">${n.text}</span>
+    <button className="btn small primary" onClick=${() => setTab(n.stage ? 'stage:' + n.stage : n.tab)}>Open</button></div>`;
+}
+
+/* material palette: set once per project, every item starts from it */
+function PaletteBox({p, ops, edit, compact}){
+  const [open, setOpen] = useState(!compact);
+  const [f, setF] = useState(() => ({...(p.palette || {})}));
+  const miss = MATERIAL_FIELDS.filter(m => m.req && m.id !== 'size' && !String((p.palette || {})[m.id] || '').trim()).map(m => m.label.split(/[ ,(]/)[0].toLowerCase());
+  return html`<div className="box"><div className="card-row"><h4 style=${{margin:0}}>Material palette for this project</h4>${compact && html`<button className="btn small ghost" onClick=${() => setOpen(!open)}>${open ? 'Hide' : miss.length ? 'Set it' : 'Edit'}</button>`}</div>
+    <p className="hint" style=${{margin:'6px 0'}}>${miss.length ? `Fill this once and every item's specification is filled for you. Missing: ${miss.join(', ')}.` : 'Every item starts from these materials; change an item only where it differs.'}</p>
+    ${open && html`<div className="form" style=${{padding:0}}>${MATERIAL_FIELDS.filter(m => m.id !== 'size' && m.id !== 'notes').map(m => html`<label key=${m.id}>${m.label}${m.req ? html` <span className="req">*</span>` : ''}<input disabled=${!edit} value=${f[m.id] || ''} placeholder=${m.hint} onInput=${e => setF({...f, [m.id]:e.target.value})}/></label>`)}
+      ${edit && html`<div className="form-foot"><button className="btn primary small" onClick=${() => ops.api('PUT', `/projects/${p.id}/palette`, {spec:f}, 'Material palette saved. Items in Drawing have been updated.')}>Save palette</button></div>`}</div>`}
+  </div>`;
+}
+
+/* drop several drawing files at once; they are matched to items by code in the file name */
+function DrawingDrop({its, ops, edit}){
+  const [rows, setRows] = useState([]), [busy, setBusy] = useState(false), [over, setOver] = useState(false);
+  const match = name => { const n = name.toUpperCase().replace(/[^A-Z0-9]/g, ''); return its.find(i => n.includes(i.code.replace(/[^A-Z0-9]/g, '')))?.id || ''; };
+  const add = files => setRows(r => [...r, ...[...files].map(file => ({file, item:match(file.name)}))]);
+  const go = async () => {
+    setBusy(true);
+    for (const r of rows.filter(x => x.item)) { try { const sl = await uploadFile(r.file); const it = its.find(i => i.id === r.item);
+      await ops.uploadDrawing(r.item, {file:sl.ref, spec:it.spec || {}, boxes:it.boxes.map(b => b.label), notes:''}); } catch(e){ alert(`${r.file.name}: ${e.message}`); } }
+    setRows([]); setBusy(false);
+  };
+  if (!edit) return null;
+  return html`<div className=${'dropzone' + (over ? ' over' : '')} onDragOver=${e => { e.preventDefault(); setOver(true); }} onDragLeave=${() => setOver(false)} onDrop=${e => { e.preventDefault(); setOver(false); add(e.dataTransfer.files); }}>
+    <b>Drop drawing files here</b><span className="sub">PDF or image. Name them with the item code (e.g. ${its[0]?.code || 'MBR-WR-01'}_R1.pdf) and they are matched automatically.</span>
+    <label className="btn small" style=${{position:'relative',overflow:'hidden',justifySelf:'center'}}>Choose files<input type="file" multiple accept="application/pdf,image/jpeg,image/png,image/webp" style=${{position:'absolute',inset:0,opacity:0}} onChange=${e => { add(e.target.files); e.target.value = ''; }}/></label>
+    ${rows.length > 0 && html`<div className="stack" style=${{gap:6,textAlign:'left'}}>${rows.map((r, k) => html`<div key=${k} className="inline" style=${{gap:8}}><span className="grow" style=${{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis'}}>${r.file.name}</span>
+        <select className="sel" value=${r.item} onChange=${e => setRows(rows.map((x, j) => j === k ? {...x, item:e.target.value} : x))} aria-label=${'Item for ' + r.file.name}><option value="">Choose item…</option>${its.map(i => html`<option key=${i.id} value=${i.id}>${i.code} · ${typeById[i.type].name}</option>`)}</select>
+        <button className="btn small ghost" onClick=${() => setRows(rows.filter((_, j) => j !== k))} aria-label="Remove">✕</button></div>`)}
+      <div className="inline"><button className="btn primary small" disabled=${busy || !rows.some(r => r.item)} onClick=${go}>${busy ? 'Uploading…' : `Upload ${rows.filter(r => r.item).length} drawing${rows.filter(r => r.item).length === 1 ? '' : 's'}`}</button>${rows.some(r => !r.item) && html`<span className="sub">Files without an item are skipped.</span>`}</div></div>`}
+  </div>`;
+}
+
+/* gates turned into buttons that do the job */
+function GateAction({g, p, its, erp, ops, setTab}){
+  const t = g.text;
+  if (/^Payment received/.test(t) && can(erp, 'payments')) { const m = p.payments.find(x => x.gate === 'order' && !x.received); return m ? html`<button className="btn small" onClick=${() => ops.api('POST', `/projects/${p.id}/payments/${m.id}`, {received:true}, `${m.label} payment marked received.`)}>Mark ${lakh(m.amount)} received</button>` : null; }
+  if (/^Site ready/.test(t) && can(erp, 'payments')) return html`<button className="btn small" onClick=${() => ops.api('PATCH', `/projects/${p.id}`, {siteReady:true}, 'Site marked ready.')}>Mark site ready</button>`;
+  if (/^Customer approved/.test(t) && can(erp, 'edit')) return html`<button className="btn small ghost" onClick=${() => Promise.all(its.filter(i => latestDrawing(i) && !latestDrawing(i).approved).map(i => ops.api('POST', `/items/${i.id}/drawings/approve`, {}, null))).then(() => null)}>Approved on call</button>`;
+  if (/^Handover documents/.test(t)) return html`<button className="btn small ghost" onClick=${() => setTab('docs')}>Upload in Documents</button>`;
+  if (/specification/.test(t)) return html`<button className="btn small ghost" onClick=${() => setTab('stage:drawing')}>Use palette</button>`;
+  return null;
+}
+function StagePanel({stage, p, its, erp, ops, ui, setTab}){
+  const here = its.filter(i => i.stage === stage);
+  const [sel, setSel] = useState(() => here.map(i => i.id));
+  useEffect(() => { setSel(s => { const k = s.filter(id => here.some(i => i.id === id)); return k.length ? k : here.map(i => i.id); }); }, [here.map(i => i.id).join()]);
+  const edit = can(erp, 'edit');
+  const chosen = here.filter(i => sel.includes(i.id));
+  const [f, setF, status, clear, others, adopt] = useDraft(erp, `batch:${p.id}:${stage}`, {refNo:'', amount:'', vendor:'', vehicle:'', date:addDays(1), doc:'', docName:''}, {kind:'batch', title:`${pstById[stage]?.short || stage} · ${p.code}`, projectId:p.id});
+  const [busy, setBusy] = useState(false);
+  const batch = async (kind, extra = {}) => { setBusy(true); const r = await ops.api('POST', `/projects/${p.id}/batch`, {kind, items:chosen.map(i => i.id), ...extra}, r => `Saved for ${chosen.length} item${chosen.length === 1 ? '' : 's'}.${r.moved ? ` ${r.moved} moved on to the next stage.` : ''}`); setBusy(false); if (r && ['pi','po','dispatch'].includes(kind)) { clear(); setF({refNo:'', amount:'', vendor:'', vehicle:'', date:addDays(1), doc:'', docName:''}); } return r; };
+  const pickDoc = async file => { setBusy(true); try { const sl = await uploadFile(file); setF({...f, doc:sl.ref, docName:file.name}); } catch(e){ alert(e.message); } setBusy(false); };
+  const fails = {}; chosen.forEach(i => gatesFor(i, p).filter(g => !g.ok && g.hard).forEach(g => { (fails[g.text] = fails[g.text] || []).push(i); }));
+  const target = STAGE_TGT[stage] ?? pstById[stage]?.days;
+  const docPick = html`<label className="btn small" style=${{position:'relative',overflow:'hidden'}}>${f.doc ? 'Change file' : 'Attach copy'}<input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" style=${{position:'absolute',inset:0,opacity:0}} onChange=${e => { const x = e.target.files[0]; e.target.value = ''; if (x) pickDoc(x); }}/></label>${f.docName && html`<span className="sub">${f.docName}</span>`}`;
+  const pending = chosen.filter(i => { const d = latestDrawing(i); return d && d.url && !d.approved; });
+  return html`<div className="details">
+    <div className="inline" style=${{flexWrap:'wrap',gap:10,alignItems:'baseline'}}><h3 style=${{margin:0,fontSize:19,fontWeight:600}}>${pstById[stage]?.name || stage}</h3><span className="sub">${here.length} item${here.length === 1 ? '' : 's'} here · target ${target} days · moves on by itself when every required check is done</span></div>
+    ${!here.length && html`<div className="banner">No items in this stage right now.</div>`}
+    ${here.length > 0 && html`<div className="box"><div className="card-row"><h4 style=${{margin:0}}>Items in ${pstById[stage].short} · ${chosen.length} selected</h4><button className="btn small ghost" onClick=${() => setSel(sel.length === here.length ? [] : here.map(i => i.id))}>${sel.length === here.length ? 'Select none' : 'Select all'}</button></div>
+      <table className="pg-table" style=${{marginTop:6}}><tbody>${here.map(i => { const si = stageInfo(i), g = gatesFor(i, p).filter(x => !x.ok && x.hard), d = latestDrawing(i);
+        return html`<tr key=${i.id}><td style=${{width:32}}><input type="checkbox" aria-label=${'Select ' + i.code} checked=${sel.includes(i.id)} onChange=${() => setSel(s => s.includes(i.id) ? s.filter(x => x !== i.id) : [...s, i.id])}/></td>
+          <td><button className="linkbtn" style=${{marginTop:0,color:'var(--ink)',textDecoration:'none',fontWeight:600}} onClick=${() => ui.openItem(i.id)}>${typeById[i.type].name} · ${i.roomName}</button><div className="sub">${i.code}${stage === 'drawing' ? ' · ' + (d ? `${d.rev}${d.approved ? ' approved' : d.url ? ' uploaded, waiting for client' : ' no file'}` : 'no drawing yet') : ''}${i.waiting ? ' · ' + WAIT_LABEL[i.waiting].toLowerCase() : ''}</div></td>
+          ${stage === 'drawing' && html`<td style=${{width:150}}><input className="inp" style=${{width:140}} aria-label=${'Overall size of ' + i.code} placeholder="Size W × H × D" defaultValue=${(i.spec || {}).size || ''} disabled=${!edit} onBlur=${e => e.target.value.trim() !== ((i.spec || {}).size || '') && ops.api('PATCH', `/items/${i.id}`, {spec:{...(i.spec || {}), size:e.target.value.trim()}}, 'Size saved.')}/></td>`}
+          <td className="r"><span className=${'stage-age' + (si.over && !i.waiting ? ' over' : '')}>${Math.floor(si.age)}d</span></td>
+          <td className="r sub">${g.length ? `${g.length} to do` : html`<span style=${{color:'var(--ink)'}}>ready</span>`}</td></tr>`; })}</tbody></table></div>`}
+
+    ${here.length > 0 && stage === 'drawing' && html`
+      <${PaletteBox} p=${p} ops=${ops} edit=${edit} compact=${!MATERIAL_FIELDS.some(m => m.req && m.id !== 'size' && !(p.palette || {})[m.id])}/>
+      <${DrawingDrop} its=${here} ops=${ops} edit=${edit}/>
+      <div className="box"><h4>Approval form</h4><p className="hint" style=${{margin:'0 0 8px'}}>One WhatsApp to the client with every selected drawing. They open their account, see each drawing with its materials, and approve all or ask for a change.</p>
+        <div className="inline"><button className="btn wa small" disabled=${!pending.length || !edit} onClick=${() => ops.api('POST', `/projects/${p.id}/approval-form`, {items:pending.map(i => i.id)}, r => `Approval form sent on WhatsApp with ${r.sent} drawing${r.sent === 1 ? '' : 's'}.`)}><${Icon} n="send" s=${14}/>Send approval form · ${pending.length} drawing${pending.length === 1 ? '' : 's'}</button>
+          ${!pending.length && html`<span className="sub">Upload drawings for the selected items first.</span>`}</div></div>`}
+
+    ${here.length > 0 && stage === 'pi' && html`<div className="box"><h4>One factory PI for the selected items</h4>
+      <div className="form" style=${{padding:0}}><label>PI number<input value=${f.refNo} onInput=${e => setF({...f, refNo:e.target.value})} placeholder="FPI-5123"/></label><label>PI amount (₹)<input inputMode="numeric" value=${f.amount} onInput=${e => setF({...f, amount:e.target.value.replace(/\D/g, '')})}/></label>
+        <div className="full inline">${docPick}</div>
+        <div className="form-foot"><${DraftNote} status=${status} others=${others} adopt=${adopt}/><button className="btn primary" disabled=${busy || !f.refNo.trim() || !chosen.length || !edit} onClick=${() => batch('pi', {refNo:f.refNo.trim(), amount:Number(f.amount) || null, doc:f.doc || null})}>Save PI for ${chosen.length} item${chosen.length === 1 ? '' : 's'}</button></div></div></div>`}
+
+    ${here.length > 0 && stage === 'order' && html`<div className="box"><h4>One hardware PO for the selected items</h4>
+      <div className="form" style=${{padding:0}}><label>PO number<input value=${f.refNo} onInput=${e => setF({...f, refNo:e.target.value})} placeholder="PO-2410"/></label><label>Vendor<input value=${f.vendor} onInput=${e => setF({...f, vendor:e.target.value})} placeholder="Hettich (Raipur dealer)"/></label>
+        <div className="full inline">${docPick}</div>
+        <div className="form-foot"><${DraftNote} status=${status} others=${others} adopt=${adopt}/><button className="btn primary" disabled=${busy || !f.refNo.trim() || !chosen.length || !edit} onClick=${() => batch('po', {refNo:f.refNo.trim(), vendor:f.vendor.trim(), doc:f.doc || null})}>Save PO for ${chosen.length}</button></div></div>
+      <div className="inline" style=${{marginTop:10}}><button className="btn" disabled=${busy || !chosen.length || !edit} onClick=${() => batch('hw_received')}>Hardware received · ${chosen.length}</button><button className="btn" disabled=${busy || !chosen.length || !edit} onClick=${() => batch('production_done')}>Factory production done · ${chosen.length}</button></div></div>`}
+
+    ${here.length > 0 && stage === 'dispatch' && html`<div className="box"><h4>Plan one truck for the selected items</h4>
+      <div className="form" style=${{padding:0}}><label>Vehicle number<input value=${f.vehicle} onInput=${e => setF({...f, vehicle:e.target.value.toUpperCase()})} placeholder="CG04 MK 2201"/></label><label>Dispatch date<input type="date" value=${f.date} onInput=${e => setF({...f, date:e.target.value})}/></label>
+        <span className="full sub">${chosen.reduce((s, i) => s + i.boxes.length, 0)} boxes from the packing lists of ${chosen.length} item${chosen.length === 1 ? '' : 's'}.</span>
+        <div className="form-foot"><${DraftNote} status=${status} others=${others} adopt=${adopt}/><button className="btn primary" disabled=${busy || !f.vehicle.trim() || !f.date || !chosen.length || !edit} onClick=${() => batch('dispatch', {vehicle:f.vehicle.trim(), date:f.date})}>Save dispatch</button></div></div>
+      <div className="inline" style=${{marginTop:10}}><button className="btn" disabled=${busy || !chosen.length || !edit} onClick=${() => batch('delivered')}>Delivered at site · ${chosen.length}</button></div></div>`}
+
+    ${here.length > 0 && stage === 'install' && html`<div className="box"><h4>Installation</h4><p className="hint" style=${{margin:0}}>Installers work from the Installer app: start, box check, photos, checklist and the client's OTP. Each item moves to Handover by itself after sign-off.</p>
+      <div className="inline" style=${{marginTop:8}}><button className="btn small" onClick=${() => setTab('items')}>Assign installers</button></div></div>`}
+
+    ${here.length > 0 && stage === 'handover' && html`<div className="box"><h4>Hand over</h4><p className="hint" style=${{margin:'0 0 8px'}}>Upload the warranty card, care guide and handover photos, collect the final payment, then close the items.</p>
+      <div className="inline"><button className="btn small" onClick=${() => setTab('docs')}>Upload handover documents</button>${can(erp, 'payments') && p.payments.filter(m => !m.received).slice(-1).map(m => html`<button key=${m.id} className="btn small" onClick=${() => ops.api('POST', `/projects/${p.id}/payments/${m.id}`, {received:true}, `${m.label} payment marked received.`)}>Mark ${m.label} ${lakh(m.amount)} received</button>`)}
+        <button className="btn small primary" disabled=${!chosen.length || !edit} onClick=${async () => { for (const i of chosen) await ops.moveItem(i.id, 'next'); }}>Close ${chosen.length} item${chosen.length === 1 ? '' : 's'}</button></div></div>`}
+
+    ${Object.keys(fails).length > 0 && html`<div className="box"><h4>Still to do before these items move on</h4><ul className="gates">${Object.entries(fails).map(([text, list]) => html`<li key=${text}><span className="ic no">✕</span><span>${text}<em>${list.length === chosen.length ? 'all selected' : list.map(i => i.code).join(', ')}</em></span><span style=${{marginLeft:'auto'}}><${GateAction} g=${{text}} p=${p} its=${list} erp=${erp} ops=${ops} setTab=${setTab}/></span></li>`)}</ul></div>`}
+  </div>`;
+}
+
+/* home: my next steps across projects + drafts to resume */
+function MyWork({erp, ui}){
+  const me = erp.me;
+  const groups = {};
+  erp.items.filter(i => i.owner === me && i.stage !== 'closed' && STAGE_TODO[i.stage]).forEach(i => { const k = i.projectId + '|' + i.stage; (groups[k] = groups[k] || []).push(i); });
+  const steps = Object.entries(groups).map(([k, list]) => { const [pid, stage] = k.split('|'); const p = erp.projects.find(x => x.id === pid); return {pid, stage, p, list, late:list.some(i => stageInfo(i).over)}; })
+    .filter(s => s.p).sort((a, b) => (b.late - a.late) || (PIDX(a.stage) - PIDX(b.stage)));
+  const drafts = (erp.drafts || []).filter(d => d.projectId).slice(0, 8);
+  if (!steps.length && !drafts.length) return null;
+  return html`<div className="cr-grid" style=${{marginBottom:14}}>
+    ${steps.length > 0 && html`<div className="panel"><h3>My next steps · ${steps.length}</h3><div className="task-list">${steps.map(s => html`<button key=${s.pid + s.stage} className="task" onClick=${() => ui.openProject(s.pid, 'stage:' + s.stage)}>
+      <span className=${'pill ' + (s.late ? 'crit' : '')}>${pstById[s.stage].short}</span><span className="who"><b>${STAGE_TODO[s.stage]}</b><span>${s.p.code} · ${s.p.customer} · ${s.list.length} item${s.list.length === 1 ? '' : 's'}</span></span><span className="due">Open ›</span></button>`)}</div></div>`}
+    ${drafts.length > 0 && html`<div className="panel"><h3>Continue where you left off</h3><div className="task-list">${drafts.map(d => { const p = erp.projects.find(x => x.id === d.projectId); return html`<button key=${d.by + d.key} className="task" onClick=${() => ui.openProject(d.projectId, d.key.startsWith('batch:') ? 'stage:' + d.key.split(':')[2] : d.kind === 'drawing' ? 'stage:drawing' : 'progress')}>
+      <span className="pill">Draft</span><span className="who"><b>${d.title}</b><span>${p ? p.customer : ''} · ${d.mine ? 'you' : d.byName} · ${ago(d.at)} ago</span></span><span className="due">Resume ›</span></button>`; })}</div></div>`}
   </div>`;
 }
 
@@ -2093,8 +2285,8 @@ function ServicePanel({p, its, erp, ops}){
     ${cur && html`<${TicketDrawer} t=${cur} erp=${erp} ops=${ops} close=${() => setOpen(null)}/>`}
   </div>`;
 }
-function ProjectDrawer({p, erp, ui, ops, leads, close, tab, setTab}){
-  useEffect(() => { const k = e => e.key === 'Escape' && close(); window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, []);
+function ProjectDrawer({p, erp, ui, ops, leads, close, tab, setTab, item, closeItem}){
+  useEffect(() => { const k = e => e.key === 'Escape' && !document.querySelector('.ws-item') && close(); window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, []);
   const its = erp.items.filter(i => i.projectId === p.id);
   const [sel, setSel] = useState([]);
   const [inst, setInst] = useState(() => INSTALLERS[0]?.id || '');
@@ -2105,18 +2297,21 @@ function ProjectDrawer({p, erp, ui, ops, leads, close, tab, setTab}){
   const allDone = its.length > 0 && its.every(i => i.stage === 'closed');
   return html`<div>
     <div className="scrim" onClick=${close}></div>
-    <aside className="drawer" role="dialog" aria-label=${p.customer} style=${{width:'min(760px,100%)'}}>
+    <div className="ws" role="dialog" aria-modal="true" aria-label=${p.customer}>
       <div className="d-head">
         <div className="d-title"><div style=${{minWidth:0}}><span className="mono" style=${{fontSize:12,color:'var(--muted)'}}>${p.code}${lead ? ' · from CRM lead' : ''}</span><h2>${p.customer}</h2><div className="phone">${p.phone} · ${p.address}</div></div>
           <div className="d-actions">${lead && html`<button className="btn small" onClick=${() => ui.openLead(lead.id)}>Open lead</button>`}<button className="icon-btn" onClick=${close} aria-label="Close"><${Icon} n="x"/></button></div></div>
         <div className="inline" style=${{fontSize:13}}><span>PM <b>${uname(p.pm)}</b></span>${p.value ? html`<span>·</span><span className="num">${inr(p.value)}</span>` : null}<span>·</span><span>Target <b>${fmtDate(p.target)}</b></span><span>·</span><span>${its.length ? `${done} of ${its.length} items installed` : 'Survey pending'}</span></div>
-        ${its.length ? html`<${StageBar} items=${its}/>` : null}
+        <div className="ws-steps">${projSteps(p, its, projStage(p, its)).map(s => html`<button key=${s.id} className=${'pg-step ' + s.cls + (tab === 'stage:' + s.id || (tab === s.id) ? ' on' : '')} onClick=${() => { closeItem && closeItem(); setTab(s.id === 'scope' ? 'scope' : s.id === 'survey' ? 'survey' : 'stage:' + s.id); }}><span className="n">${s.name}</span><span className="b">${s.big}</span><span className="s">${s.sub}</span></button>`)}</div>
+        <${NextStepCard} p=${p} its=${its} erp=${erp} setTab=${t => { closeItem && closeItem(); setTab(t); }}/>
       </div>
-      <div className="tabs" role="tablist">${[['progress','Progress'],['scope','Scope' + (!p.scope?.length ? ' •' : '')],['items','Items'],['docs','Documents'],['survey','Survey'],['payments', can(erp, 'money') ? 'Money & site' : 'Site'],['changes','Changes' + (p.changes?.some(c => c.status === 'pending') ? ' •' : '')],['service','Service' + (p.service?.some(v => v.status !== 'resolved') ? ' •' : '')],['activity','Activity']].map(([id,n]) => html`<button key=${id} role="tab" aria-selected=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
+      <div className="tabs" role="tablist">${item ? html`<button role="tab" aria-selected="true" onClick=${closeItem}>‹ Back to project</button>` : null}${[['progress','Progress'],['scope','Scope' + (!p.scope?.length ? ' •' : '')],['items','Items'],['docs','Documents'],['survey','Survey'],['payments', can(erp, 'money') ? 'Money & site' : 'Site'],['changes','Changes' + (p.changes?.some(c => c.status === 'pending') ? ' •' : '')],['service','Service' + (p.service?.some(v => v.status !== 'resolved') ? ' •' : '')],['activity','Activity']].map(([id,n]) => html`<button key=${id} role="tab" aria-selected=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
       <div className="d-body">
-        ${tab === 'progress' && html`<${ProgressTab} p=${p} its=${its} erp=${erp} ops=${ops} ui=${ui} setTab=${setTab}/>`}
-        ${tab === 'scope' && html`<${ScopeTab} p=${p} erp=${erp} ops=${ops}/>`}
-        ${tab === 'items' && html`<div className="details">
+        ${item && html`<${ItemModal} key=${item.id} it=${item} erp=${erp} ops=${ops} ui=${ui} close=${closeItem} embedded=${true}/>`}
+        ${!item && tab.startsWith('stage:') && html`<${StagePanel} key=${tab} stage=${tab.slice(6)} p=${p} its=${its} erp=${erp} ops=${ops} ui=${ui} setTab=${setTab}/>`}
+        ${!item && tab === 'progress' && html`<${ProgressTab} p=${p} its=${its} erp=${erp} ops=${ops} ui=${ui} setTab=${setTab}/>`}
+        ${!item && tab === 'scope' && html`<${ScopeTab} p=${p} erp=${erp} ops=${ops}/>`}
+        ${!item && tab === 'items' && html`<div className="details">
           ${!its.length && html`<div className="banner">Items are created from the scope of work when the site survey is submitted. Survey ${p.survey.status === 'scheduled' ? 'is scheduled for ' + fmtDT(p.survey.scheduled) : 'is in progress'}.</div>`}
           ${its.length > 0 && can(erp, 'assign') && html`<div className="box"><h4>Assign installation · ${sel.length} selected</h4>
             <div className="inline"><select className="sel" value=${inst} onChange=${e => setInst(e.target.value)} aria-label="Installer">${INSTALLERS.map(u => html`<option key=${u.id} value=${u.id}>${u.name} (${u.roleName.split('· ')[1]})</option>`)}</select>
@@ -2134,20 +2329,20 @@ function ProjectDrawer({p, erp, ui, ops, leads, close, tab, setTab}){
               <td><${Health} it=${i}/></td></tr>`)}</tbody></table></div>`; })}
           ${allDone && html`<div className="box"><h4>Customer feedback</h4>${p.feedback ? html`<div><b>${'★'.repeat(p.feedback.rating)}${'☆'.repeat(5 - p.feedback.rating)}</b> <span className="sub">received ${dayLabel(p.feedback.at)}${p.feedback.comment ? ' · “' + p.feedback.comment + '”' : ''}</span></div>` : html`<span style=${{fontSize:13,color:'var(--muted)'}}>A rating request goes out on WhatsApp after handover. Record the reply:</span><div className="row-btns">${[5,4,3,2,1].map(r => html`<button key=${r} className="btn small" onClick=${() => ui.feedback(p, r)}>${r} ★</button>`)}</div>`}</div>`}
         </div>`}
-        ${tab === 'survey' && html`<${SurveyView} p=${p}/>`}
-        ${tab === 'payments' && html`<div className="details">
+        ${!item && tab === 'survey' && html`<${SurveyView} p=${p}/>`}
+        ${!item && tab === 'payments' && html`<div className="details">
           ${can(erp, 'money') && html`<${ProjectMoney} p=${p} erp=${erp} ops=${ops}/>`}
           <div className="box"><h4>Site readiness</h4>
             <label className="check"><input type="checkbox" disabled=${!can(erp, 'payments')} checked=${p.siteReady} onChange=${() => ops.updProject(p.id, x => { x.siteReady = !x.siteReady; }, p.siteReady ? 'Site marked not ready' : 'Site marked ready (civil, electrical, painting, flooring done)')}/>Civil, electrical, painting and flooring are done</label>
             <span style=${{fontSize:12,color:'var(--muted)'}}>Hard gate: items cannot move from Dispatch to Installation until this is ticked.</span></div>
           <div className="box"><h4>Notes for the installation team</h4><textarea className="inp" rows="3" value=${p.notes} onInput=${e => ops.updProject(p.id, x => { x.notes = e.target.value; })} aria-label="Notes"></textarea></div>
         </div>`}
-        ${tab === 'docs' && html`<${ProjectDocs} p=${p} erp=${erp} ops=${ops}/>`}
-        ${tab === 'changes' && html`<${ChangeOrders} p=${p} its=${its} erp=${erp} ops=${ops}/>`}
-        ${tab === 'service' && html`<${ServicePanel} p=${p} its=${its} erp=${erp} ops=${ops}/>`}
-        ${tab === 'activity' && html`<ol className="timeline">${[...p.activity].reverse().map((e,i) => html`<li key=${i}><span>${e.text}</span><time>${fmtDT(e.t)}</time></li>`)}</ol>`}
+        ${!item && tab === 'docs' && html`<${ProjectDocs} p=${p} erp=${erp} ops=${ops}/>`}
+        ${!item && tab === 'changes' && html`<${ChangeOrders} p=${p} its=${its} erp=${erp} ops=${ops}/>`}
+        ${!item && tab === 'service' && html`<${ServicePanel} p=${p} its=${its} erp=${erp} ops=${ops}/>`}
+        ${!item && tab === 'activity' && html`<ol className="timeline">${[...p.activity].reverse().map((e,i) => html`<li key=${i}><span>${e.text}</span><time>${fmtDT(e.t)}</time></li>`)}</ol>`}
       </div>
-    </aside>
+    </div>
   </div>`;
 }
 
@@ -2180,7 +2375,7 @@ function SurveyView({p}){
 /* ---------- Item detail: drawings, materials, factory PI, hardware ---------- */
 function DrawingWork({it, erp, ops, wall, edit}){
   const [f, setF] = useState(null);
-  const open = () => setF({file:null, spec:{...(it.spec || {})}, boxes:it.boxes.map(b => b.label).join('\n'), notes:'', busy:false, err:''});
+  const open = () => setF({file:null, spec:{...(erp.projects.find(x => x.id === it.projectId)?.palette || {}), ...Object.fromEntries(Object.entries(it.spec || {}).filter(([, v]) => v))}, boxes:it.boxes.map(b => b.label).join('\n'), notes:'', busy:false, err:''});
   const d = latestDrawing(it), miss = specMissing(f ? f.spec : it.spec);
   const submit = async () => {
     if (!f.file) return setF({...f, err:'Choose the drawing file (PDF or image).'});
@@ -2285,7 +2480,7 @@ function Elevation({it, wall}){
     <text x=${30 + W*sc/2} y=${H*sc + 30} textAnchor="middle" fontSize="11" fill="var(--muted)">Wall ${it.wall}: ${W} mm · unit ${uw} × ${uh} mm (R${it.drawings.length ? it.drawings.length - 1 : 0})</text>
     <text x="14" y=${10 + H*sc/2} fontSize="11" fill="var(--muted)" transform=${`rotate(-90 14 ${10 + H*sc/2})`} textAnchor="middle">${H} mm</text></svg>`;
 }
-function ItemModal({it, erp, ops, close, ui}){
+function ItemModal({it, erp, ops, close, ui, embedded}){
   useEffect(() => { const k = e => { if (e.key === 'Escape'){ e.stopImmediatePropagation(); close(); } }; window.addEventListener('keydown', k, true); return () => window.removeEventListener('keydown', k, true); }, []);
   const p = erp.projects.find(x => x.id === it.projectId);
   const g = gatesFor(it, p), k = PIDX(it.stage), next = PSTAGES[k+1];
@@ -2297,10 +2492,8 @@ function ItemModal({it, erp, ops, close, ui}){
   const up = (fn, log) => ops.updItem(it.id, fn, log);
   const wall = p.survey.rooms.find(r => r.code === it.room)?.walls.find(w => w.label === it.wall);
   const work = workMs(it), std = typeById[it.type].std;
-  return html`<div className="modal" role="dialog" aria-modal="true" aria-label=${it.code}>
-    <div className="scrim" onClick=${close}></div>
-    <div className="sheet wide">
-      <button className="icon-btn x" onClick=${close} aria-label="Close"><${Icon} n="x"/></button>
+  const body = html`<${React.Fragment}>
+      ${!embedded && html`<button className="icon-btn x" onClick=${close} aria-label="Close"><${Icon} n="x"/></button>`}
       <header><h2 className="mono" style=${{textTransform:'none',letterSpacing:0,fontWeight:500}}>${it.code}</h2><p>${typeById[it.type].name}${it.desc ? ' · ' + it.desc : ''} · ${it.roomName}, wall ${it.wall} · <button className="linkbtn" style=${{color:'var(--accent)',marginTop:0,fontSize:13}} onClick=${() => { close(); ui.openProject(p.id); }}>${p.code} ${p.customer}</button></p></header>
       <div style=${{padding:'4px 20px 12px'}}><div className="stepper">${PSTAGES.map((s,i) => html`<span key=${s.id} className=${'step' + (i === k ? ' cur' : i < k ? ' done' : '')}>${s.short}</span>`)}</div>
         ${it.stage !== 'closed' && (() => { const si = stageInfo(it); return html`<div className="inline" style=${{marginTop:8,gap:10,flexWrap:'wrap'}}><span className=${'stage-age' + (si.over && !it.waiting ? ' over' : '')}>${Math.floor(si.age)} day${Math.floor(si.age) === 1 ? '' : 's'} in ${pstById[it.stage].short} · target ${si.target}${it.waiting ? ' · clock paused' : ''}</span>
@@ -2354,7 +2547,11 @@ function ItemModal({it, erp, ops, close, ui}){
       <div className="sec"><h4>Stage record</h4>
         <table><thead><tr><th>Stage</th><th>Entered</th><th>Completed</th><th className="r">Days</th><th>By</th></tr></thead><tbody>${it.log.map((l,i) => html`<tr key=${i}><td>${pstById[l.stage].short}${l.override ? html`<div className="flagtxt">Override: ${l.override}</div>` : null}</td><td className="sub">${fmtDT(l.in)}</td><td className="sub">${l.out ? fmtDT(l.out) : '—'}</td><td className="r num">${((( l.out || Date.now()) - l.in)/DAY).toFixed(1)}</td><td>${l.by ? uname(l.by) : '—'}</td></tr>`)}</tbody></table>
       </div>
-    </div>
+  <//>`;
+  if (embedded) return html`<div className="ws-item">${body}</div>`;
+  return html`<div className="modal" role="dialog" aria-modal="true" aria-label=${it.code}>
+    <div className="scrim" onClick=${close}></div>
+    <div className="sheet wide">${body}</div>
   </div>`;
 }
 
@@ -2427,7 +2624,8 @@ function ScopeTab({p, erp, ops}){
 function ConvertBox({lead, erp, ops, ui}){
   const existing = erp.projects.find(p => p.leadId === lead.id);
   const [f, setF] = useState({pm:defaultPerson('pm', 'ops_head', 'admin'), target:addDays(45), surveyDate:addDays(1), advance:true, address:lead.area ? lead.area + ', Raipur' : ''});
-  const [lines, setLines] = useState([]);
+  const [dr, setDr, dstatus, dclear, dothers, dadopt] = useDraft(erp, 'convert:' + lead.id, {lines:[]}, {kind:'scope', title:`Scope for ${lead.name}`});
+  const lines = dr.lines || [], setLines = ls => setDr({...dr, lines:ls});
   const quote = (lead.quotes || []).find(q => q.status === 'accepted') || (lead.quotes || [])[lead.quotes?.length - 1];
   if (existing) return html`<div className="box"><h4>Project</h4><div className="inline"><span className="mono">${existing.code}</span><span className="sub" style=${{color:'var(--muted)'}}>${erp.items.filter(i => i.projectId === existing.id).length} items · target ${fmtDate(existing.target)}</span><button className="btn small" onClick=${() => ui.openProject(existing.id)}>Open project</button></div></div>`;
   return html`<div className="box"><h4>Convert to project</h4>
@@ -2441,7 +2639,7 @@ function ConvertBox({lead, erp, ops, ui}){
     </div>
     <h4 style=${{marginTop:12}}>Scope of work</h4>
     <${ScopeEditor} lines=${lines} setLines=${setLines} quote=${quote} money=${can(erp, 'money')}/>
-    <div><button className="btn primary" disabled=${!f.address.trim() || !lines.length} onClick=${() => ops.convert(lead, {...f, customer:lead.name, phone:lead.phone, value:lead.value, scope:cleanScope(lines)}).then(id => { if (id) ui.openProject(id); })}>Convert to project</button></div>
+    <div className="inline"><button className="btn primary" disabled=${!f.address.trim() || !lines.length} onClick=${() => ops.convert(lead, {...f, customer:lead.name, phone:lead.phone, value:lead.value, scope:cleanScope(lines)}).then(id => { if (id) { dclear(); ui.openProject(id); } })}>Convert to project</button><${DraftNote} status=${dstatus} others=${dothers} adopt=${dadopt}/></div>
   </div>`;
 }
 function NewProject({leads, erp, ops, close, ui}){
@@ -3043,7 +3241,8 @@ const VIEWS = [
   {id:'customer', name:'Customer app', icon:'phone', g:'ops', title:'Customer app · preview'},
   {id:'installers', name:'Installer management', icon:'tool', g:'admin', title:'Installer management'},
   {id:'users', name:'Users and access', icon:'lock', g:'admin', title:'Users and access control'}];
-const viewFromHash = () => { const h = location.hash.slice(1); return VIEWS.some(v => v.id === h) ? h : 'pipeline'; };
+const viewFromHash = () => { const h = location.hash.slice(1).split('/')[0]; return VIEWS.some(v => v.id === h) ? h : 'pipeline'; };
+const projFromHash = () => { const x = location.hash.slice(1).split('/'); return x[0] === 'projects' && x[1] ? {id:decodeURIComponent(x[1]), tab:decodeURIComponent(x[2] || 'progress')} : null; };
 
 function App(){
   const EMPTY = {me:null, projects:[], items:[], tasks:[], users:[], roles:{}, audit:[]};
@@ -3057,7 +3256,7 @@ function App(){
   const [lostFor, setLostFor] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [erp, setErp] = useState(EMPTY);
-  const [pOpen, setPOpen] = useState(null), [pTab, setPTab] = useState('progress');
+  const [pOpen, setPOpen] = useState(() => projFromHash()?.id || null), [pTab, setPTab] = useState(() => projFromHash()?.tab || 'progress');
   const [iOpen, setIOpen] = useState(null), [tOpen, setTOpen] = useState(null);
   const [newProj, setNewProj] = useState(false), [newTask, setNewTask] = useState(false), [taskInit, setTaskInit] = useState(null);
   const queued = useQueueCount();
@@ -3092,10 +3291,12 @@ function App(){
   if (erp.users.length) syncTeam(erp.users);
   const allowed = canView(erp, view);
   useEffect(() => { if (boot === 'ready' && !canView(erp, view)){ const v = VIEWS.find(x => canView(erp, x.id)); if (v) go(v.id); } }, [erp.me, boot]);
-  useEffect(() => { const f = () => setView(viewFromHash()); window.addEventListener('hashchange', f); return () => window.removeEventListener('hashchange', f); }, []);
+  useEffect(() => { const f = () => { setView(viewFromHash()); const pr = projFromHash(); if (pr) { setPOpen(pr.id); setPTab(pr.tab); } }; window.addEventListener('hashchange', f); return () => window.removeEventListener('hashchange', f); }, []);
+  // each project (and the stage open in it) has its own link, so work can be shared and resumed after a refresh
+  useEffect(() => { try { const want = pOpen ? `#projects/${encodeURIComponent(pOpen)}/${encodeURIComponent(pTab)}` : '#' + view; if (location.hash !== want) history.replaceState(null, '', want); } catch(e){} }, [pOpen, pTab, view]);
   const go = id => { setView(id); try { history.replaceState(null, '', '#' + id); } catch(e) { location.hash = id; } };
 
-  const toast = (text, kind) => { const id = Math.random(); setToasts(t => [...t, {id, text, kind}]); setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4200); };
+  const toast = (text, kind, action) => { const id = Math.random(); setToasts(t => [...t, {id, text, kind, action}]); setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), action ? 10000 : 4200); };
   const crm = {note(){}};
   const ops = makeOps(erp, setErp, toast, leads, crm, app);
   const call = async (method, path, body, msg) => { try { const r = await API.call(method, path, body); if (r.state) app.applyState(r.state); if (msg) toast(typeof msg === 'function' ? msg(r) : msg); return r; } catch(e){ toast(e.message, 'err'); return null; } };
@@ -3127,7 +3328,7 @@ function App(){
   const unread = leads.filter(l => awaitingReply(l) && !['won','lost'].includes(l.stage)).length;
   const current = leads.find(l => l.id === openId);
   const meta = VIEWS.find(v => v.id === view);
-  const toastsEl = html`<div className="toasts" role="status" aria-live="polite">${toasts.map(t => html`<div className=${'toast' + (t.kind === 'err' ? ' err' : '')} key=${t.id}><${Icon} n=${t.kind === 'err' ? 'x' : 'check'} s=${16}/><span>${t.text}</span></div>`)}</div>`;
+  const toastsEl = html`<div className="toasts" role="status" aria-live="polite">${toasts.map(t => html`<div className=${'toast' + (t.kind === 'err' ? ' err' : '')} key=${t.id}><${Icon} n=${t.kind === 'err' ? 'x' : 'check'} s=${16}/><span>${t.text}</span>${t.action && html`<button className="toast-act" onClick=${() => { setToasts(x => x.filter(y => y.id !== t.id)); t.action.fn(); }}>${t.action.label}</button>`}</div>`)}</div>`;
 
   if (boot === 'loading') return html`<div style=${{height:'100%',display:'grid',placeItems:'center',color:'var(--muted)'}}>Loading…</div>`;
   if (boot === 'login' || !erp.me || !userById[erp.me]) return html`<${React.Fragment}><${LoginScreen} audience="staff" onLogin=${async () => { await app.reload(); toast('Logged in.'); }}/>${toastsEl}<//>`;
@@ -3181,9 +3382,9 @@ function App(){
 
     ${current && html`<${Drawer} lead=${current} leads=${leads} call=${call} money=${can(erp, 'money')} tab=${openTab} setTab=${setOpenTab} close=${() => setOpenId(null)} move=${moveLead} send=${send} follow=${setFollow} extra=${current.stage === 'won' && (can(erp, 'edit') || can(erp, 'crm')) ? html`<${ConvertBox} key=${current.id} lead=${current} erp=${erp} ops=${ops} ui=${ui}/>` : null} setOwner=${o => call('PATCH', `/leads/${current.id}`, {owner:o}, `${current.name} reassigned to ${o}.`)}/>`}
     ${adding && html`<${AddLead} leads=${leads} close=${() => setAdding(false)} add=${addLead} call=${call} erp=${erp}/>`}
-    ${pOpen && html`<${ProjectDrawer} key=${pOpen} p=${erp.projects.find(p => p.id === pOpen)} erp=${erp} ui=${ui} ops=${ops} leads=${leads} tab=${pTab} setTab=${setPTab} close=${() => setPOpen(null)}/>`}
+    ${pOpen && erp.projects.some(p => p.id === pOpen) && html`<${ProjectDrawer} key=${pOpen} p=${erp.projects.find(p => p.id === pOpen)} erp=${erp} ui=${ui} ops=${ops} leads=${leads} tab=${pTab} setTab=${setPTab} item=${iOpen && erp.items.find(i => i.id === iOpen && i.projectId === pOpen)} closeItem=${() => setIOpen(null)} close=${() => { setIOpen(null); setPOpen(null); }}/>`}
     ${tOpen && html`<${TaskDrawer} key=${tOpen} t=${erp.tasks.find(t => t.id === tOpen)} erp=${erp} ops=${ops} close=${() => setTOpen(null)}/>`}
-    ${iOpen && html`<${ItemModal} key=${iOpen} it=${erp.items.find(i => i.id === iOpen)} erp=${erp} ops=${ops} ui=${ui} close=${() => setIOpen(null)}/>`}
+    ${iOpen && erp.items.find(i => i.id === iOpen) && !(pOpen && erp.items.find(i => i.id === iOpen).projectId === pOpen) && html`<${ItemModal} key=${iOpen} it=${erp.items.find(i => i.id === iOpen)} erp=${erp} ops=${ops} ui=${ui} close=${() => setIOpen(null)}/>`}
     ${newProj && html`<${NewProject} leads=${leads} erp=${erp} ops=${ops} ui=${ui} close=${() => setNewProj(false)}/>`}
     ${newTask && html`<${NewTask} erp=${erp} ops=${ops} close=${() => setNewTask(false)}/>`}
     ${lostFor && html`<${LostDialog} lead=${leads.find(l => l.id === lostFor)} close=${() => setLostFor(null)} pick=${r => { const id = lostFor; setLostFor(null); moveLead(id, 'lost', r); }}/>`}

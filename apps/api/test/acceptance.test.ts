@@ -258,8 +258,9 @@ test('6. drawing gate + customer login approves in the customer app', async () =
   const comp = await api('POST', `/api/v1/customer/projects/${T.pid}/complaint`, { text: 'Showroom sample was scratched' }, T.cust); assert.equal(comp.ok, true);
   const t = (await api('GET', '/api/v1/state', undefined, T.vikram)).erp.tasks.find((x: any) => /Customer complaint/.test(x.title));
   assert.equal(t.priority, 'urgent'); assert.equal(t.assignee, 'vikram');
-  const mv = await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next' }, dt);
-  assert.equal(mv.to, 'pi');
+  const after = (await api('GET', '/api/v1/state', undefined, T.vikram)).erp.items.find((i: any) => i.id === T.kit);
+  assert.equal(after.stage, 'pi', 'moves on its own once the client approves');
+  assert.ok(after.log.at(-2).out, 'drawing stage closed');
 });
 
 test('7. pipeline: payment gate, PO, dispatch, site-ready gate, install task', async () => {
@@ -270,21 +271,20 @@ test('7. pipeline: payment gate, PO, dispatch, site-ready gate, install task', a
   const st = await api('GET', '/api/v1/state', undefined, T.vikram);
   const m = st.erp.projects.find((p: any) => p.id === T.pid).payments.find((x: any) => x.gate === 'order');
   assert.equal((await api('POST', `/api/v1/projects/${T.pid}/payments/${m.id}`, { received: true }, T.manish)).status, 403, 'purchase cannot mark payments');
-  await api('POST', `/api/v1/projects/${T.pid}/payments/${m.id}`, { received: true }, T.vikram);
-  assert.equal((await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next' }, T.manish)).to, 'order');
+  const pd = await api('POST', `/api/v1/projects/${T.pid}/payments/${m.id}`, { received: true }, T.vikram);
+  assert.equal(pd.state.erp.items.find((i: any) => i.id === T.kit).stage, 'order', 'payment received moves the item on its own');
   await api('PATCH', `/api/v1/items/${T.kit}`, { po: 'PO-9001', hwVendor: 'Hettich dealer' }, T.manish);
   const hw = await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next' }, T.manish);
   assert.equal(hw.status, 409); assert.match(hw.message, /Hardware received/);
-  await api('PATCH', `/api/v1/items/${T.kit}`, { hwReceived: true, productionDone: true }, T.manish);
-  assert.equal((await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next' }, T.manish)).to, 'dispatch');
+  const hd = await api('PATCH', `/api/v1/items/${T.kit}`, { hwReceived: true, productionDone: true }, T.manish);
+  assert.equal(hd.state.erp.items.find((i: any) => i.id === T.kit).stage, 'dispatch');
   await api('PATCH', `/api/v1/items/${T.kit}`, { dispatch: { vehicle: 'CG04 AB 1234', boxes: 12, date: '2099-01-05' }, delivered: true }, T.vikram);
   const site = await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next' }, T.vikram);
   assert.equal(site.status, 409); assert.match(site.message, /Site ready/);
-  await api('PATCH', `/api/v1/projects/${T.pid}`, { siteReady: true }, T.vikram);
   await api('POST', '/api/v1/assignments', { itemIds: [T.kit], installer: 'ravi', target: '2099-01-09' }, T.vikram);
-  const inst = await api('POST', `/api/v1/items/${T.kit}/transition`, { direction: 'next' }, T.vikram);
-  assert.equal(inst.to, 'install');
+  const inst = await api('PATCH', `/api/v1/projects/${T.pid}`, { siteReady: true }, T.vikram);
   const it = inst.state.erp.items.find((i: any) => i.id === T.kit);
+  assert.equal(it.stage, 'install', 'site ready moves delivered items to installation');
   assert.equal(it.owner, 'ravi');
   assert.ok(inst.state.erp.tasks.some((t: any) => t.itemId === T.kit && t.assignee === 'ravi' && t.status !== 'done' && t.proof === 'photo'));
 });
@@ -325,6 +325,48 @@ test('9. snag closed, handover, completion, owner override with audit', async ()
   assert.equal(it.log.at(-2).override, 'Approved on call');
   assert.ok(o.state.erp.audit.some((a: any) => /Override on/.test(a.text)));
   assert.equal((await api('POST', `/api/v1/customer/projects/${T.pid}/feedback`, { rating: 5 }, T.cust)).status, 400, 'cannot rate before everything is handed over');
+});
+
+test('25. workflow: material palette, approval form, approve all, batch PI/PO/dispatch with auto-move, drafts visible to PM', async () => {
+  const st0 = await api('GET', '/api/v1/state', undefined, T.vikram);
+  const its = st0.erp.items.filter((i: any) => i.projectId === T.pid && i.stage === 'drawing');
+  assert.ok(its.length >= 2, 'two items waiting in drawing');
+  // palette once → every drawing-stage item gets the spec
+  const pal = await api('PUT', `/api/v1/projects/${T.pid}/palette`, { spec: SPEC }, T.vikram);
+  assert.equal(pal.state.erp.projects.find((p: any) => p.id === T.pid).palette.carcass, SPEC.carcass);
+  assert.ok(its.every((i: any) => pal.state.erp.items.find((x: any) => x.id === i.id).spec.shutter === SPEC.shutter));
+  // drawing file only (spec from the palette, packing list from the item type)
+  for (const i of its) assert.ok((await api('POST', `/api/v1/items/${i.id}/drawings`, { file: await upload(T.deepa) }, T.deepa)).ok);
+  // one approval form for all of them
+  graphCalls.length = 0;
+  const af = await api('POST', `/api/v1/projects/${T.pid}/approval-form`, { items: its.map((i: any) => i.id) }, T.vikram);
+  assert.equal(af.sent, its.length); await drain();
+  assert.ok(graphCalls.some(c => c.body.template?.name === 'mms_approval_form'));
+  assert.ok(its.every((i: any) => af.state.erp.items.find((x: any) => x.id === i.id).waiting === 'client_approval'), 'waiting on client while the form is out');
+  // client approves everything at once → items move on their own to Factory PI
+  assert.ok((await api('POST', `/api/v1/customer/projects/${T.pid}/approve-all`, {}, T.cust)).ok);
+  let st = await api('GET', '/api/v1/state', undefined, T.vikram);
+  assert.ok(its.every((i: any) => { const x = st.erp.items.find((y: any) => y.id === i.id); return x.stage === 'pi' && !x.waiting; }), 'approved items moved to factory PI');
+  // one PI for the batch (payment already in) → straight to hardware/production
+  const ids = its.map((i: any) => i.id);
+  assert.equal((await api('POST', `/api/v1/projects/${T.pid}/batch`, { kind: 'po', items: ids, refNo: 'PO-1' }, T.manish)).status, 400, 'wrong stage refused');
+  st = await api('POST', `/api/v1/projects/${T.pid}/batch`, { kind: 'pi', items: ids, refNo: 'FPI-777', amount: 210000, doc: await upload(T.manish) }, T.manish);
+  assert.ok(ids.every((id: string) => st.state.erp.items.find((x: any) => x.id === id).stage === 'order'));
+  await api('POST', `/api/v1/projects/${T.pid}/batch`, { kind: 'po', items: ids, refNo: 'PO-555', vendor: 'Hettich dealer' }, T.manish);
+  await api('POST', `/api/v1/projects/${T.pid}/batch`, { kind: 'hw_received', items: ids }, T.manish);
+  st = await api('POST', `/api/v1/projects/${T.pid}/batch`, { kind: 'production_done', items: ids }, T.manish);
+  assert.ok(ids.every((id: string) => st.state.erp.items.find((x: any) => x.id === id).stage === 'dispatch'));
+  assert.equal((await api('POST', `/api/v1/projects/${T.pid}/batch`, { kind: 'dispatch', items: ids }, T.vikram)).status, 400, 'vehicle and date needed');
+  await api('POST', `/api/v1/projects/${T.pid}/batch`, { kind: 'dispatch', items: ids, vehicle: 'CG04 ZZ 1', date: '2099-01-20' }, T.vikram);
+  st = await api('POST', `/api/v1/projects/${T.pid}/batch`, { kind: 'delivered', items: ids }, T.vikram);
+  assert.ok(ids.every((id: string) => st.state.erp.items.find((x: any) => x.id === id).stage === 'install'), 'site already ready → installation');
+  assert.ok(st.state.erp.items.find((x: any) => x.id === ids[0]).log.some((l: any) => l.stage === 'pi'));
+  // drafts: saved by the designer, visible to the project's PM, not to an unrelated surveyor
+  assert.ok((await api('PUT', '/api/v1/drafts', { key: `drawing:${ids[0]}`, kind: 'drawing', title: 'Drawing upload', projectId: T.pid, itemId: ids[0], data: { notes: 'half done' } }, T.deepa)).ok);
+  const vd = (await api('GET', '/api/v1/state', undefined, T.vikram)).erp.drafts;
+  assert.ok(vd.some((d: any) => d.key === `drawing:${ids[0]}` && d.byName === 'Deepa' && !d.mine));
+  assert.ok(!(await api('GET', '/api/v1/state', undefined, T.sana)).erp.drafts.some((d: any) => d.key === `drawing:${ids[0]}`));
+  assert.ok((await api('DELETE', `/api/v1/drafts/${encodeURIComponent('drawing:' + ids[0])}`, undefined, T.deepa)).ok);
 });
 
 test('10. tasks: own-task scoping, handover chain, proof required, repeat', async () => {

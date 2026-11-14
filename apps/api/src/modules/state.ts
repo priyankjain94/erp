@@ -4,6 +4,7 @@ import { CUSTOMER_STAGE, DEFAULT_ROLES, PERMS } from '../domain.js';
 import type { Principal } from './auth.js';
 import { signedFileUrl } from '../integrations/storage.js';
 import { stageTargets, taskTemplates } from './tasks.js';
+import { loadDrafts } from './workflow.js';
 import { partnerStats } from './business.js';
 import { customerTickets, loadTickets } from './support.js';
 
@@ -52,6 +53,7 @@ async function loadProjects(q: Q, ids: string[] | null, opts: { money: boolean; 
       quotes: (pqBy.get(p.id) || []).map(x => ({ id: x.id, rev: x.rev, total: Number(x.total), status: x.status, at: ms(x.created_at) })),
       activity: (actBy.get(p.id) || []).map(a => ({ t: ms(a.created_at), text: a.text })),
       docs: (docBy.get(p.id) || []).map(d => ({ id: d.id, category: d.category, title: d.title, rev: d.rev, notes: d.notes, itemId: d.item_id, by: d.by_id, at: ms(d.created_at), url: signedFileUrl(d.file), shared: d.shared })),
+      palette: p.palette || {},
       scope: (scBy.get(p.id) || []).map(s => ({ id: s.id, room: s.room_name, roomCode: s.room_code, type: s.type, desc: s.descr, size: s.size, value: opts.money ? Number(s.value) : null, source: s.source, itemId: s.item_id || null })),
       survey: {
         status: s.status || 'scheduled', assignee: s.assignee_id || null, scheduled: ms(s.scheduled_at), checkIn: ms(s.check_in_at), at: ms(s.submitted_at), mins: s.minutes ?? null, signed: !!s.signed,
@@ -92,7 +94,7 @@ async function loadItems(q: Q, where: string, params: unknown[]) {
     snags: (n.get(i.id) || []).map(x => ({ id: x.id, part: x.part, type: x.type, note: x.note, photo: signedFileUrl(x.photo), status: x.status, raisedBy: x.raised_by, at: ms(x.created_at), vendor: x.vendor || '', cost: x.cost === null || x.cost === undefined ? null : Number(x.cost), payer: x.payer || '' })),
     productionSteps: i.production_steps || {}, warrantyUntil: i.warranty_until || null, value: i.value === null || i.value === undefined ? null : Number(i.value), scopeId: i.scope_id || null,
     waiting: i.waiting || '', waitingSince: ms(i.waiting_since), waitingMs: Number(i.waiting_ms || 0),
-    log: (l.get(i.id) || []).map(x => ({ stage: x.stage, in: ms(x.in_at), out: ms(x.out_at), by: x.by_id, override: x.override || undefined })),
+    log: (l.get(i.id) || []).map(x => ({ stage: x.stage, in: ms(x.in_at), out: ms(x.out_at), by: x.by_id, override: x.override || undefined, note: x.note || undefined })),
     flags: i.flags || []
   }));
 }
@@ -170,7 +172,8 @@ export async function staffState(p: Extract<Principal, { type: 'user' }>, q: Q =
   const wa = await one(q, `select count(*) filter (where status = 'simulated') sim, count(*) filter (where status in ('sent','delivered','read')) sent, count(*) filter (where status = 'failed') failed from wa_messages where created_at > now() - interval '30 days'`);
   const tickets = await loadTickets(q, p);
   const settings = { stageTargets: await stageTargets(q), taskTemplates: await taskTemplates(q) };
-  return { erp: { me, projects, items, tasks, users, roles, audit, accessRequests, tickets, settings }, crm, server: { wa } };
+  const drafts = await loadDrafts(q, p);
+  return { erp: { me, projects, items, tasks, users, roles, audit, accessRequests, tickets, settings, drafts }, crm, server: { wa } };
 }
 
 /** What a customer sees: only their own projects, in customer-friendly terms. */

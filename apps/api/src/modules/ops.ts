@@ -9,6 +9,7 @@ import { audit, can, checkOtp, issueOtp, staff, userOf, type Principal } from '.
 import { staffState } from './state.js';
 import { closeAutoTasks, pushTask, stageTargets } from './tasks.js';
 import { addScopeLines, createItemFromScope } from './scope.js';
+import { autoAdvance, autoAdvanceProject } from './workflow.js';
 
 export const ScopeLineZ = z.object({
   room: z.string().trim().min(2).max(60), type: z.enum(TYPE_IDS), desc: z.string().trim().max(200).default(''), size: z.string().trim().max(80).default(''),
@@ -48,7 +49,7 @@ export async function createProject(q: Q, by: U, f: NewProject) {
 }
 
 /* ---------- gates + moves ---------- */
-async function gateInput(q: Q, itemId: string) {
+export async function gateInput(q: Q, itemId: string) {
   const it = await one(q, 'select * from items where id = $1', [itemId]);
   if (!it) throw notFound('Item not found');
   const drawings = await many(q, `select approved_at, url from documents where item_id = $1 and kind = 'drawing' order by id`, [itemId]);
@@ -228,6 +229,7 @@ export function opsRoutes(r: Router) {
       const pr = await one(q, 'select * from projects where id = $1 for update', [ctx.params.id]); if (!pr) throw notFound();
       if (b.siteReady !== undefined) { if (!can(ctx, 'payments')) throw forbidden(); await q.query('update projects set site_ready = $2 where id = $1', [pr.id, b.siteReady]); await act(q, pr.id, b.siteReady ? `Site marked ready by ${p.user.name} (civil, electrical, painting, flooring done)` : `Site marked not ready by ${p.user.name}`); }
       if (b.notes !== undefined) { if (!can(ctx, 'edit') && !can(ctx, 'payments')) throw forbidden(); await q.query('update projects set notes = $2 where id = $1', [pr.id, b.notes]); }
+      if (b.siteReady) await autoAdvanceProject(q, pr.id, p.user.id);
     });
     return done(ctx);
   });
@@ -238,6 +240,7 @@ export function opsRoutes(r: Router) {
       await q.query('update payment_milestones set received_at = $2, received_by = $3 where id = $1', [m.id, b.received ? new Date() : null, b.received ? p.user.id : null]);
       await act(q, m.project_id, `Payment ${b.received ? 'received' : 'unmarked'}: ${m.label} (₹${m.amount.toLocaleString('en-IN')}) by ${p.user.name}`);
       await audit(q, p, 'payment', `${b.received ? 'Marked received' : 'Unmarked'} ${m.label} on ${m.project_id}`, 'project', m.project_id);
+      if (b.received) await autoAdvanceProject(q, m.project_id, p.user.id);
     });
     return done(ctx);
   });
@@ -283,6 +286,7 @@ export function opsRoutes(r: Router) {
       }
       if (b.delivered !== undefined) { await q.query('update items set delivered = $2 where id = $1', [it.id, b.delivered]); logs.push(b.delivered ? 'material delivered at site' : 'delivery unmarked'); }
       for (const l of logs) await act(q, it.project_id, `${it.code}: ${l} (${p.user.name})`);
+      await autoAdvance(q, it.id, p.user.id);
     });
     return done(ctx);
   });
@@ -502,6 +506,8 @@ export async function approveDrawing(q: Q, itemId: string, via: 'staff' | 'custo
   if (d.approved_at) return { already: true };
   await q.query('update documents set approved_at = now(), approved_via = $2 where id = $1', [d.id, via]);
   await act(q, it.project_id, `${it.code}: customer approved ${d.rev} ${via === 'staff' ? `(recorded by ${who})` : via === 'whatsapp' ? 'on WhatsApp' : 'in the customer app'}`);
+  if (it.waiting === 'client_approval') await q.query(`update items set waiting = '', waiting_ms = waiting_ms + coalesce((extract(epoch from (now() - waiting_since)) * 1000)::bigint, 0), waiting_since = null where id = $1`, [itemId]);
+  await autoAdvance(q, itemId);
   return { rev: d.rev };
 }
 export async function recordFeedback(q: Q, pid: string, rating: number, comment: string, channel: string) {
