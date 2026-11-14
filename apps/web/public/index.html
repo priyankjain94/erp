@@ -526,6 +526,29 @@ button.kpi{text-align:left;font:inherit;cursor:pointer}
 .scope-ed{display:grid;gap:10px}.scope-ed .sub{display:block;margin-bottom:4px;color:var(--muted);font-size:12px}
 .scope-room{border:1px solid var(--line);background:var(--surface);padding:8px 10px;display:grid;gap:6px}
 .scope-line{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.scope-line .inp{flex:1;min-width:140px}
+.pboard{display:flex;gap:12px;align-items:flex-start;overflow-x:auto;padding-bottom:10px}
+.pcol2{width:266px;flex:none;display:flex;flex-direction:column;gap:10px}
+.pcol2 header{display:flex;gap:8px;align-items:center;border-top:3px solid var(--ink);padding-top:8px}
+.pcol2 h2{margin:0;font-size:12px;letter-spacing:.12em;text-transform:uppercase;font-weight:700}.pcol2 header span{font-size:12px;color:var(--muted)}
+.pcard2{background:var(--white);border:1px solid var(--line);padding:12px 13px;display:grid;gap:7px;text-align:left;font:inherit;color:var(--ink);cursor:pointer;width:100%}
+.pcard2:hover{border-color:var(--ink)}.pc-name{font-size:15px;font-weight:600}.pc-line{font-size:12.5px}
+.pc-bar{display:flex;height:8px;gap:2px}.pc-bar i{display:block;height:8px}
+.pc-sub{font-size:12px;color:var(--muted)}.pc-blk{font-size:12px;background:var(--bg);padding:6px 8px}
+.pc-foot{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);border-top:1px solid var(--line);padding-top:7px}
+.pb-legend{display:inline-flex;gap:6px;align-items:center;margin-left:auto;font-size:12px;color:var(--muted)}.pb-legend i{width:12px;height:8px;display:inline-block;margin-left:8px}
+.pg-steps{display:flex;gap:6px;overflow-x:auto}
+.pg-step{flex:1 1 0;min-width:92px;display:grid;gap:3px;padding:9px 10px 11px;border-top:4px solid var(--line-2);background:var(--white)}
+.pg-step.passed{border-top-color:var(--ink)}.pg-step.cur{border-top-color:var(--red);outline:1.5px solid var(--red);outline-offset:-1.5px}
+.pg-step .n{font-size:10.5px;letter-spacing:.1em;font-weight:700;color:var(--muted);text-transform:uppercase}.pg-step .b{font-size:19px;font-weight:300}.pg-step .s{font-size:11.5px;color:var(--muted)}
+.pg-box{background:var(--white);border:1px solid var(--line)}
+.pg-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:10px 12px;background:var(--ink);color:#fff}
+.pg-table th{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase}.pg-table th.c,.pg-cell{text-align:center}
+.pg-room td{font-size:11.5px;letter-spacing:.1em;font-weight:700;color:var(--muted);background:var(--surface);text-transform:uppercase}
+.pg-done{font-weight:700}.pg-todo{color:#A8A098}
+.pg-here{display:inline-block;background:var(--ink);color:#fff;border:0;padding:3px 8px;font:600 12px Inter,sans-serif;cursor:pointer}
+.pg-here.late{background:var(--red)}.pg-here.wait{background:var(--white);color:var(--ink);box-shadow:inset 0 0 0 1.5px var(--ink)}
+.pg-legend{display:flex;flex-wrap:wrap;gap:16px;padding:10px 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line)}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 .sig{width:100%;height:120px;border:1px solid var(--line-2);border-radius:0;background:var(--surface);touch-action:none}
 .side-note{max-width:340px;display:grid;gap:12px;font-size:13.5px;color:var(--ink-2);padding-top:6px}
 .side-note h3{font-weight:600;font-size:12px;letter-spacing:.16em;text-transform:uppercase;margin:0}
@@ -1847,34 +1870,133 @@ function WorkSettings({erp, ops}){
 }
 
 
+/* ---------- v1.13 projects by stage: a project sits in the stage of its slowest item ---------- */
+const ITEM_STAGES = PSTAGES.filter(s => !['survey','closed'].includes(s.id));
+function projStage(p, its){
+  if (p.survey.status !== 'submitted') return (p.scope || []).length ? 'survey' : 'scope';
+  const live = its.filter(i => i.stage !== 'closed');
+  if (!its.length) return 'survey';
+  if (!live.length) return 'closed';
+  return live.reduce((m, i) => PIDX(i.stage) < PIDX(m) ? i.stage : m, live[0].stage);
+}
+const BOARD_COLS = [{id:'scope', name:'Scope'}, {id:'survey', name:'Survey'}, ...ITEM_STAGES.map(s => ({id:s.id, name:s.short, long:s.name})), {id:'closed', name:'Done'}];
+const stageLong = id => BOARD_COLS.find(c => c.id === id)?.long || BOARD_COLS.find(c => c.id === id)?.name || id;
+const stageName = id => BOARD_COLS.find(c => c.id === id)?.name || id;
+function projDue(p, its){
+  const m = p.payments.filter(x => !x.received);
+  return m.find(x => x.gate === 'order' ? its.some(i => i.stage === 'pi') : x.label === 'Before dispatch' ? its.some(i => i.stage === 'order' || i.stage === 'dispatch') : x.label === 'On handover' ? its.some(i => i.stage === 'handover') : false);
+}
+/** the one most important thing holding a project */
+function projBlocker(p, its, st){
+  if (st === 'scope') return 'Add the scope of work before the survey';
+  if (st === 'survey') return p.survey.checkIn ? `Survey in progress · ${uname(p.survey.assignee)}` : `Survey ${p.survey.scheduled ? fmtDT(p.survey.scheduled) : 'to be booked'} · ${uname(p.survey.assignee)}`;
+  const here = its.filter(i => i.stage === st);
+  const w = here.find(i => i.waiting); if (w) return `Waiting: ${WAIT_LABEL[w.waiting].toLowerCase()} · ${w.code}`;
+  const sn = its.find(i => openSnags(i).length); if (sn) return `Open snag · ${sn.code}`;
+  const due = projDue(p, its); if (due) return `${due.label} payment ${lakh(due.amount)} due${due.gate ? ' · blocks the order' : ''}`;
+  const stuck = here.filter(i => stageInfo(i).over).sort((a, b) => stageInfo(b).age - stageInfo(a).age)[0];
+  if (stuck) { const s = stageInfo(stuck); return `${stuck.code}: ${Math.floor(s.age)}d in ${pstById[st].short} (target ${s.target})`; }
+  if (st === 'dispatch' && !p.siteReady) return 'Site not ready yet';
+  return '';
+}
+function projHealth(p, its, st){
+  if (st === 'closed') return {cls:'ok', text:'Completed'};
+  const late = its.filter(i => itemHealth(i) === 'late').length, pd = daysFrom(p.target);
+  if (pd < 0) return {cls:'late', text:`Late ${-pd}d`};
+  if (late) return {cls:'late', text:`${late} item${late > 1 ? 's' : ''} late`};
+  if (its.some(i => i.waiting)) return {cls:'wait', text:'Waiting on client'};
+  if (st === 'survey' && p.survey.scheduled && daysFrom(ymd(new Date(p.survey.scheduled))) === 0) return {cls:'wait', text:'Survey today'};
+  return {cls:'ok', text:'On track'};
+}
+function ProjectBoard({erp, ui, q}){
+  const [f, setF] = useState('all');
+  const rows = erp.projects.filter(p => !q || (p.customer + p.code + p.address).toLowerCase().includes(q.toLowerCase())).map(p => {
+    const its = erp.items.filter(i => i.projectId === p.id), st = projStage(p, its);
+    return {p, its, st, h:projHealth(p, its, st)};
+  });
+  const filters = [['all','All'], ['mine','My projects', r => r.p.pm === erp.me], ['late','Late', r => r.h.cls === 'late'], ['wait','Waiting on client', r => r.its.some(i => i.waiting)]];
+  const shown = rows.filter(r => { const x = filters.find(z => z[0] === f); return !x[2] || x[2](r); });
+  const money = can(erp, 'money');
+  return html`<div className="stack" style=${{gap:12}}>
+    <div className="inline" style=${{flexWrap:'wrap',gap:8}}>${filters.map(([id, n, fn]) => html`<button key=${id} className="chip" aria-pressed=${f === id} onClick=${() => setF(id)}>${n} <span className="n">${fn ? rows.filter(fn).length : rows.length}</span></button>`)}
+      <span className="pb-legend"><i style=${{background:'var(--red)'}}></i>holding the project<i style=${{background:'var(--ink)'}}></i>moved ahead<i style=${{background:'var(--line-2)'}}></i>done</span></div>
+    <div className="pboard">${BOARD_COLS.map(col => { const cs = shown.filter(r => r.st === col.id).sort((a, b) => (a.h.cls === 'late' ? 0 : 1) - (b.h.cls === 'late' ? 0 : 1) || (a.p.target < b.p.target ? -1 : 1));
+      return html`<section key=${col.id} className="pcol2"><header><h2>${col.name}</h2><span>${cs.length}</span></header>
+        ${cs.map(({p, its, st, h}) => { const here = its.filter(i => i.stage === st).length, done = its.filter(i => i.stage === 'closed').length, ahead = its.length - here - done;
+          const aheadBy = ITEM_STAGES.filter(s => PIDX(s.id) > PIDX(st)).map(s => [s.short, its.filter(i => i.stage === s.id).length]).filter(x => x[1]);
+          const blk = projBlocker(p, its, st), due = money && projDue(p, its);
+          return html`<button key=${p.id} className="pcard2" onClick=${() => ui.openProject(p.id)}>
+            <div className="card-row"><span className="mono" style=${{fontSize:12,color:'var(--muted)'}}>${p.code}</span><span className=${'pill ' + (h.cls === 'late' ? 'crit' : h.cls === 'wait' ? 'warn' : '')}>${h.text}</span></div>
+            <b className="pc-name">${p.customer}</b>
+            <span className="pc-line">${st === 'scope' || st === 'survey' ? `${(p.scope || []).length} item${(p.scope || []).length === 1 ? '' : 's'} in scope` : st === 'closed' ? `${its.length} items handed over` : `${here} of ${its.length} item${its.length === 1 ? '' : 's'} ${here === its.length ? '' : 'still '}in ${pstById[st].short}`}</span>
+            ${its.length > 0 && st !== 'closed' && html`<div className="pc-bar" aria-hidden="true">${here ? html`<i style=${{flex:here, background:'var(--red)'}}></i>` : null}${ahead ? html`<i style=${{flex:ahead, background:'var(--ink)'}}></i>` : null}${done ? html`<i style=${{flex:done, background:'var(--line-2)'}}></i>` : null}</div>`}
+            ${aheadBy.length > 0 && html`<span className="pc-sub">${ahead} ahead: ${aheadBy.map(([n, c]) => `${c} ${n}`).join(' · ')}${done ? ` · ${done} done` : ''}</span>`}
+            ${blk && html`<span className="pc-blk">${blk}</span>`}
+            <span className="pc-foot"><span>PM ${uname(p.pm)}</span><span>${due ? lakh(due.amount) + ' due' : 'Target ' + fmtDate(p.target)}</span></span>
+          </button>`; })}
+        ${!cs.length && html`<div className="col-empty">No projects</div>`}
+      </section>`; })}</div>
+  </div>`;
+}
+/* inside a project: stage tracker + what is holding it + item × stage grid with bulk move */
+function ProgressTab({p, its, erp, ops, ui, setTab}){
+  const [sel, setSel] = useState([]);
+  const st = projStage(p, its), blk = projBlocker(p, its, st), h = projHealth(p, its, st);
+  const edit = can(erp, 'edit');
+  const rooms = [...new Set(its.map(i => i.roomName))];
+  const here = its.filter(i => i.stage === st).length;
+  const steps = [
+    {id:'scope', name:'Scope', big:'✓', sub:`${(p.scope || []).length} items`, cls:'passed'},
+    {id:'survey', name:'Survey', big:p.survey.status === 'submitted' ? '✓' : '·', sub:p.survey.status === 'submitted' ? `Done ${fmtDate(ymd(new Date(p.survey.at)))} · ${uname(p.survey.assignee)}` : p.survey.checkIn ? 'In progress' : p.survey.scheduled ? fmtDT(p.survey.scheduled) : 'Not booked', cls:p.survey.status === 'submitted' ? 'passed' : st === 'survey' ? 'cur' : ''},
+    ...ITEM_STAGES.map(s => { const n = its.filter(i => i.stage === s.id).length, past = its.filter(i => PIDX(i.stage) > PIDX(s.id)).length;
+      return {id:s.id, name:s.short, big:String(n), sub:n && past ? `${past} passed · ${n} here` : n ? 'here now' : past ? `${past} passed` : 'not reached', cls:st === s.id ? 'cur' : its.length && past === its.length ? 'passed' : ''}; })];
+  const gates = it => gatesFor(it, p).filter(g => !g.ok && g.hard);
+  const chosen = its.filter(i => sel.includes(i.id) && i.stage !== 'closed');
+  const ready = chosen.filter(i => !gates(i).length), notReady = chosen.filter(i => gates(i).length);
+  const moveAll = async () => { for (const i of ready) await ops.moveItem(i.id, 'next'); setSel([]); };
+  const cell = (it, s) => { const k = PIDX(it.stage), c = PIDX(s.id);
+    if (k > c) { const l = (it.log || []).find(x => x.stage === s.id && x.out); return html`<td key=${s.id} className="pg-cell"><span className="pg-done" title=${l ? `Done ${fmtDT(l.out)}${l.by ? ' · ' + uname(l.by) : ''}` : 'Done'}>✓</span></td>`; }
+    if (k === c) { const si = stageInfo(it); return html`<td key=${s.id} className="pg-cell"><button className=${'pg-here' + (si.over && !it.waiting ? ' late' : '') + (it.waiting ? ' wait' : '')} onClick=${() => ui.openItem(it.id)} title="Open the item to see what it needs to move on">${it.waiting ? 'waiting' : Math.floor(si.age) + 'd'}</button></td>`; }
+    return html`<td key=${s.id} className="pg-cell"><span className="pg-todo">○</span></td>`; };
+  return html`<div className="details">
+    <div className="inline" style=${{flexWrap:'wrap',gap:10,alignItems:'baseline'}}><h3 style=${{margin:0,fontSize:19,fontWeight:600}}>Stage: ${stageLong(st)}</h3><span className=${'pill ' + (h.cls === 'late' ? 'crit' : h.cls === 'wait' ? 'warn' : '')}>${h.text}</span>
+      ${its.length > 0 && st !== 'closed' && html`<span className="sub">${its.length - here} of ${its.length} items have moved past ${pstById[st]?.short || stageName(st)}. ${here} item${here === 1 ? ' is' : 's are'} holding the project here.</span>`}</div>
+    <div className="pg-steps">${steps.map(s => html`<div key=${s.id} className=${'pg-step ' + s.cls}><span className="n">${s.name}</span><span className="b">${s.big}</span><span className="s">${s.sub}</span></div>`)}</div>
+    ${blk && html`<div className="banner warn"><b>What is holding the project:</b> ${blk}</div>`}
+    ${!its.length ? html`<div className="banner">Items appear here when the site survey is submitted. ${(p.scope || []).length} item${(p.scope || []).length === 1 ? '' : 's'} in the scope: ${(p.scope || []).map(s => typeById[s.type].name + ' · ' + s.room).join(', ')}.</div>`
+    : html`<div className="pg-box">
+      ${edit && sel.length > 0 && html`<div className="pg-bar"><b>${sel.length} selected</b>
+        ${ready.length > 0 && html`<button className="btn small primary" onClick=${moveAll}>Move ${ready.length} ready item${ready.length === 1 ? '' : 's'} to the next stage</button>`}
+        ${notReady.length > 0 && html`<span className="sub" style=${{color:'#F2EEE8'}}>${notReady.length} not ready: ${notReady.map(i => `${i.code} (${gates(i)[0].text})`).join('; ')}</span>`}
+        <button className="btn small ghost" style=${{marginLeft:'auto',color:'#fff',borderColor:'#fff'}} onClick=${() => setSel([])}>Clear</button></div>`}
+      <div className="table-wrap" style=${{border:0}}><table className="pg-table"><thead><tr>${edit && html`<th style=${{width:36}}><span className="sr-only">Select</span></th>`}<th>Item</th>${ITEM_STAGES.map(s => html`<th key=${s.id} className="c">${s.short}</th>`)}</tr></thead>
+        <tbody>${rooms.map(r => html`<${React.Fragment} key=${r}><tr className="pg-room"><td colSpan=${ITEM_STAGES.length + (edit ? 2 : 1)}>${r}</td></tr>
+          ${its.filter(i => i.roomName === r).map(it => html`<tr key=${it.id}>
+            ${edit && html`<td><input type="checkbox" aria-label=${'Select ' + it.code} disabled=${it.stage === 'closed'} checked=${sel.includes(it.id)} onChange=${() => setSel(s => s.includes(it.id) ? s.filter(x => x !== it.id) : [...s, it.id])}/></td>`}
+            <td><button className="linkbtn" style=${{marginTop:0,color:'var(--ink)',textDecoration:'none',fontWeight:600,textAlign:'left'}} onClick=${() => ui.openItem(it.id)}>${typeById[it.type].name}</button><div className="sub">${it.code}${it.desc ? ' · ' + it.desc : ''}${it.waiting ? ' · ' + WAIT_LABEL[it.waiting].toLowerCase() : ''}</div></td>
+            ${ITEM_STAGES.map(s => cell(it, s))}</tr>`)}<//>`)}</tbody></table></div>
+      <div className="pg-legend"><span><b>✓</b> done (hover for date and who)</span><span><span className="pg-here">5d</span> here now · days in stage</span><span><span className="pg-here late">9d</span> over the stage target</span><span><span className="pg-here wait">waiting</span> waiting on client</span><span className="pg-todo">○ not reached yet</span>${edit ? html`<span>Tick items to move them together.</span>` : null}</div>
+    </div>`}
+  </div>`;
+}
+
 /* ---------- Projects ---------- */
 function Projects({erp, ui, ops}){
-  const [mode, setMode] = useState('projects');
+  const [mode, setMode] = useState(() => ['purchase','production'].includes(userById[erp.me]?.role) ? 'board' : 'projects');
   const [q, setQ] = useState('');
   const [dragId, setDragId] = useState(null);
   const [over, setOver] = useState(null);
   const [pf, setPf] = useState('all');
   const projs = erp.projects.filter(p => !q || (p.customer + p.code + p.address).toLowerCase().includes(q.toLowerCase()));
   const items = erp.items.filter(i => pf === 'all' || i.projectId === pf).filter(i => !q || (i.code + typeById[i.type].name + erp.projects.find(p => p.id === i.projectId).customer).toLowerCase().includes(q.toLowerCase()));
-  return html`<section className=${'view' + (mode === 'board' ? ' board-view' : '')}>
+  return html`<section className="view board-view">
     <div className="toolbar">
-      <div className="seg" role="group" aria-label="View"><button aria-pressed=${mode === 'projects'} onClick=${() => setMode('projects')}><${Icon} n="list" s=${15}/>Projects</button><button aria-pressed=${mode === 'board'} onClick=${() => setMode('board')}><${Icon} n="board" s=${15}/>Item board</button></div>
+      <div className="seg" role="group" aria-label="View"><button aria-pressed=${mode === 'projects'} onClick=${() => setMode('projects')}><${Icon} n="board" s=${15}/>Projects by stage</button><button aria-pressed=${mode === 'board'} onClick=${() => setMode('board')}><${Icon} n="list" s=${15}/>Items (factory view)</button></div>
       <label className="search"><${Icon} n="search" s=${16}/><input placeholder=${mode === 'board' ? 'Search item code, type, customer' : 'Search customer or project'} value=${q} onInput=${e => setQ(e.target.value)} aria-label="Search"/></label>
       ${mode === 'board' && html`<select className="sel" value=${pf} onChange=${e => setPf(e.target.value)} aria-label="Project"><option value="all">All projects</option>${erp.projects.map(p => html`<option key=${p.id} value=${p.id}>${p.code} · ${p.customer}</option>`)}</select>`}
       ${mode === 'board' && html`<span style=${{fontSize:12,color:'var(--muted)'}}>Drag a card to the next stage. Hard gates block the move.</span>`}
     </div>
-    ${mode === 'projects' ? html`<div className="pcards">${projs.map(p => {
-      const its = erp.items.filter(i => i.projectId === p.id), done = its.filter(i => PIDX(i.stage) >= PIDX('handover')).length;
-      const lt = its.filter(i => itemHealth(i) === 'late').length, sn = its.reduce((s,i) => s + openSnags(i).length, 0);
-      const counts = ITEM_TYPES.map(t => [t.name, its.filter(i => i.type === t.id).length]).filter(x => x[1]);
-      return html`<button key=${p.id} className="pcard" onClick=${() => ui.openProject(p.id)}>
-        <div className="row"><span className="mono" style=${{color:'var(--muted)'}}>${p.code}</span>${p.survey.status !== 'submitted' ? html`<span className="pill acc">Survey ${p.survey.status === 'scheduled' ? fmtDate(ymd(new Date(p.survey.scheduled))) : 'in progress'}</span>` : lt ? html`<span className="pill crit">${lt} late</span>` : done === its.length && its.length ? html`<span className="pill good">Installed</span>` : html`<span className="pill good">On track</span>`}</div>
-        <div><h3>${p.customer}</h3><div className="meta">${p.address} · PM ${uname(p.pm)}${p.value ? ' · ' + lakh(p.value) : ''}</div></div>
-        <div className="meta">${counts.length ? counts.map(([n,c]) => { const w = n.toLowerCase(); return `${c} ${c > 1 ? (w.endsWith('y') ? w.slice(0,-1) + 'ies' : w.endsWith('s') ? w : w + 's') : w}`; }).join(', ') : 'Items are created when the survey is submitted'}</div>
-        ${its.length ? html`<${StageBar} items=${its}/>` : null}
-        <div className="row"><span>${its.length ? `${done} of ${its.length} items installed` : 'No items yet'}</span><span className="meta">Target ${fmtDate(p.target)}${sn ? ` · ${sn} snag` : ''}</span></div>
-      </button>`; })}</div>
-      <div style=${{marginTop:14}}><${StageLegend}/></div>` : html`<div className="board">
+    ${mode === 'projects' ? html`<${ProjectBoard} erp=${erp} ui=${ui} q=${q}/>` : html`<div className="board">
       ${PSTAGES.map(st => { const col = items.filter(i => i.stage === st.id).sort((a,b) => a.target < b.target ? -1 : 1);
         return html`<div key=${st.id} className=${'col' + (over === st.id ? ' over' : '')}
           onDragOver=${e => { e.preventDefault(); setOver(st.id); }} onDragLeave=${() => setOver(o => o === st.id ? null : o)}
@@ -1975,7 +2097,7 @@ function ProjectDrawer({p, erp, ui, ops, leads, close, tab, setTab}){
   useEffect(() => { const k = e => e.key === 'Escape' && close(); window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, []);
   const its = erp.items.filter(i => i.projectId === p.id);
   const [sel, setSel] = useState([]);
-  const [inst, setInst] = useState('ravi');
+  const [inst, setInst] = useState(() => INSTALLERS[0]?.id || '');
   const [date, setDate] = useState(addDays(5));
   const done = its.filter(i => PIDX(i.stage) >= PIDX('handover')).length;
   const lead = p.leadId && leads.find(l => l.id === p.leadId);
@@ -1990,8 +2112,9 @@ function ProjectDrawer({p, erp, ui, ops, leads, close, tab, setTab}){
         <div className="inline" style=${{fontSize:13}}><span>PM <b>${uname(p.pm)}</b></span>${p.value ? html`<span>·</span><span className="num">${inr(p.value)}</span>` : null}<span>·</span><span>Target <b>${fmtDate(p.target)}</b></span><span>·</span><span>${its.length ? `${done} of ${its.length} items installed` : 'Survey pending'}</span></div>
         ${its.length ? html`<${StageBar} items=${its}/>` : null}
       </div>
-      <div className="tabs" role="tablist">${[['scope','Scope' + (!p.scope?.length ? ' •' : '')],['items','Items'],['docs','Documents'],['survey','Survey'],['payments', can(erp, 'money') ? 'Money & site' : 'Site'],['changes','Changes' + (p.changes?.some(c => c.status === 'pending') ? ' •' : '')],['service','Service' + (p.service?.some(v => v.status !== 'resolved') ? ' •' : '')],['activity','Activity']].map(([id,n]) => html`<button key=${id} role="tab" aria-selected=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
+      <div className="tabs" role="tablist">${[['progress','Progress'],['scope','Scope' + (!p.scope?.length ? ' •' : '')],['items','Items'],['docs','Documents'],['survey','Survey'],['payments', can(erp, 'money') ? 'Money & site' : 'Site'],['changes','Changes' + (p.changes?.some(c => c.status === 'pending') ? ' •' : '')],['service','Service' + (p.service?.some(v => v.status !== 'resolved') ? ' •' : '')],['activity','Activity']].map(([id,n]) => html`<button key=${id} role="tab" aria-selected=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
       <div className="d-body">
+        ${tab === 'progress' && html`<${ProgressTab} p=${p} its=${its} erp=${erp} ops=${ops} ui=${ui} setTab=${setTab}/>`}
         ${tab === 'scope' && html`<${ScopeTab} p=${p} erp=${erp} ops=${ops}/>`}
         ${tab === 'items' && html`<div className="details">
           ${!its.length && html`<div className="banner">Items are created from the scope of work when the site survey is submitted. Survey ${p.survey.status === 'scheduled' ? 'is scheduled for ' + fmtDT(p.survey.scheduled) : 'is in progress'}.</div>`}
@@ -2934,7 +3057,7 @@ function App(){
   const [lostFor, setLostFor] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [erp, setErp] = useState(EMPTY);
-  const [pOpen, setPOpen] = useState(null), [pTab, setPTab] = useState('items');
+  const [pOpen, setPOpen] = useState(null), [pTab, setPTab] = useState('progress');
   const [iOpen, setIOpen] = useState(null), [tOpen, setTOpen] = useState(null);
   const [newProj, setNewProj] = useState(false), [newTask, setNewTask] = useState(false), [taskInit, setTaskInit] = useState(null);
   const queued = useQueueCount();
@@ -2978,7 +3101,7 @@ function App(){
   const call = async (method, path, body, msg) => { try { const r = await API.call(method, path, body); if (r.state) app.applyState(r.state); if (msg) toast(typeof msg === 'function' ? msg(r) : msg); return r; } catch(e){ toast(e.message, 'err'); return null; } };
   const ui = {
     go:(id, init) => { setTaskInit(init || null); go(id); },
-    openProject:(id, tab = 'items') => { setIOpen(null); setOpenId(null); setPTab(tab); setPOpen(id); },
+    openProject:(id, tab = 'progress') => { setIOpen(null); setOpenId(null); setPTab(tab); setPOpen(id); },
     openItem:id => setIOpen(id), openTask:id => setTOpen(id),
     openLead:id => { setPOpen(null); open(id, 'details'); },
     feedback:(p, r) => call('POST', `/projects/${p.id}/feedback`, {rating:r, comment:''}, `Feedback ${r}/5 saved and added to the CRM lead.`)};
