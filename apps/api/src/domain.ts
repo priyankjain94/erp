@@ -146,7 +146,7 @@ export const WA_TEMPLATES: Record<string, { category: 'UTILITY' | 'MARKETING' | 
   installation_scheduled: { category: 'UTILITY', body: 'Hello {{1}}, good news from Make My Space. The installation of your {{2}} is planned for {{3}}. Our installation team led by {{4}} will reach your site; you can call them on {{5}}. Please make sure the site is ready and accessible.' },
   handover_feedback: { category: 'UTILITY', body: 'Hello {{1}}, your Make My Space project {{2}} is complete. How would you rate us?', buttons: ['5 Excellent', '4 Good', '3 Okay'] },
   partner_update: { category: 'UTILITY', body: 'Hello {{1}}, an update on your referral {{2}}: now at {{3}}. Thank you for trusting Make My Space.' },
-  staff_invite: { category: 'UTILITY', body: 'Hello {{1}}, your Make My Space team account is ready and your role is {{2}}. Open the Make My Space app and log in with this WhatsApp number to see your work.' },
+  staff_invite: { category: 'UTILITY', body: 'Hello {{1}}, welcome to the Make My Space team. You have joined as {{2}}. Your tasks, site visits and project updates will now come to you on this WhatsApp number.' },
   welcome_catalogue: { category: 'UTILITY', body: 'Hello {{1}}, thank you for your interest in Make My Space. Your consultant {{2}} will call you shortly. Our kitchen and wardrobe catalogue is attached.' },
   follow_up_gentle: { category: 'UTILITY', body: 'Hello {{1}}, just checking in on your {{2}} enquiry. Would you like an updated design, or shall we fix a showroom visit?' },
   visit_reminder: { category: 'UTILITY', body: 'Hello {{1}}, a reminder of your visit to our showroom. Reply 1 to confirm or 2 to reschedule.' },
