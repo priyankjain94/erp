@@ -523,6 +523,9 @@ button.mcard:hover{border-color:var(--ink)}
 .cr-row .who{min-width:0}.cr-row .who span{overflow:hidden;text-overflow:ellipsis}
 button.kpi{text-align:left;font:inherit;cursor:pointer}
 .stage-age{font-size:11.5px;color:var(--muted)}.stage-age.over{color:var(--crit);font-weight:600}
+.scope-ed{display:grid;gap:10px}.scope-ed .sub{display:block;margin-bottom:4px;color:var(--muted);font-size:12px}
+.scope-room{border:1px solid var(--line);background:var(--surface);padding:8px 10px;display:grid;gap:6px}
+.scope-line{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.scope-line .inp{flex:1;min-width:140px}
 .sig{width:100%;height:120px;border:1px solid var(--line-2);border-radius:0;background:var(--surface);touch-action:none}
 .side-note{max-width:340px;display:grid;gap:12px;font-size:13.5px;color:var(--ink-2);padding-top:6px}
 .side-note h3{font-weight:600;font-size:12px;letter-spacing:.16em;text-transform:uppercase;margin:0}
@@ -1452,10 +1455,12 @@ function makeOps(erp, setErp, toast, leads, crm, app){
       const msg = {start:'Task started.', done:`Done: ${t0?.title}${t0?.verify ? '. Sent for checking.' : ''}${t0?.repeat ? ' Next one scheduled.' : ''}`, block:`Marked blocked. ${data.on === 'client' ? 'Waiting on the client' : 'The person you are waiting on is reminded every morning'}; follow-up ${data.followUp ? fmtDate(data.followUp) : 'in 2 days'}.`, unblock:'Unblocked.', handover:`Handed over to ${uname(data.to)}. WhatsApp sent.`, remind:'Reminder sent on WhatsApp.', deadline:'Deadline changed. The original deadline is kept for the scorecard.', extend:'Asked for more time. You will get the answer on WhatsApp.', extend_ok:'More time approved. They have been told on WhatsApp.', extend_no:'More time rejected. They have been told on WhatsApp.', verify:'Accepted.', reopen:'Reopened. They have been told on WhatsApp.'}[action];
       return run('POST', `/tasks/${id}/${action}`, data, msg);
     },
+    addScope: (pid, lines, wall) => run('POST', `/projects/${pid}/scope`, {lines, ...(wall ? {wall} : {})}, wall ? 'Added to the scope and sent to production drawing. The designer has a task.' : `${lines.length} item${lines.length === 1 ? '' : 's'} added to the scope.`),
+    removeScope: (pid, sid, reason) => run('DELETE', `/projects/${pid}/scope/${sid}`, {reason}, 'Removed from the scope.'),
     async convert(lead, f){
       const res = lead
-        ? await run('POST', `/leads/${lead.id}/convert`, {pm:f.pm, target:f.target, surveyDate:f.surveyDate, advance:!!f.advance, address:f.address})
-        : await run('POST', '/projects', {customer:f.customer, phone:f.phone, address:f.address, value:Number(f.value) || 0, pm:f.pm, target:f.target, surveyDate:f.surveyDate, advance:!!f.advance});
+        ? await run('POST', `/leads/${lead.id}/convert`, {pm:f.pm, target:f.target, surveyDate:f.surveyDate, advance:!!f.advance, address:f.address, scope:f.scope || []})
+        : await run('POST', '/projects', {customer:f.customer, phone:f.phone, address:f.address, value:Number(f.value) || 0, pm:f.pm, target:f.target, surveyDate:f.surveyDate, advance:!!f.advance, scope:f.scope || []});
       if (res && res.code) toast(`${res.code} created. Survey task sent to the surveyor${lead ? ', welcome message sent to the customer' : ''}.`);
       return res ? res.id : null;
     },
@@ -1985,10 +1990,11 @@ function ProjectDrawer({p, erp, ui, ops, leads, close, tab, setTab}){
         <div className="inline" style=${{fontSize:13}}><span>PM <b>${uname(p.pm)}</b></span>${p.value ? html`<span>·</span><span className="num">${inr(p.value)}</span>` : null}<span>·</span><span>Target <b>${fmtDate(p.target)}</b></span><span>·</span><span>${its.length ? `${done} of ${its.length} items installed` : 'Survey pending'}</span></div>
         ${its.length ? html`<${StageBar} items=${its}/>` : null}
       </div>
-      <div className="tabs" role="tablist">${[['items','Items'],['docs','Documents'],['survey','Survey'],['payments', can(erp, 'money') ? 'Money & site' : 'Site'],['changes','Changes' + (p.changes?.some(c => c.status === 'pending') ? ' •' : '')],['service','Service' + (p.service?.some(v => v.status !== 'resolved') ? ' •' : '')],['activity','Activity']].map(([id,n]) => html`<button key=${id} role="tab" aria-selected=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
+      <div className="tabs" role="tablist">${[['scope','Scope' + (!p.scope?.length ? ' •' : '')],['items','Items'],['docs','Documents'],['survey','Survey'],['payments', can(erp, 'money') ? 'Money & site' : 'Site'],['changes','Changes' + (p.changes?.some(c => c.status === 'pending') ? ' •' : '')],['service','Service' + (p.service?.some(v => v.status !== 'resolved') ? ' •' : '')],['activity','Activity']].map(([id,n]) => html`<button key=${id} role="tab" aria-selected=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
       <div className="d-body">
+        ${tab === 'scope' && html`<${ScopeTab} p=${p} erp=${erp} ops=${ops}/>`}
         ${tab === 'items' && html`<div className="details">
-          ${!its.length && html`<div className="banner">Items are created automatically when Sana submits the site survey. Survey ${p.survey.status === 'scheduled' ? 'is scheduled for ' + fmtDT(p.survey.scheduled) : 'is in progress'}.</div>`}
+          ${!its.length && html`<div className="banner">Items are created from the scope of work when the site survey is submitted. Survey ${p.survey.status === 'scheduled' ? 'is scheduled for ' + fmtDT(p.survey.scheduled) : 'is in progress'}.</div>`}
           ${its.length > 0 && can(erp, 'assign') && html`<div className="box"><h4>Assign installation · ${sel.length} selected</h4>
             <div className="inline"><select className="sel" value=${inst} onChange=${e => setInst(e.target.value)} aria-label="Installer">${INSTALLERS.map(u => html`<option key=${u.id} value=${u.id}>${u.name} (${u.roleName.split('· ')[1]})</option>`)}</select>
               <input type="date" className="inp" value=${date} onInput=${e => setDate(e.target.value)} aria-label="Target date"/>
@@ -2230,9 +2236,76 @@ function ItemModal({it, erp, ops, close, ui}){
 }
 
 /* ---------- Convert lead / new project ---------- */
+/* ---------- Scope of work (v1.12): what was sold, per room, before the survey ---------- */
+const SCOPE_ROOMS = ['Kitchen','Master Bedroom','Bedroom 2','Bedroom 3','Kids Room','Guest Room','Living','Pantry','Dining','Dresser','Puja','Utility','Study','Foyer','Bathroom'];
+const guessType = s => { s = String(s).toLowerCase(); return /kitchen|modular k/.test(s) ? 'KT' : /wardrobe|almirah|closet/.test(s) ? 'WR' : /\btv\b|tv unit|entertainment/.test(s) ? 'TV' : /vanity/.test(s) ? 'VN' : /dresser|dressing/.test(s) ? 'DR' : /study|desk|table/.test(s) ? 'ST' : /shoe/.test(s) ? 'SR' : /crockery|bar unit|display/.test(s) ? 'CU' : 'OT'; };
+const NON_ITEM = /transport|install|labou?r|gst|tax|freight|delivery|cartage|discount|service|design fee|consult/i;
+const scopeLabel = s => `${typeById[s.type]?.name || s.type}${s.desc ? ' · ' + s.desc : ''}`;
+const cleanScope = lines => lines.filter(l => l.room.trim().length >= 2).map(l => ({room:l.room.trim(), type:l.type, desc:(l.desc || '').trim(), size:(l.size || '').trim(), value:Number(String(l.value || '').replace(/\D/g, '')) || 0, source:l.source || 'manual'}));
+function ScopeEditor({lines, setLines, quote, money = true}){
+  const [room, setRoom] = useState('Kitchen'), [custom, setCustom] = useState(''), [note, setNote] = useState('');
+  const cur = custom.trim() || room;
+  const add = type => setLines([...lines, {room:cur, type, desc:'', size:'', value:'', source:'manual'}]);
+  const upd = (i, k, v) => setLines(lines.map((l, j) => j === i ? {...l, [k]:v} : l));
+  const fromQuote = () => {
+    const ql = quote.lines || [], keep = ql.filter(l => !NON_ITEM.test(`${l.item} ${l.desc || ''}`));
+    setLines([...lines, ...keep.map(l => ({room:(l.room || 'General').trim() || 'General', type:guessType(`${l.item} ${l.desc || ''}`), desc:[l.item, l.desc].filter(Boolean).join(' · ').slice(0, 200), size:l.size || '', value:String(Math.round((Number(l.qty) || 1) * (Number(l.rate) || 0))), source:'quote'}))]);
+    setNote(`${keep.length} line${keep.length === 1 ? '' : 's'} added from quotation R${quote.rev}${ql.length > keep.length ? `; ${ql.length - keep.length} left out as services (transport, installation, GST…)` : ''}. Check the item type of each line.`);
+  };
+  const rooms = [...new Set(lines.map(l => l.room))];
+  const total = lines.reduce((s, l) => s + (Number(String(l.value).replace(/\D/g, '')) || 0), 0);
+  return html`<div className="scope-ed">
+    ${quote && html`<div className="banner"><div className="card-row"><span>Quotation R${quote.rev} · ${inr(quote.total)}${quote.status === 'accepted' ? ' · accepted' : ''}</span><button type="button" className="btn small" onClick=${fromQuote}>Fill from quotation</button></div>${note && html`<div className="sub" style=${{marginTop:6}}>${note}</div>`}</div>`}
+    <div><span className="sub">1. Room</span><div className="chips">${SCOPE_ROOMS.map(r => html`<button type="button" key=${r} aria-pressed=${!custom.trim() && room === r} onClick=${() => { setRoom(r); setCustom(''); }}>${r}</button>`)}<input className="inp" style=${{width:150}} placeholder="Other room…" value=${custom} onInput=${e => setCustom(e.target.value)}/></div></div>
+    <div><span className="sub">2. Tap what you are making in ${cur}</span><div className="chips">${ITEM_TYPES.map(t => html`<button type="button" key=${t.id} className="sugg" onClick=${() => add(t.id)}>+ ${t.name}</button>`)}</div></div>
+    ${rooms.map(rm => html`<div key=${rm} className="scope-room"><b>${rm}</b>${lines.map((l, i) => l.room !== rm ? null : html`<div key=${i} className="scope-line">
+        <select className="sel" value=${l.type} onChange=${e => upd(i, 'type', e.target.value)} aria-label="Item">${ITEM_TYPES.map(t => html`<option key=${t.id} value=${t.id}>${t.name}</option>`)}</select>
+        <input className="inp" placeholder="Details, e.g. sliding, 3 doors, loft" value=${l.desc} onInput=${e => upd(i, 'desc', e.target.value)}/>
+        <input className="inp" style=${{width:110}} placeholder="Size" value=${l.size} onInput=${e => upd(i, 'size', e.target.value)}/>
+        ${money && html`<input className="inp num" style=${{width:110}} inputMode="numeric" placeholder="₹ value" value=${l.value} onInput=${e => upd(i, 'value', e.target.value.replace(/\D/g, ''))}/>`}
+        <button type="button" className="btn small ghost" aria-label="Remove" onClick=${() => setLines(lines.filter((_, j) => j !== i))}>✕</button></div>`)}</div>`)}
+    <div className="sub">${lines.length ? `${lines.length} item${lines.length === 1 ? '' : 's'} in the scope${money && total ? ' · ' + inr(total) : ''}. Only these get surveyed and made; the surveyor cannot add items.` : 'Add at least one item. Only what is in the scope gets surveyed and made.'}</div>
+  </div>`;
+}
+function ScopeTab({p, erp, ops}){
+  const submitted = p.survey.status === 'submitted';
+  const canEdit = can(erp, 'assign') || (can(erp, 'crm') && !p.survey.checkIn);
+  const [f, setF] = useState(null), [rm, setRm] = useState(null);
+  const placedOn = sid => { for (const r of p.survey.rooms) { const x = r.items.find(i => i.scopeId === sid); if (x) return `${r.name}, wall ${x.wall}`; } return null; };
+  const rooms = [...new Set(p.scope.map(s => s.room))];
+  const sRooms = p.survey.rooms;
+  const wallsOf = name => sRooms.find(r => r.name === name)?.walls.map(w => w.label) || [];
+  const total = p.scope.reduce((s, x) => s + (x.value || 0), 0);
+  return html`<div className="details">
+    <div className="banner">${submitted ? 'The survey is done. Anything added now goes straight to production drawing, on a measured wall.' : p.survey.checkIn ? 'The survey has started. Only the project manager can change the scope now. The surveyor places these items on walls and cannot add new ones.' : 'Sales builds the scope before the survey. The surveyor measures only these rooms and places these items on walls.'}</div>
+    ${!p.scope.length && html`<div className="banner warn">No scope of work yet. The survey cannot be submitted until the items to make are added here.</div>`}
+    ${rooms.map(r => html`<div className="box" key=${r}><h4>${r}</h4><table style=${{minWidth:0}}><tbody>${p.scope.filter(s => s.room === r).map(s => { const it = s.itemId && erp.items.find(i => i.id === s.itemId); const pl = !it && placedOn(s.id);
+      return html`<tr key=${s.id}><td><b>${typeById[s.type].name}</b>${s.desc ? html`<div className="sub">${s.desc}</div>` : null}${s.size ? html`<div className="sub">Size ${s.size}</div>` : null}</td>
+        ${s.value != null ? html`<td className="r num">${s.value ? inr(s.value) : '—'}</td>` : null}
+        <td>${it ? html`<span className="mono" style=${{fontSize:12}}>${it.code}</span> <${StagePill} stage=${it.stage}/>` : pl ? html`<span className="pill good">Placed · ${pl}</span>` : html`<span className="pill">${p.survey.checkIn ? 'Not placed yet' : 'To survey'}</span>`}${s.source === 'quote' ? html` <span className="pill">from quote</span>` : null}</td>
+        <td className="r">${canEdit && !it && html`<button className="btn small ghost" onClick=${() => setRm({id:s.id, reason:''})}>Remove</button>`}</td></tr>`; })}</tbody></table></div>`)}
+    ${p.scope.length > 0 && html`<div className="sub">${p.scope.length} items${total ? ' · ' + inr(total) : ''}${p.value ? ' · order value ' + inr(p.value) : ''}</div>`}
+    ${rm && html`<div className="box"><h4>Remove from scope</h4><div className="inline"><input className="inp" style=${{flex:1}} placeholder="Reason (recorded)" value=${rm.reason} onInput=${e => setRm({...rm, reason:e.target.value})}/><button className="btn primary small" disabled=${rm.reason.trim().length < 3} onClick=${() => ops.removeScope(p.id, rm.id, rm.reason.trim()).then(r => r && setRm(null))}>Remove</button><button className="btn ghost small" onClick=${() => setRm(null)}>Cancel</button></div></div>`}
+    ${canEdit && !f && html`<div><button className="btn" onClick=${() => setF(submitted ? {room:sRooms[0]?.name || '', type:'WR', desc:'', size:'', value:'', wall:''} : {lines:[]})}><${Icon} n="plus" s=${14}/>Add to scope</button></div>`}
+    ${f && !submitted && html`<div className="box"><h4>Add to scope</h4><${ScopeEditor} lines=${f.lines} setLines=${ls => setF({lines:ls})} money=${can(erp, 'money')}/>
+      <div className="inline" style=${{marginTop:10}}><button className="btn primary" disabled=${!f.lines.length} onClick=${() => ops.addScope(p.id, cleanScope(f.lines)).then(r => r && setF(null))}>Add ${f.lines.length || ''} to scope</button><button className="btn ghost" onClick=${() => setF(null)}>Cancel</button></div></div>`}
+    ${f && submitted && html`<div className="box"><h4>Add to scope (after survey)</h4><div className="form" style=${{padding:0}}>
+      <label>Room (measured)<select value=${f.room} onChange=${e => setF({...f, room:e.target.value, wall:''})}>${sRooms.map(r => html`<option key=${r.id} value=${r.name}>${r.name}</option>`)}</select></label>
+      <label>Wall<select value=${f.wall} onChange=${e => setF({...f, wall:e.target.value})}><option value="">Choose…</option>${wallsOf(f.room).map(w => html`<option key=${w} value=${w}>Wall ${w}</option>`)}</select></label>
+      <label>Item<select value=${f.type} onChange=${e => setF({...f, type:e.target.value})}>${ITEM_TYPES.map(t => html`<option key=${t.id} value=${t.id}>${t.name}</option>`)}</select></label>
+      <label>Size<input value=${f.size} onInput=${e => setF({...f, size:e.target.value})}/></label>
+      <label className="full">Details<input value=${f.desc} onInput=${e => setF({...f, desc:e.target.value})}/></label>
+      ${can(erp, 'money') && html`<label>Value (₹)<input inputMode="numeric" value=${f.value} onInput=${e => setF({...f, value:e.target.value.replace(/\D/g, '')})}/></label>`}
+      <div className="form-foot"><button className="btn ghost" onClick=${() => setF(null)}>Cancel</button><button className="btn primary" disabled=${!f.room || !f.wall} onClick=${() => ops.addScope(p.id, cleanScope([{room:f.room, type:f.type, desc:f.desc, size:f.size, value:f.value}]), f.wall).then(r => r && setF(null))}>Add and send to drawing</button></div></div>
+      <p className="hint">If the client changed the order, raise a change order too so the price is updated.</p></div>`}
+  </div>`;
+}
+
 function ConvertBox({lead, erp, ops, ui}){
   const existing = erp.projects.find(p => p.leadId === lead.id);
   const [f, setF] = useState({pm:defaultPerson('pm', 'ops_head', 'admin'), target:addDays(45), surveyDate:addDays(1), advance:true, address:lead.area ? lead.area + ', Raipur' : ''});
+  const [lines, setLines] = useState([]);
+  const quote = (lead.quotes || []).find(q => q.status === 'accepted') || (lead.quotes || [])[lead.quotes?.length - 1];
   if (existing) return html`<div className="box"><h4>Project</h4><div className="inline"><span className="mono">${existing.code}</span><span className="sub" style=${{color:'var(--muted)'}}>${erp.items.filter(i => i.projectId === existing.id).length} items · target ${fmtDate(existing.target)}</span><button className="btn small" onClick=${() => ui.openProject(existing.id)}>Open project</button></div></div>`;
   return html`<div className="box"><h4>Convert to project</h4>
     <span style=${{fontSize:13,color:'var(--muted)'}}>Copies customer, phone, address and source. Books the site survey and messages the customer.</span>
@@ -2243,15 +2316,19 @@ function ConvertBox({lead, erp, ops, ui}){
       <label>Target handover<input type="date" value=${f.target} onInput=${e => setF({...f, target:e.target.value})}/></label>
       <label className="check full"><input type="checkbox" checked=${f.advance} onChange=${() => setF({...f, advance:!f.advance})}/>Advance (10%) received</label>
     </div>
-    <div><button className="btn primary" disabled=${!f.address.trim()} onClick=${() => ops.convert(lead, {...f, customer:lead.name, phone:lead.phone, value:lead.value}).then(id => { if (id) ui.openProject(id); })}>Convert to project</button></div>
+    <h4 style=${{marginTop:12}}>Scope of work</h4>
+    <${ScopeEditor} lines=${lines} setLines=${setLines} quote=${quote} money=${can(erp, 'money')}/>
+    <div><button className="btn primary" disabled=${!f.address.trim() || !lines.length} onClick=${() => ops.convert(lead, {...f, customer:lead.name, phone:lead.phone, value:lead.value, scope:cleanScope(lines)}).then(id => { if (id) ui.openProject(id); })}>Convert to project</button></div>
   </div>`;
 }
 function NewProject({leads, erp, ops, close, ui}){
   const won = leads.filter(l => l.stage === 'won' && !erp.projects.some(p => p.leadId === l.id));
   const [f, setF] = useState({lead:won[0]?.id || '', customer:'', phone:'', address:'', value:'', pm:defaultPerson('pm', 'ops_head', 'admin'), target:addDays(45), surveyDate:addDays(1), advance:true});
   const lead = leads.find(l => l.id === f.lead);
-  const ok = lead ? f.address.trim() : f.customer.trim() && f.phone.replace(/\D/g,'').length >= 10 && f.address.trim();
-  const submit = e => { e.preventDefault(); if (!ok) return; ops.convert(lead || null, lead ? {...f, customer:lead.name, phone:lead.phone, value:lead.value} : f).then(id => { if (id){ close(); ui.openProject(id); } }); };
+  const [lines, setLines] = useState([]);
+  const quote = lead && ((lead.quotes || []).find(q => q.status === 'accepted') || (lead.quotes || [])[lead.quotes?.length - 1]);
+  const ok = lines.length && (lead ? f.address.trim() : f.customer.trim() && f.phone.replace(/\D/g,'').length >= 10 && f.address.trim());
+  const submit = e => { e.preventDefault(); if (!ok) return; ops.convert(lead || null, lead ? {...f, customer:lead.name, phone:lead.phone, value:lead.value, scope:cleanScope(lines)} : {...f, scope:cleanScope(lines)}).then(id => { if (id){ close(); ui.openProject(id); } }); };
   return html`<div className="modal" role="dialog" aria-modal="true" aria-label="New project"><div className="scrim" onClick=${close}></div>
     <form className="sheet" onSubmit=${submit}><header><h2>New project</h2><p>Pick a won lead from the CRM so nothing is typed twice, or enter a direct order.</p></header>
       <div className="form">
@@ -2262,6 +2339,7 @@ function NewProject({leads, erp, ops, close, ui}){
         <label>Site survey date<input type="date" value=${f.surveyDate} onInput=${e => setF({...f, surveyDate:e.target.value})}/></label>
         <label>Target handover<input type="date" value=${f.target} onInput=${e => setF({...f, target:e.target.value})}/></label>
         <label className="check"><input type="checkbox" checked=${f.advance} onChange=${() => setF({...f, advance:!f.advance})}/>Advance received</label>
+        <div className="full"><h4 style=${{margin:'4px 0 8px'}}>Scope of work</h4><${ScopeEditor} key=${f.lead} lines=${lines} setLines=${setLines} quote=${quote} money=${can(erp, 'money')}/></div>
         <div className="form-foot"><button type="button" className="btn ghost" onClick=${close}>Cancel</button><button type="submit" className="btn primary" disabled=${!ok}>Create project</button></div>
       </div></form></div>`;
 }
@@ -2325,8 +2403,6 @@ const OBS_PRESETS = {
   'Column': [['300 wide', 300, (W, H) => H, 0], ['450 wide', 450, (W, H) => H, 0]],
   'Gas pipe': [['Vertical run', 50, (W, H) => H, 0]],
   'Skirting': [['100 high', W => W, 100, 0]]};
-const ROOM_FURN = {MBR:['WR','TV','DR'], BR:['WR','ST'], KID:['WR','ST'], GBR:['WR'], LIV:['TV','SR','CU'], KIT:['KT'], DIN:['CU'], DRS:['DR'], PUJ:['OT'], UTL:['OT'], BTH:['VN']};
-const furnFor = code => ROOM_FURN[code] || ROOM_FURN[String(code).replace(/\d+$/, '')] || ROOM_FURN[String(code).slice(0, 2)] || [];
 const SHOT_TAGS = ['Switchboard','Plumbing','Damage','Wall finish','Ceiling','Other'];
 const recentObs = () => { try { return JSON.parse(localStorage.getItem('mms-obs-recent')) || {}; } catch(e){ return {}; } };
 const rememberObs = o => { try { const r = recentObs(); const k = `${o.w}×${o.h}`; r[o.type] = [{w:o.w, h:o.h, floor:o.floor, k}, ...(r[o.type] || []).filter(x => x.k !== k)].slice(0, 3); localStorage.setItem('mms-obs-recent', JSON.stringify(r)); } catch(e){} };
@@ -2450,16 +2526,23 @@ function SurveyApp({erp, ops}){
 
   else if (scr.n === 'job'){
     const s = p.survey, done = s.status === 'submitted';
+    const scope = (p.scope || []).filter(x => !x.itemId);
+    const unset = [...new Map(scope.filter(x => !s.rooms.some(r => r.code === x.roomCode)).map(x => [x.roomCode, x])).values()];
+    const placedIds = new Set(s.rooms.flatMap(r => r.items.map(i => i.scopeId)));
+    const setupRoom = x => setSheet({n:'room', name:x.room, code:x.roomCode, fixed:true, shape:'rect', count:4, ceiling:2900, floor:FLOORS[0]});
     screen = html`<${Phone} title=${p.customer} sub=${p.address} back=${() => setScr({n:'list'})} right=${s.checkIn && !done ? html`<span className="pill acc">${onSite(s.checkIn)}</span>` : sync}
-      foot=${done ? html`<button className="big" onClick=${() => openPrint('survey', p.id)}>Customer summary (PDF)</button>` : !s.checkIn ? html`<button className="big pri" onClick=${() => ops.checkIn(p.id)}>Check in at site</button>` : html`<button className="big" onClick=${() => setSheet({n:'room', name:'', code:'', shape:'rect', count:4, ceiling:2900, floor:FLOORS[0]})}><${Icon} n="plus" s=${18}/>Add room</button><button className="big pri" disabled=${!s.rooms.length} onClick=${() => setScr({n:'review', pid:p.id})}>Review</button>`}>
+      foot=${done ? html`<button className="big" onClick=${() => openPrint('survey', p.id)}>Customer summary (PDF)</button>` : !s.checkIn ? html`<button className="big pri" onClick=${() => ops.checkIn(p.id)}>Check in at site</button>` : html`${unset.length ? html`<button className="big" onClick=${() => setupRoom(unset[0])}><${Icon} n="plus" s=${18}/>Set up ${unset[0].room}</button>` : html`<button className="big" onClick=${() => setSheet({n:'room', name:'', code:'', shape:'rect', count:4, ceiling:2900, floor:FLOORS[0]})}><${Icon} n="plus" s=${18}/>Extra room</button>`}<button className="big pri" disabled=${!s.rooms.length} onClick=${() => setScr({n:'review', pid:p.id})}>Review</button>`}>
       ${done ? html`<div className="banner good">Submitted ${fmtDT(s.at)} · ${s.mins} min on site. Read-only.</div>` : !s.checkIn ? html`<div className="banner">Scheduled ${fmtDT(s.scheduled)}. Check in when you reach the site; the survey timer starts then.</div>`
         : html`<div className="banner"><b>Wall rule:</b> stand at the room's entry door. The wall with the door is <b>A</b>, then go clockwise: B, C, D…</div>`}
       ${p.notes && html`<div className="banner warn">${p.notes}</div>`}
-      ${!done && html`<div className="mcard" style=${{fontSize:13}}><b>Steps</b>${[['Check in at site', !!s.checkIn], ['Add each room', s.rooms.length > 0], ['Photo + width + height for every wall', s.rooms.length > 0 && s.rooms.every(rm => rm.walls.every(wallOk))], ['Tag furniture on walls', s.rooms.some(rm => rm.items.length)], ['Review and submit', false]].map(([t, ok], i) => html`<div key=${i} className="mrow"><span className=${'wall-letter sm' + (ok ? ' ok' : '')}>${ok ? '✓' : i + 1}</span><span className="grow">${t}</span></div>`)}</div>`}
+      ${!done && html`<div className="mcard" style=${{fontSize:13}}><b>Steps</b>${[['Check in at site', !!s.checkIn], ['Set up each room in the scope', s.rooms.length > 0 && !unset.length], ['Photo + width + height for every wall', s.rooms.length > 0 && s.rooms.every(rm => rm.walls.every(wallOk))], ['Place every scope item on its wall', scope.length > 0 && scope.every(x => placedIds.has(x.id))], ['Review and submit', false]].map(([t, ok], i) => html`<div key=${i} className="mrow"><span className=${'wall-letter sm' + (ok ? ' ok' : '')}>${ok ? '✓' : i + 1}</span><span className="grow">${t}</span></div>`)}</div>`}
+      ${!done && !scope.length && html`<div className="banner crit">No scope of work yet. Ask the project manager to add the items to make before you go to site.</div>`}
+      ${!done && scope.length > 0 && html`<div className="mcard" style=${{fontSize:13}}><b>Scope of work · ${scope.filter(x => placedIds.has(x.id)).length}/${scope.length} placed</b>${[...new Set(scope.map(x => x.room))].map(r => html`<div key=${r}><span className="meta">${r}</span>${scope.filter(x => x.room === r).map(x => html`<div key=${x.id} className="mrow"><span className=${'wall-letter sm' + (placedIds.has(x.id) ? ' ok' : '')}>${placedIds.has(x.id) ? '✓' : ''}</span><span className="grow">${scopeLabel(x)}</span></div>`)}</div>`)}
+        <span className="meta" style=${{fontSize:12}}>Client wants something extra? Tell the project manager; only they can add it to the scope.</span></div>`}
+      ${!done && s.checkIn && unset.map(x => html`<button key=${x.roomCode} className="mcard" style=${{borderStyle:'dashed'}} onClick=${() => setupRoom(x)}><div className="card-row"><b>${x.room}</b><span className="pill">Not set up</span></div><span className="meta">Tap to set up this room and start measuring</span></button>`)}
       ${s.rooms.map(rm => { const ok = rm.walls.filter(wallOk).length; return html`<button key=${rm.id} className="mcard" onClick=${() => setScr({n:'room', pid:p.id, rid:rm.id})}>
         <div className="card-row"><b>${rm.name}</b><span className=${'pill ' + (ok === rm.walls.length ? 'good' : 'warn')}>${ok}/${rm.walls.length} walls</span></div>
-        <span className="meta">${rm.items.length ? rm.items.map(x => `${typeById[x.type].name} on ${x.wall}`).join(' · ') : 'No furniture tagged yet'}</span></button>`; })}
-      ${s.checkIn && !s.rooms.length && html`<p style=${{color:'var(--muted)',textAlign:'center',margin:'20px 0'}}>Add the first room to start.</p>`}
+        <span className="meta">${rm.items.length ? rm.items.map(x => `${typeById[x.type].name} on ${x.wall}`).join(' · ') : (p.scope || []).some(x => x.roomCode === rm.code && !x.itemId) ? 'Scope items not placed yet' : 'Extra room (measure only)'}</span></button>`; })}
     <//>`;
   }
 
@@ -2498,7 +2581,8 @@ function SurveyApp({erp, ops}){
     const checks = wallChecks(r, wi);
     const opp = r.walls.length === 4 && wi >= 2 ? r.walls[wi - 2] : null;
     const onWall = r.items.map((x, i) => ({...x, i})).filter(x => x.wall === w.label);
-    const sugg = furnFor(r.code), chips = [...sugg, ...ITEM_TYPES.map(t => t.id).filter(t => !sugg.includes(t))];
+    const roomScope = (p.scope || []).filter(x => x.roomCode === r.code && !x.itemId);
+    const placeHere = x => updRoom(y => { const k = y.items.findIndex(i => i.scopeId === x.id); if (k >= 0 && y.items[k].wall === w.label) y.items.splice(k, 1); else if (k >= 0) y.items[k].wall = w.label; else y.items.push({type:x.type, wall:w.label, desc:'', scopeId:x.id}); });
     const newObs = (px, py) => {
       if (done) return;
       const o = {type:'Window', w:'', h:'', left:'', floor:'', px, py, est:{}};
@@ -2525,9 +2609,11 @@ function SurveyApp({erp, ops}){
       ${checks.map((c, i) => html`<div key=${i} className="banner warn" style=${{padding:'8px 11px',fontSize:13}}>${c}</div>`)}
       <div className="mcard"><div className="card-row"><b>Obstructions</b>${!done && html`<button className="btn small" onClick=${() => newObs(null, null)}><${Icon} n="plus" s=${14}/>${w.photo ? 'Add without pin' : 'Add'}</button>`}</div>
         ${w.obs.length ? w.obs.map((o,i) => html`<button key=${i} className="mrow obs-row" disabled=${done} onClick=${() => setSheet({n:'obs', wi, idx:i, o:{...o, est:{}}})}><span className="pin static">${i + 1}</span><span className="grow"><b>${o.type}</b> · ${fmtLen(o.w, unit)} × ${fmtLen(o.h, unit)}<br/><span className="meta">${fmtLen(o.left, unit)} from left · ${fmtLen(o.floor, unit) === '—' ? 'at floor' : fmtLen(o.floor, unit) + ' up'}</span></span></button>`) : html`<span className="meta">${w.photo ? 'Tap the photo above to mark a window, door, switchboard, AC point, pipe or beam.' : 'Take the wall photo first, then tap on it to mark obstructions.'}</span>`}</div>
-      <div className="mcard"><b>Furniture on this wall</b>
-        <div className="chips">${chips.map(t => { const on = onWall.some(x => x.type === t); return html`<button key=${t} aria-pressed=${on} className=${sugg.includes(t) ? 'sugg' : ''} disabled=${done} onClick=${() => on ? updRoom(y => { y.items.splice(y.items.findIndex(x => x.wall === w.label && x.type === t), 1); }) : updRoom(y => { y.items.push({type:t, wall:w.label, desc:''}); })}>${on ? '✓ ' : ''}${typeById[t].name}</button>`; })}</div>
-        ${onWall.map(x => html`<label key=${x.i} className="furn-note">${typeById[x.type].name}<input className="inp" value=${x.desc} disabled=${done} placeholder="Note, e.g. sliding, 3 doors, with loft" onInput=${e => updRoom(y => { y.items[x.i].desc = e.target.value; })}/></label>`)}</div>
+      <div className="mcard"><b>Scope items on this wall</b>
+        ${roomScope.length ? html`<div className="chips">${roomScope.map(x => { const at = r.items.find(i => i.scopeId === x.id); const on = at && at.wall === w.label; return html`<button key=${x.id} aria-pressed=${!!on} className="sugg" disabled=${done} onClick=${() => placeHere(x)}>${on ? '✓ ' : ''}${scopeLabel(x)}${at && !on ? ` (on ${at.wall})` : ''}</button>`; })}</div>
+          <span className="meta" style=${{fontSize:12}}>Tap the items that go on wall ${w.label}. Client wants something else? Tell the project manager.</span>`
+          : html`<span className="meta">${(p.scope || []).length ? 'Nothing in the scope for this room. Just measure it.' : 'No scope of work yet. Ask the project manager to add it.'}</span>`}
+        ${onWall.map(x => html`<label key=${x.i} className="furn-note">${typeById[x.type].name} · site note<input className="inp" value=${x.desc} disabled=${done} placeholder="e.g. beam at 2400, loft only 450 deep" onInput=${e => updRoom(y => { y.items[x.i].desc = e.target.value; })}/></label>`)}</div>
       <label style=${{display:'grid',gap:4,fontSize:12,fontWeight:500}}>Notes<textarea className="inp" rows="2" value=${w.notes} onInput=${e => setW('notes', e.target.value)} placeholder="e.g. Wall not plumb, 8 mm out at top" disabled=${done}></textarea></label>
       <span className="meta" style=${{fontSize:11.5,color:'var(--muted)',textAlign:'center'}}>Swipe left or right for the next wall.</span>
       </div>
@@ -2539,13 +2625,17 @@ function SurveyApp({erp, ops}){
     p.survey.rooms.forEach(rm => {
       rm.walls.forEach(w => { const miss = [!w.photo && 'photo', !(Number(w.w) > 0) && 'width', !(Number(w.h) > 0) && 'height'].filter(Boolean); if (miss.length) errs.push({t:`${rm.name} · wall ${w.label}: ${miss.join(', ')} missing`, rid:rm.id, label:w.label}); });
       rm.walls.forEach((w, wi) => wallChecks(rm, wi).filter(c => !c.startsWith('Opposite') || wi < 2).forEach(c => warns.push({t:`${rm.name} · wall ${w.label}: ${c}`, rid:rm.id, label:w.label})));
-      if (!rm.items.length) warns.push({t:`${rm.name}: no furniture tagged.`, rid:rm.id});
+      rm.items.filter(x => !x.scopeId || !(p.scope || []).some(s => s.id === x.scopeId && !s.itemId)).forEach(x => errs.push({t:`${rm.name} · wall ${x.wall}: ${typeById[x.type].name} is not in the scope of work. Remove it.`, rid:rm.id, label:x.wall}));
     });
-    const n = p.survey.rooms.reduce((s,rm) => s + rm.items.length, 0);
+    const scope = (p.scope || []).filter(x => !x.itemId);
+    if (!scope.length) errs.push({t:'No scope of work yet. Ask the project manager to add the items to make.'});
+    scope.forEach(x => { const c = p.survey.rooms.reduce((k, rm) => k + rm.items.filter(i => i.scopeId === x.id).length, 0); const rm = p.survey.rooms.find(r => r.code === x.roomCode);
+      if (!rm) { if (!errs.some(e => e.t.startsWith(x.room + ' is in the scope'))) errs.push({t:`${x.room} is in the scope but not set up yet.`}); } else if (!c) errs.push({t:`${scopeLabel(x)} · ${x.room}: not placed on a wall yet.`, rid:rm.id}); });
+    const n = scope.length;
     const jump = e => e.rid && setScr(e.label ? {n:'wall', pid:p.id, rid:e.rid, label:e.label} : {n:'room', pid:p.id, rid:e.rid});
     screen = html`<${Phone} title="Review and submit" sub=${p.customer} back=${() => setScr({n:'job', pid:p.id})} right=${sync}
       foot=${html`<button className="big go" disabled=${errs.length > 0 || !n} onClick=${() => { ops.submitSurvey(p.id, sheet === 'signed'); setSheet(null); setScr({n:'job', pid:p.id}); }}>Submit survey</button>`}>
-      <div className=${'banner ' + (errs.length ? 'crit' : 'good')}>${errs.length ? `${errs.length} thing${errs.length > 1 ? 's' : ''} to fix before submitting. Tap one to go there.` : `All ${p.survey.rooms.reduce((s,rm) => s + rm.walls.length, 0)} walls have a photo and measurements. ${n} furniture item${n === 1 ? "" : "s"} will be created.`}</div>
+      <div className=${'banner ' + (errs.length ? 'crit' : 'good')}>${errs.length ? `${errs.length} thing${errs.length > 1 ? 's' : ''} to fix before submitting. Tap one to go there.` : `All ${p.survey.rooms.reduce((s,rm) => s + rm.walls.length, 0)} walls have a photo and measurements. ${n} item${n === 1 ? "" : "s"} from the scope will go to production drawing.`}</div>
       ${localPhotos > 0 && html`<div className="banner warn">${localPhotos} photo${localPhotos > 1 ? 's are' : ' is'} still on the phone. ${online ? 'Uploading now; submit when it says Saved.' : 'Connect to the internet to upload before submitting.'}</div>`}
       ${errs.map((e,i) => html`<button key=${i} className="mcard" style=${{borderColor:'var(--crit)'}} onClick=${() => jump(e)}><span style=${{fontSize:13}}>${e.t} ›</span></button>`)}
       ${warns.map((e,i) => html`<button key=${'w'+i} className="mcard" style=${{borderColor:'var(--warn)'}} onClick=${() => jump(e)}><span style=${{fontSize:13,color:'var(--warn)'}}>${e.t} ›</span></button>`)}
@@ -2559,15 +2649,16 @@ function SurveyApp({erp, ops}){
   // bottom sheets
   let overlay = null;
   if (sheet && sheet.n === 'room') overlay = html`<div className="sheet-m" onClick=${e => e.target === e.currentTarget && setSheet(null)}><div className="in">
-    <h3>Add room</h3>
-    <div className="presets">${ROOM_PRESETS.map(([nm, code]) => html`<button key=${code} aria-pressed=${sheet.code === code} onClick=${() => setSheet({...sheet, name:nm, code})}>${nm}</button>`)}</div>
-    <div className="mm"><label className="full">Room name<input value=${sheet.name} onInput=${e => setSheet({...sheet, name:e.target.value, code:sheet.code || e.target.value.replace(/[^A-Za-z]/g,'').slice(0,3).toUpperCase()})} placeholder="or type a name"/></label>
+    <h3>${sheet.fixed ? 'Set up ' + sheet.name : 'Extra room (measure only)'}</h3>
+    ${!sheet.fixed && html`<p className="meta" style=${{margin:0,fontSize:12.5}}>Nothing in an extra room is made. To make something here, the project manager must add it to the scope.</p><div className="presets">${ROOM_PRESETS.map(([nm, code]) => html`<button key=${code} aria-pressed=${sheet.code === code} onClick=${() => setSheet({...sheet, name:nm, code})}>${nm}</button>`)}</div>`}
+    <div className="mm"><label className="full">Room name<input disabled=${!!sheet.fixed} value=${sheet.name} onInput=${e => setSheet({...sheet, name:e.target.value, code:sheet.code || e.target.value.replace(/[^A-Za-z]/g,'').slice(0,3).toUpperCase()})} placeholder="or type a name"/></label>
       <label>Shape<select value=${sheet.shape} onChange=${e => setSheet({...sheet, shape:e.target.value, count:e.target.value === 'L' ? 6 : e.target.value === 'rect' ? 4 : sheet.count})}><option value="rect">Rectangle · 4 walls</option><option value="L">L-shape · 6 walls</option><option value="custom">Other</option></select></label>
       <label>Ceiling<button type="button" className="kp-field" onClick=${() => openKp('Ceiling height', sheet.ceiling, v => { setSheet(s => ({...s, ceiling:v || 2900})); setKp(null); }, [2100, 6000])}><b>${fmtLen(sheet.ceiling, unit)}</b></button></label>
       ${sheet.shape === 'custom' && html`<label>Number of walls<input inputMode="numeric" value=${sheet.count} onInput=${e => setSheet({...sheet, count:Math.min(8, Math.max(3, Number(e.target.value.replace(/\D/g,'')) || 3))})}/></label>`}
       <label className=${sheet.shape === 'custom' ? '' : 'full'}>Floor<select value=${sheet.floor} onChange=${e => setSheet({...sheet, floor:e.target.value})}>${FLOORS.map(f => html`<option key=${f}>${f}</option>`)}</select></label></div>
     <div className="inline"><button className="big" onClick=${() => setSheet(null)}>Cancel</button><button className="big pri" disabled=${!sheet.name.trim()} onClick=${() => {
-      const code = (sheet.code || 'RM').toUpperCase(), used = p.survey.rooms.filter(x => x.code.startsWith(code)).length, rc = used ? code.slice(0,2) + (used + 1) : code;
+      const code = (sheet.code || 'RM').toUpperCase(), taken = c => p.survey.rooms.some(x => x.code === c) || (!sheet.fixed && (p.scope || []).some(x => x.roomCode === c));
+      let rc = code; if (!sheet.fixed) for (let k = 2; taken(rc) && k < 50; k++) rc = code.slice(0,2) + k;
       const nr = {id:'R' + Date.now().toString(36), name:sheet.name.trim(), code:rc, ceiling:Number(sheet.ceiling) || 2900, floor:sheet.floor, shape:sheet.shape, walls:LETTERS.slice(0, sheet.count).map(l => ({label:l, w:'', h:String(Number(sheet.ceiling) || 2900), photo:null, photos:[], obs:[], notes:''})), items:[]};
       ops.updProject(p.id, x => { x.survey.rooms.push(nr); }); setSheet(null); setScr({n:'round', pid:p.id, rid:nr.id}); }}>Add room</button></div>
   </div></div>`;
@@ -2965,7 +3056,7 @@ function App(){
 
     <nav className="bottomnav" aria-label="Main">${VIEWS.filter(v => canView(erp, v.id)).map(v => html`<button key=${v.id} aria-current=${view === v.id ? 'page' : undefined} onClick=${() => go(v.id)}><${Icon} n=${v.icon} s=${20}/>${v.name}${v.id === 'inbox' && unread ? html`<span className="count">${unread}</span>` : null}</button>`)}</nav>
 
-    ${current && html`<${Drawer} lead=${current} leads=${leads} call=${call} money=${can(erp, 'money')} tab=${openTab} setTab=${setOpenTab} close=${() => setOpenId(null)} move=${moveLead} send=${send} follow=${setFollow} extra=${current.stage === 'won' && can(erp, 'edit') ? html`<${ConvertBox} key=${current.id} lead=${current} erp=${erp} ops=${ops} ui=${ui}/>` : null} setOwner=${o => call('PATCH', `/leads/${current.id}`, {owner:o}, `${current.name} reassigned to ${o}.`)}/>`}
+    ${current && html`<${Drawer} lead=${current} leads=${leads} call=${call} money=${can(erp, 'money')} tab=${openTab} setTab=${setOpenTab} close=${() => setOpenId(null)} move=${moveLead} send=${send} follow=${setFollow} extra=${current.stage === 'won' && (can(erp, 'edit') || can(erp, 'crm')) ? html`<${ConvertBox} key=${current.id} lead=${current} erp=${erp} ops=${ops} ui=${ui}/>` : null} setOwner=${o => call('PATCH', `/leads/${current.id}`, {owner:o}, `${current.name} reassigned to ${o}.`)}/>`}
     ${adding && html`<${AddLead} leads=${leads} close=${() => setAdding(false)} add=${addLead} call=${call} erp=${erp}/>`}
     ${pOpen && html`<${ProjectDrawer} key=${pOpen} p=${erp.projects.find(p => p.id === pOpen)} erp=${erp} ui=${ui} ops=${ops} leads=${leads} tab=${pTab} setTab=${setPTab} close=${() => setPOpen(null)}/>`}
     ${tOpen && html`<${TaskDrawer} key=${tOpen} t=${erp.tasks.find(t => t.id === tOpen)} erp=${erp} ops=${ops} close=${() => setTOpen(null)}/>`}

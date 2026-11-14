@@ -82,7 +82,7 @@ const SPEC = { size: '3200 × 850 × 560', carcass: 'BWP plywood 18 mm', shutter
 const drain = async () => { while (await M.jobs.runDueJobs(50) > 0) { /* run all queued jobs */ } };
 const q1 = async (sql: string, p: unknown[] = []) => (await M.db.pool.query(sql, p)).rows[0];
 const phoneOf = (i: number) => '+9190000000' + String(i + 1).padStart(2, '0');
-const P = { owner: phoneOf(0), meera: phoneOf(1), vikram: phoneOf(2), sana: phoneOf(6), deepa: phoneOf(7), arjun: phoneOf(8), manish: phoneOf(9), ravi: phoneOf(11) };
+const P = { ankit: phoneOf(3), owner: phoneOf(0), meera: phoneOf(1), vikram: phoneOf(2), sana: phoneOf(6), deepa: phoneOf(7), arjun: phoneOf(8), manish: phoneOf(9), ravi: phoneOf(11) };
 const T: Record<string, string> = {};
 const addDaysIso = (n: number) => { const d = new Date(Date.now() + 5.5 * 3600e3); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 
@@ -140,34 +140,46 @@ test('4. CRM: new lead automations, duplicate flag, won lead converts to a proje
   assert.equal(d.dup, true);
   assert.equal((await api('POST', '/api/v1/leads', { name: 'No partner', phone: '9812345600', source: 'architect' }, T.owner)).status, 400);
   await api('POST', '/api/v1/leads/L17/stage', { stage: 'won' }, T.owner);
-  const c = await api('POST', '/api/v1/leads/L17/convert', { pm: 'vikram', target: '2099-03-01', surveyDate: '2099-01-02', advance: true, address: 'Fafadih, Raipur' }, T.owner);
+  assert.equal((await api('POST', '/api/v1/leads/L17/convert', { pm: 'vikram', target: '2099-03-01', surveyDate: '2099-01-02', advance: true, address: 'Fafadih, Raipur', scope: [] }, T.owner)).status, 400, 'scope of work is required');
+  const c = await api('POST', '/api/v1/leads/L17/convert', { pm: 'vikram', target: '2099-03-01', surveyDate: '2099-01-02', advance: true, address: 'Fafadih, Raipur',
+    scope: [{ room: 'Kitchen', type: 'KT', desc: 'L-shape', value: 250000 }, { room: 'Kitchen', type: 'CU', value: 45000 }, { room: 'Master Bedroom', type: 'WR', desc: 'Sliding', value: 120000 }] }, T.owner);
   assert.equal(c.ok, true, JSON.stringify(c)); T.pid = c.id;
   const p = c.state.erp.projects.find((x: any) => x.id === c.id);
   assert.equal(p.customer, 'Kunal Bhatia'); assert.equal(p.payments[0].received, true); assert.equal(p.survey.status, 'scheduled');
   assert.ok(c.state.erp.tasks.some((t: any) => t.projectId === c.id && t.assignee === 'sana'));
   assert.ok(c.state.crm.leads.find((l: any) => l.id === 'L17').timeline.some((t: any) => /Converted to project/.test(t.text)));
-  assert.equal((await api('POST', '/api/v1/leads/L17/convert', { pm: 'vikram', target: '2099-03-01', surveyDate: '2099-01-02', address: 'x y' }, T.owner)).status, 409, 'no double conversion');
+  assert.equal(p.scope.length, 3); assert.equal(p.scope[0].roomCode, 'KIT'); assert.equal(p.scope[2].roomCode, 'MBR');
+  assert.equal((await api('POST', '/api/v1/leads/L17/convert', { pm: 'vikram', target: '2099-03-01', surveyDate: '2099-01-02', address: 'x y', scope: [{ room: 'Kitchen', type: 'KT' }] }, T.owner)).status, 409, 'no double conversion');
 });
 
 const walls = (photo: string | null) => ['A', 'B', 'C', 'D'].map((l, i) => ({ label: l, w: i % 2 ? 2400 : 3200, h: 2900, photo, notes: '', obs: l === 'A' ? [{ type: 'Door', left: 150, floor: 0, w: 900, h: 2100 }] : [] }));
 test('5. site survey: check-in, draft, incomplete blocked, submit creates items', async () => {
   assert.equal((await api('POST', `/api/v1/surveys/${T.pid}/check-in`, {}, T.ravi)).status, 403);
   const ci = await api('POST', `/api/v1/surveys/${T.pid}/check-in`, { lat: 21.25, lng: 81.63 }, T.sana); assert.equal(ci.ok, true);
-  const rooms = [{ id: 'room-k', name: 'Kitchen', code: 'KIT', ceiling: 2900, floor: 'Tiled, finished', shape: 'rect', walls: walls(null), items: [{ type: 'KT', wall: 'A', desc: 'L-shape' }, { type: 'CU', wall: 'C', desc: '' }] }];
+  const sc = (await api('GET', '/api/v1/state', undefined, T.sana)).erp.projects.find((x: any) => x.id === T.pid).scope;
+  const sid = (t: string) => sc.find((x: any) => x.type === t).id;
+  // the surveyor cannot add an item that is not in the scope
+  const rooms: any[] = [{ id: 'room-k', name: 'Kitchen', code: 'KIT', ceiling: 2900, floor: 'Tiled, finished', shape: 'rect', walls: walls(null), items: [{ type: 'KT', wall: 'A', desc: 'L-shape', scopeId: sid('KT') }, { type: 'CU', wall: 'C', desc: '', scopeId: sid('CU') }, { type: 'SR', wall: 'B', desc: 'client asked' }] }];
   assert.equal((await api('PUT', `/api/v1/surveys/${T.pid}/draft`, { rooms }, T.sana)).ok, true);
   const bad = await api('POST', `/api/v1/surveys/${T.pid}/submit`, {}, T.sana);
   assert.equal(bad.status, 400); assert.equal(bad.error, 'survey_incomplete'); assert.match(bad.message, /photo/);
+  assert.ok(bad.data?.errors?.some((e: string) => /only items in the scope/.test(e)) ?? true);
+  rooms[0].items.pop();
   // upload a real photo through the storage flow
   const slot = await api('POST', '/api/v1/uploads', { contentType: 'image/jpeg', size: 4 }, T.sana);
   const up = await fetch(base + slot.uploadUrl, { method: 'PUT', body: Buffer.from([1, 2, 3, 4]) }); assert.equal(up.status, 200);
   assert.equal((await fetch(base + slot.viewUrl)).status, 200);
   assert.equal((await fetch(base + slot.viewUrl.replace(/sig=[^&]+/, 'sig=bad'))).status, 403);
   rooms[0].walls = walls(slot.ref) as any;
+  const miss = await api('POST', `/api/v1/surveys/${T.pid}/submit`, { signed: true, rooms }, T.sana);
+  assert.equal(miss.status, 400); assert.match(miss.message, /Wardrobe · Master Bedroom: not placed/, 'every scope item must be placed');
+  rooms.push({ id: 'room-m', name: 'Master Bedroom', code: 'MBR', ceiling: 2900, floor: 'Tiled, finished', shape: 'rect', walls: walls(slot.ref), items: [{ type: 'WR', wall: 'B', desc: '', scopeId: sid('WR') }] });
   const ok = await api('POST', `/api/v1/surveys/${T.pid}/submit`, { signed: true, rooms }, T.sana);
-  assert.equal(ok.ok, true, JSON.stringify(ok)); assert.equal(ok.created, 2);
+  assert.equal(ok.ok, true, JSON.stringify(ok)); assert.equal(ok.created, 3);
   const st = await api('GET', '/api/v1/state', undefined, T.owner);
   const its = st.erp.items.filter((i: any) => i.projectId === T.pid);
-  assert.deepEqual(its.map((i: any) => i.stage), ['drawing', 'drawing']);
+  assert.deepEqual(its.map((i: any) => i.stage), ['drawing', 'drawing', 'drawing']);
+  assert.ok(its.every((i: any) => i.value > 0 && i.scopeId), 'items carry the value and the scope line');
   assert.ok(its.every((i: any) => st.erp.tasks.some((t: any) => t.itemId === i.id && /Production drawing/.test(t.title))));
   const pr = st.erp.projects.find((p: any) => p.id === T.pid);
   assert.equal(pr.survey.rooms[0].walls[0].obs[0].type, 'Door'); assert.ok(pr.survey.rooms[0].walls[0].photoUrl.startsWith('/api/v1/files/'));
@@ -180,8 +192,8 @@ test('22. survey app v1.10: close-up photos and obstruction pins are saved; cust
   const shot = await upload(sana, 'image/jpeg'), main = await upload(sana, 'image/jpeg');
   const wall = (l: string) => ({ label: l, w: 3600, h: 2900, photo: main, notes: '', photos: l === 'B' ? [{ ref: shot, tag: 'Switchboard' }] : [],
     obs: l === 'B' ? [{ type: 'Switchboard', left: 1200, floor: 1200, w: 200, h: 120, px: 35.5, py: 52 }, { type: 'Window', left: 900, floor: 900, w: 1200, h: 1200 }] : [] });
-  const rooms = [{ id: 'room-m', name: 'Master Bedroom', code: 'MBR', ceiling: 2900, floor: 'Tiled, finished', shape: 'rect', walls: ['A', 'B', 'C', 'D'].map(wall), items: [{ type: 'WR', wall: 'B', desc: 'sliding, 3 doors' }] }];
-  assert.ok((await api('PUT', '/api/v1/surveys/P103/draft', { rooms }, sana)).ok);
+  const rooms = [{ id: 'room-m22', name: 'Master Bedroom', code: 'MBR', ceiling: 2900, floor: 'Tiled, finished', shape: 'rect', walls: ['A', 'B', 'C', 'D'].map(wall), items: [{ type: 'WR', wall: 'B', desc: 'sliding, 3 doors', scopeId: (await api('GET', '/api/v1/state', undefined, sana)).erp.projects.find((x: any) => x.id === 'P103').scope.find((x: any) => x.roomCode === 'MBR' && x.type === 'WR').id }] }];
+  const dr = await api('PUT', '/api/v1/surveys/P103/draft', { rooms }, sana); assert.ok(dr.ok, JSON.stringify(dr));
   assert.equal((await api('PUT', '/api/v1/surveys/P103/draft', { rooms: [{ ...rooms[0], walls: [{ ...wall('A'), obs: [{ type: 'Window', left: 0, floor: 0, w: 10, h: 10, px: 140, py: 5 }] }, wall('B'), wall('C')] }] }, sana)).status, 400, 'pin outside the photo rejected');
   const st = await api('GET', '/api/v1/state', undefined, sana);
   const wb = st.erp.projects.find((p: any) => p.id === 'P103').survey.rooms[0].walls.find((w: any) => w.label === 'B');
@@ -191,6 +203,34 @@ test('22. survey app v1.10: close-up photos and obstruction pins are saved; cust
   assert.equal(pr.status, 200); const page = await pr.text();
   assert.match(page, /Site measurement summary/); assert.match(page, /Master Bedroom/); assert.match(page, /Switchboard 200×120 mm, 1200 from left/); assert.match(page, /Wardrobe/);
   assert.equal((await fetch(base + '/api/v1/print/survey/P103', { headers: { authorization: 'Bearer ' + T.ravi } })).status, 403, 'installer cannot print survey');
+});
+
+test('24. scope of work: sales builds it before the survey, surveyor cannot change it, PM adds after the survey on a measured wall', async () => {
+  const ankit = await login(P.ankit);
+  // a new project: survey not started yet → sales may add; surveyor never
+  assert.equal((await api('POST', '/api/v1/projects', { customer: 'Scope Test', phone: '9811100022', address: 'Telibandha, Raipur', value: 500000, pm: 'vikram', target: '2099-06-01', surveyDate: '2099-05-01', scope: [] }, T.owner)).status, 400, 'scope required');
+  const np = await api('POST', '/api/v1/projects', { customer: 'Scope Test', phone: '9811100022', address: 'Telibandha, Raipur', value: 500000, pm: 'vikram', target: '2099-06-01', surveyDate: '2099-05-01', scope: [{ room: 'Kitchen', type: 'KT' }] }, T.owner);
+  const pid = np.id;
+  assert.equal((await api('POST', `/api/v1/projects/${pid}/scope`, { lines: [{ room: 'Pantry', type: 'OT', desc: 'Tall pantry unit' }] }, T.sana)).status, 403, 'surveyor cannot add scope');
+  let st = await api('POST', `/api/v1/projects/${pid}/scope`, { lines: [{ room: 'Pantry', type: 'OT', desc: 'Tall pantry unit', value: 65000 }] }, ankit);
+  assert.equal(st.ok, true, JSON.stringify(st));
+  const pan = st.state.erp.projects.find((x: any) => x.id === pid).scope.find((x: any) => x.room === 'Pantry');
+  assert.equal(pan.roomCode, 'PAN');
+  st = await api('DELETE', `/api/v1/projects/${pid}/scope/${pan.id}`, { reason: 'Client dropped the pantry' }, ankit);
+  assert.ok(!st.state.erp.projects.find((x: any) => x.id === pid).scope.some((x: any) => x.id === pan.id));
+  assert.equal((await api('POST', '/api/v1/surveys/' + pid + '/check-in', {}, T.sana)).ok, true);
+  assert.equal((await api('POST', `/api/v1/projects/${pid}/scope`, { lines: [{ room: 'Pantry', type: 'OT' }] }, ankit)).status, 403, 'sales locked out once the survey starts');
+  // after the survey of T.pid: sales cannot, PM adds one line on a measured wall → item goes straight to drawing
+  assert.equal((await api('POST', `/api/v1/projects/${T.pid}/scope`, { lines: [{ room: 'Kitchen', type: 'SR' }] }, ankit)).status, 403);
+  assert.equal((await api('POST', `/api/v1/projects/${T.pid}/scope`, { lines: [{ room: 'Kitchen', type: 'SR' }] }, T.vikram)).status, 400, 'wall needed after survey');
+  assert.equal((await api('POST', `/api/v1/projects/${T.pid}/scope`, { lines: [{ room: 'Study', type: 'ST' }], wall: 'A' }, T.vikram)).status, 400, 'room must have been measured');
+  st = await api('POST', `/api/v1/projects/${T.pid}/scope`, { lines: [{ room: 'Kitchen', type: 'SR', desc: 'Shoe rack near entry', value: 18000 }], wall: 'B' }, T.vikram);
+  assert.equal(st.ok, true, JSON.stringify(st));
+  const it = st.state.erp.items.find((i: any) => i.projectId === T.pid && i.type === 'SR');
+  assert.equal(it.stage, 'drawing'); assert.equal(it.wall, 'B'); assert.equal(it.code, 'KIT-SR-01');
+  const line = st.state.erp.projects.find((x: any) => x.id === T.pid).scope.find((x: any) => x.type === 'SR');
+  assert.equal(line.itemId, it.id);
+  assert.equal((await api('DELETE', `/api/v1/projects/${T.pid}/scope/${line.id}`, { reason: 'changed mind' }, T.vikram)).status, 400, 'items in production need a change order');
 });
 
 test('6. drawing gate + customer login approves in the customer app', async () => {
@@ -725,7 +765,7 @@ test('21. customer support: complaint number on WhatsApp, assign team, visit, cl
   const lead = await api('POST', '/api/v1/leads', { name: 'Support Client', phone: '9888800111', source: 'walkin', interest: 'Kitchen', value: 300000 }, T.owner);
   const lid = lead.state.crm.leads.find((l: any) => l.name === 'Support Client').id;
   await api('POST', `/api/v1/leads/${lid}/stage`, { stage: 'won' }, T.owner);
-  const won = await api('POST', `/api/v1/leads/${lid}/convert`, { pm: st0.erp.me, target: '2099-03-01', surveyDate: '2099-01-02', advance: true, address: 'Shankar Nagar, Raipur' }, T.owner);
+  const won = await api('POST', `/api/v1/leads/${lid}/convert`, { pm: st0.erp.me, target: '2099-03-01', surveyDate: '2099-01-02', advance: true, address: 'Shankar Nagar, Raipur', scope: [{ room: 'Kitchen', type: 'KT' }] }, T.owner);
   const proj = won.state?.erp.projects.find((p: any) => p.customer === 'Support Client');
   assert.ok(proj, 'project created'); void st0;
   // installer team to assign

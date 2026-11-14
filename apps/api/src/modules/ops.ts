@@ -8,6 +8,13 @@ import { sendTemplate } from '../integrations/whatsapp.js';
 import { audit, can, checkOtp, issueOtp, staff, userOf, type Principal } from './auth.js';
 import { staffState } from './state.js';
 import { closeAutoTasks, pushTask, stageTargets } from './tasks.js';
+import { addScopeLines, createItemFromScope } from './scope.js';
+
+export const ScopeLineZ = z.object({
+  room: z.string().trim().min(2).max(60), type: z.enum(TYPE_IDS), desc: z.string().trim().max(200).default(''), size: z.string().trim().max(80).default(''),
+  value: z.coerce.number().min(0).max(1e8).default(0), source: z.enum(['manual', 'quote']).default('manual')
+});
+export type ScopeLine = z.infer<typeof ScopeLineZ>;
 
 type U = Extract<Principal, { type: 'user' }>;
 export const act = (q: Q, pid: string, text: string) => q.query('insert into project_activity(project_id, text) values ($1,$2)', [pid, text]);
@@ -15,7 +22,7 @@ const uname = async (q: Q, id?: string | null) => id ? ((await one(q, 'select na
 const firstUserOfRole = async (q: Q, role: string) => (await one(q, `select id from users where role = $1 and active order by created_at limit 1`, [role]))?.id || null;
 
 /* ---------- create project (direct, or from a won CRM lead) ---------- */
-export interface NewProject { leadId?: string | null; customer: string; phone: string; address: string; value: number; pm: string; target: string; surveyDate: string; advance: boolean }
+export interface NewProject { leadId?: string | null; customer: string; phone: string; address: string; value: number; pm: string; target: string; surveyDate: string; advance: boolean; scope?: ScopeLine[] }
 export async function createProject(q: Q, by: U, f: NewProject) {
   const phone = normPhone(f.phone); if (!phone) throw bad('Enter a valid customer mobile number.');
   if (f.leadId && await one(q, 'select 1 from projects where lead_id = $1', [f.leadId])) throw conflict('This lead already has a project.');
@@ -30,6 +37,7 @@ export async function createProject(q: Q, by: U, f: NewProject) {
       [id, label, pct, Math.round((f.value || 0) * pct / 100), gate, i === 0 && f.advance ? new Date() : null, i === 0 && f.advance ? by.user.id : null, i]);
     i++;
   }
+  if (f.scope?.length) await addScopeLines(q, id, f.scope, by.user.id);
   const surveyor = await firstUserOfRole(q, 'surveyor');
   await q.query(`insert into surveys(project_id, status, assignee_id, scheduled_at) values ($1, 'scheduled', $2, ($3::date + time '11:00') at time zone $4)`, [id, surveyor, f.surveyDate, config.TZ_BUSINESS]);
   await act(q, id, f.leadId ? `Project created from CRM lead (won) by ${by.user.name}` : `Project created by ${by.user.name}`);
@@ -150,7 +158,7 @@ const WallZ = z.object({ label: z.string().regex(/^[A-H]$/), w: z.union([z.numbe
   obs: z.array(z.object({ type: z.enum(OBSTRUCTIONS as [string, ...string[]]), left: z.coerce.number().int().min(0), floor: z.coerce.number().int().min(0), w: z.coerce.number().int().positive(), h: z.coerce.number().int().positive(),
     px: z.coerce.number().min(0).max(100).nullable().optional(), py: z.coerce.number().min(0).max(100).nullable().optional() })).max(20).default([]) });
 const RoomZ = z.object({ id: z.string().min(1).max(60), name: z.string().trim().min(1).max(60), code: z.string().trim().min(1).max(6), ceiling: z.coerce.number().int().min(1000).max(10000).default(2900), floor: z.string().max(60).default(''), shape: z.enum(['rect', 'L', 'custom']).default('rect'),
-  walls: z.array(WallZ).min(3).max(8), items: z.array(z.object({ type: z.enum(TYPE_IDS), wall: z.string().regex(/^[A-H]$/), desc: z.string().max(200).default('') })).max(30).default([]) });
+  walls: z.array(WallZ).min(3).max(8), items: z.array(z.object({ type: z.enum(TYPE_IDS), wall: z.string().regex(/^[A-H]$/), desc: z.string().max(200).default(''), scopeId: z.coerce.number().int().positive().optional().nullable() })).max(30).default([]) });
 const DraftZ = z.object({ rooms: z.array(RoomZ).max(60) });
 const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? Math.round(n) : null; };
 
@@ -163,18 +171,21 @@ async function saveDraft(q: Q, pid: string, rooms: z.infer<typeof RoomZ>[]) {
       const wr = await one(q, 'insert into walls(room_id, label, w, h, photo, notes, extra_photos) values ($1,$2,$3,$4,$5,$6,$7) returning id', [r.id, w.label, num(w.w), num(w.h), w.photo || null, w.notes || '', JSON.stringify(w.photos || [])]);
       for (const o of w.obs) await q.query('insert into wall_obstructions(wall_id, type, left_mm, floor_mm, w, h, px, py) values ($1,$2,$3,$4,$5,$6,$7,$8)', [wr!.id, o.type, o.left, o.floor, o.w, o.h, o.px ?? null, o.py ?? null]);
     }
-    for (const x of r.items) await q.query('insert into room_items(room_id, type, wall, descr) values ($1,$2,$3,$4)', [r.id, x.type, x.wall, x.desc]);
+    for (const x of r.items) await q.query('insert into room_items(room_id, type, wall, descr, scope_id) values ($1,$2,$3,$4,$5)', [r.id, x.type, x.wall, x.desc, x.scopeId ?? null]);
   }
 }
-export function surveyProblems(rooms: { name: string; walls: { label: string; w: unknown; h: unknown; photo?: string | null }[]; items: unknown[] }[]) {
+export function surveyProblems(rooms: { name: string; walls: { label: string; w: unknown; h: unknown; photo?: string | null }[]; items: { scope_id?: number | null; scopeId?: number | null }[] }[], scope: { id: number; room_name: string; type: string }[]) {
   const errors: string[] = [], warnings: string[] = [];
+  if (!scope.length) errors.push('There is no scope of work for this project. Ask the project manager to add the items to make.');
   if (!rooms.length) errors.push('Add at least one room.');
+  const placed = new Map<number, number>();
   for (const r of rooms) {
     for (const w of r.walls) { const miss = [!w.photo && 'photo', !num(w.w) && 'width', !num(w.h) && 'height'].filter(Boolean); if (miss.length) errors.push(`${r.name} · wall ${w.label}: ${miss.join(', ')} missing`); }
     if (r.walls.length === 4) for (const [a, b] of [[0, 2], [1, 3]]) { const x = num(r.walls[a].w), y = num(r.walls[b].w); if (x && y && Math.abs(x - y) > 20) warnings.push(`${r.name}: walls ${r.walls[a].label} and ${r.walls[b].label} differ by ${Math.abs(x - y)} mm.`); }
-    if (!r.items.length) warnings.push(`${r.name}: no furniture tagged.`);
+    for (const x of r.items) { const sid = Number(x.scope_id ?? x.scopeId); if (!sid) { errors.push(`${r.name}: only items in the scope of work can be placed. Ask the project manager to add anything new.`); continue; } placed.set(sid, (placed.get(sid) || 0) + 1); }
   }
-  if (!rooms.some(r => r.items.length)) errors.push('Tag at least one piece of furniture.');
+  for (const s of scope) { const n = placed.get(s.id) || 0; if (!n) errors.push(`${typeName(s.type)} · ${s.room_name}: not placed on a wall yet`); if (n > 1) errors.push(`${typeName(s.type)} · ${s.room_name}: placed on more than one wall`); }
+  for (const sid of placed.keys()) if (!scope.some(s => s.id === sid)) errors.push('An item placed in the survey is no longer in the scope of work. Remove it from the wall.');
   return { errors, warnings };
 }
 
@@ -196,7 +207,8 @@ async function itemForInstaller(q: Q, p: U, id: string) {
 }
 
 const ProjectZ = z.object({ leadId: z.string().optional().nullable(), customer: z.string().trim().min(2).max(120), phone: z.string(), address: z.string().trim().min(2).max(300), value: z.coerce.number().min(0).max(1e9).default(0),
-  pm: z.string(), target: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), surveyDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), advance: z.boolean().default(false) });
+  pm: z.string(), target: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), surveyDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), advance: z.boolean().default(false),
+  scope: z.array(ScopeLineZ).min(1, 'Add the scope of work: at least one item to make.').max(40) });
 const fileRef = z.string().regex(/^upload:[A-Za-z0-9_-]+\.(pdf|jpg|png|webp)$/, 'Upload the file first');
 const ItemPatchZ = z.object({ prodPiNo: z.string().trim().max(60).optional(), prodPiAmount: z.coerce.number().min(0).max(1e9).nullable().optional(), prodPiDoc: fileRef.nullable().optional(), hwVendor: z.string().trim().max(80).optional(), hwPoDoc: fileRef.nullable().optional(), hwReceived: z.boolean().optional(), productionDone: z.boolean().optional(), spec: z.record(z.string(), z.string().max(300)).optional(), owner: z.string().optional(), target: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), hwPI: z.boolean().optional(), prodPI: z.boolean().optional(), po: z.string().max(60).optional(),
   dispatch: z.object({ vehicle: z.string().max(40).default(''), boxes: z.coerce.number().int().min(0).max(500).nullable().default(null), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null) }).optional(), delivered: z.boolean().optional(),
@@ -456,23 +468,17 @@ export function opsRoutes(r: Router) {
       const pid = s.project_id;
       const rooms = await many(q, 'select * from rooms where project_id = $1 order by sort', [pid]);
       const shaped = await Promise.all(rooms.map(async r2 => ({ ...r2, walls: await many(q, 'select * from walls where room_id = $1 order by label', [r2.id]), items: await many(q, 'select * from room_items where room_id = $1 order by id', [r2.id]) })));
-      const pr = surveyProblems(shaped);
+      const scope = await many(q, `select * from project_scope where project_id = $1 and status = 'active' and item_id is null order by sort, id`, [pid]);
+      const pr = surveyProblems(shaped, scope);
       if (pr.errors.length) throw new HttpError(400, pr.errors[0], 'survey_incomplete', pr);
       const proj = await one(q, 'select p.*, c.name cname, c.phone cphone from projects p join customers c on c.id = p.customer_id where p.id = $1', [pid]);
       await q.query(`update surveys set status = 'submitted', submitted_at = now(), minutes = greatest(1, round(extract(epoch from (now() - coalesce(check_in_at, now()))) / 60)), signed = $2 where project_id = $1`, [pid, b.signed]);
       const designers = (await many(q, `select id from users where role = 'designer' and active order by created_at`)).map(d => d.id);
       let di = 0, created = 0;
       for (const r2 of shaped) for (const x of r2.items) {
-        const same = Number((await one(q, 'select count(*) n from items where project_id = $1 and room_code = $2 and type = $3', [pid, r2.code, x.type]))!.n);
-        const id = 'I' + (await one(q, `select nextval('item_seq') n`))!.n;
-        const code = `${r2.code}-${x.type}-${String(same + 1).padStart(2, '0')}`;
+        const s = scope.find(z => z.id === Number(x.scope_id)); if (!s) continue;
         const designer = designers.length ? designers[di++ % designers.length] : null;
-        await q.query(`insert into items(id, code, project_id, room_code, room_name, type, wall, descr, stage, owner_id, designer_id, target) values ($1,$2,$3,$4,$5,$6,$7,$8,'drawing',$9,$9,$10)`,
-          [id, code, pid, r2.code, r2.name, x.type, x.wall, x.descr, designer, proj.target]);
-        await q.query(`insert into item_stage_log(item_id, stage, in_at, out_at, by_id) values ($1, 'survey', $2, now(), $3)`, [id, proj.created_at, p.user.id]);
-        await q.query(`insert into item_stage_log(item_id, stage, in_at) values ($1, 'drawing', now())`, [id]);
-        let n = 1; for (const label of BOXES[x.type] || BOXES.OT) await q.query('insert into item_boxes(item_id, n, label) values ($1,$2,$3)', [id, n++, label]);
-        if (designer) await pushTask(q, { title: stageTaskTitle('drawing', code), projectId: pid, itemId: id, assignee: designer, assigner: p.user.id, deadline: addDays(4), auto: true, proof: 'file' });
+        await createItemFromScope(q, s, { code: r2.code, name: r2.name }, x.wall, x.descr, p.user.id, designer, proj.target, proj.created_at);
         created++;
       }
       const t = await many(q, `select id from tasks where project_id = $1 and auto and item_id is null and title like 'Site survey%' and status <> 'done'`, [pid]);

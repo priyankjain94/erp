@@ -17,7 +17,7 @@ async function loadProjects(q: Q, ids: string[] | null, opts: { money: boolean; 
   const projects = await many(q, `select p.*, c.name customer, c.phone from projects p join customers c on c.id = p.customer_id ${where} order by p.created_at desc`, ids ? [ids] : []);
   if (!projects.length) return [];
   const pids = projects.map(p => p.id);
-  const [pays, acts, surveys, rooms, walls, obs, ritems, pdocs, rcpts, invs, cos, svc, pquotes] = await Promise.all([
+  const [pays, acts, surveys, rooms, walls, obs, ritems, pdocs, rcpts, invs, cos, svc, pquotes, scopeRows] = await Promise.all([
     many(q, 'select * from payment_milestones where project_id = any($1::text[]) order by sort, id', [pids]),
     many(q, 'select project_id, text, created_at from project_activity where project_id = any($1::text[]) order by created_at, id', [pids]),
     many(q, 'select * from surveys where project_id = any($1::text[])', [pids]),
@@ -30,8 +30,10 @@ async function loadProjects(q: Q, ids: string[] | null, opts: { money: boolean; 
     opts.money ? many(q, 'select * from invoices where project_id = any($1::text[]) order by invoice_date, id', [pids]) : [],
     many(q, 'select * from change_orders where project_id = any($1::text[]) order by created_at, id', [pids]),
     many(q, 'select * from service_requests where project_id = any($1::text[]) order by created_at desc, id desc', [pids]),
-    opts.money && !opts.customer ? many(q, `select q.id, q.rev, q.total, q.status, q.created_at, p.id project_id from quotes q join projects p on p.lead_id = q.lead_id where p.id = any($1::text[]) order by q.rev`, [pids]) : []
+    opts.money && !opts.customer ? many(q, `select q.id, q.rev, q.total, q.status, q.created_at, p.id project_id from quotes q join projects p on p.lead_id = q.lead_id where p.id = any($1::text[]) order by q.rev`, [pids]) : [],
+    many(q, `select * from project_scope where project_id = any($1::text[]) and status = 'active' order by sort, id`, [pids])
   ]);
+  const scBy = group(scopeRows, 'project_id');
   const rcBy = group(rcpts, 'project_id'), ivBy = group(invs, 'project_id'), coBy = group(cos, 'project_id'), svBy = group(svc, 'project_id'), pqBy = group(pquotes, 'project_id');
   const docBy = group(pdocs, 'project_id'), payBy = group(pays, 'project_id'), actBy = group(acts, 'project_id'), roomBy = group(rooms, 'project_id'), wallBy = group(walls, 'room_id'), obsBy = group(obs, 'wall_id'), riBy = group(ritems, 'room_id');
   const survBy = new Map(surveys.map(s => [s.project_id, s]));
@@ -50,6 +52,7 @@ async function loadProjects(q: Q, ids: string[] | null, opts: { money: boolean; 
       quotes: (pqBy.get(p.id) || []).map(x => ({ id: x.id, rev: x.rev, total: Number(x.total), status: x.status, at: ms(x.created_at) })),
       activity: (actBy.get(p.id) || []).map(a => ({ t: ms(a.created_at), text: a.text })),
       docs: (docBy.get(p.id) || []).map(d => ({ id: d.id, category: d.category, title: d.title, rev: d.rev, notes: d.notes, itemId: d.item_id, by: d.by_id, at: ms(d.created_at), url: signedFileUrl(d.file), shared: d.shared })),
+      scope: (scBy.get(p.id) || []).map(s => ({ id: s.id, room: s.room_name, roomCode: s.room_code, type: s.type, desc: s.descr, size: s.size, value: opts.money ? Number(s.value) : null, source: s.source, itemId: s.item_id || null })),
       survey: {
         status: s.status || 'scheduled', assignee: s.assignee_id || null, scheduled: ms(s.scheduled_at), checkIn: ms(s.check_in_at), at: ms(s.submitted_at), mins: s.minutes ?? null, signed: !!s.signed,
         rooms: (roomBy.get(p.id) || []).map(r => ({
@@ -57,7 +60,7 @@ async function loadProjects(q: Q, ids: string[] | null, opts: { money: boolean; 
           walls: (wallBy.get(r.id) || []).map(w => ({ label: w.label, w: w.w ?? '', h: w.h ?? '', photo: w.photo, photoUrl: signedFileUrl(w.photo), notes: w.notes,
             photos: (Array.isArray(w.extra_photos) ? w.extra_photos : []).map((x: { ref: string; tag?: string }) => ({ ref: x.ref, tag: x.tag || '', url: signedFileUrl(x.ref) })),
             obs: (obsBy.get(w.id) || []).map(o => ({ type: o.type, left: o.left_mm, floor: o.floor_mm, w: o.w, h: o.h, px: o.px, py: o.py })) })),
-          items: (riBy.get(r.id) || []).map(x => ({ type: x.type, wall: x.wall, desc: x.descr }))
+          items: (riBy.get(r.id) || []).map(x => ({ type: x.type, wall: x.wall, desc: x.descr, scopeId: x.scope_id ?? null }))
         }))
       }
     };
@@ -87,7 +90,7 @@ async function loadItems(q: Q, where: string, params: unknown[]) {
     sessions: (s.get(i.id) || []).map(x => ({ start: ms(x.start_at), end: ms(x.end_at), reason: x.reason })),
     checklist: i.checklist || {}, afterPhoto: i.after_photo ? signedFileUrl(i.after_photo) : false, installDone: i.install_done, signedOff: i.signed_off, installedAt: ms(i.installed_at),
     snags: (n.get(i.id) || []).map(x => ({ id: x.id, part: x.part, type: x.type, note: x.note, photo: signedFileUrl(x.photo), status: x.status, raisedBy: x.raised_by, at: ms(x.created_at), vendor: x.vendor || '', cost: x.cost === null || x.cost === undefined ? null : Number(x.cost), payer: x.payer || '' })),
-    productionSteps: i.production_steps || {}, warrantyUntil: i.warranty_until || null,
+    productionSteps: i.production_steps || {}, warrantyUntil: i.warranty_until || null, value: i.value === null || i.value === undefined ? null : Number(i.value), scopeId: i.scope_id || null,
     waiting: i.waiting || '', waitingSince: ms(i.waiting_since), waitingMs: Number(i.waiting_ms || 0),
     log: (l.get(i.id) || []).map(x => ({ stage: x.stage, in: ms(x.in_at), out: ms(x.out_at), by: x.by_id, override: x.override || undefined })),
     flags: i.flags || []
@@ -147,6 +150,7 @@ export async function staffState(p: Extract<Principal, { type: 'user' }>, q: Q =
     const pids = [...new Set(items.map(i => i.projectId))];
     projects = await loadProjects(q, pids, { money: false });
   }
+  if (!perms.has('money')) items = items.map((i: any) => ({ ...i, value: null }));
   const tasks = perms.has('tasksAll') ? await loadTasks(q, '', []) : await loadTasks(q, 'where assignee_id = $1 or assigner_id = $1', [me]);
   const audit = perms.has('admin') ? (await many(q, 'select actor_id, text, created_at from audit_log order by id desc limit 100')).map(a => ({ t: ms(a.created_at), by: a.actor_id, text: a.text })) : [];
   const crm = perms.has('crm') ? {

@@ -1,11 +1,11 @@
 import { z } from 'zod';
 import { db, many, one, tx, type Q } from '../core/db.js';
 import { parse, type Ctx, type Router } from '../core/http.js';
-import { addDays, bad, first, fmtDate, inr, normPhone, notFound, prettyPhone, todayStr } from '../core/util.js';
+import { addDays, bad, first, fmtDate, forbidden, inr, normPhone, notFound, prettyPhone, todayStr } from '../core/util.js';
 import { leadStageName, LEAD_STAGE_IDS, LOST_REASONS, SOURCE_IDS, sourceOf, WA_TEMPLATES, renderTemplate } from '../domain.js';
 import { sendTemplate, sendText, windowOpen } from '../integrations/whatsapp.js';
 import { audit, staff, userOf, type Principal } from './auth.js';
-import { createProject } from './ops.js';
+import { createProject, ScopeLineZ } from './ops.js';
 import { staffState } from './state.js';
 import { pushTask } from './tasks.js';
 
@@ -139,13 +139,16 @@ export function crmRoutes(r: Router) {
     await tx(async q => { const a = await one(q, 'update automations set enabled = $2 where id = $1 returning name', [ctx.params.id, b.on]); if (!a) throw notFound(); await audit(q, userOf(ctx), 'automation', `${a.name} turned ${b.on ? 'on' : 'off'}`, 'automation', ctx.params.id); });
     return done(ctx);
   });
-  r.post('/api/v1/leads/:id/convert', staff('edit'), async ctx => {
+  r.post('/api/v1/leads/:id/convert', staff(), async ctx => {
     const p = userOf(ctx);
-    const b = parse(z.object({ pm: z.string(), target: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), surveyDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), advance: z.boolean().default(false), address: z.string().trim().min(2).max(300) }), ctx.body);
+    if (!p.perms.has('edit') && !p.perms.has('crm')) throw forbidden();
+    const b = parse(z.object({ pm: z.string(), target: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), surveyDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), advance: z.boolean().default(false), address: z.string().trim().min(2).max(300),
+      scope: z.array(ScopeLineZ).min(1, 'Add the scope of work: at least one item to make.').max(40) }), ctx.body);
     const out = await tx(async q => {
       const l = await one(q, 'select * from leads where id = $1 for update', [ctx.params.id]); if (!l) throw notFound();
       if (l.stage !== 'won') throw bad('Only won leads can become projects.');
-      const pr = await createProject(q, p, { leadId: l.id, customer: l.name, phone: l.phone, address: b.address, value: l.value, pm: b.pm, target: b.target, surveyDate: b.surveyDate, advance: b.advance });
+      const pr = await createProject(q, p, { leadId: l.id, customer: l.name, phone: l.phone, address: b.address, value: l.value, pm: b.pm, target: b.target, surveyDate: b.surveyDate, advance: b.advance, scope: b.scope });
+      await q.query(`update quotes set project_id = $2 where lead_id = $1 and project_id is null`, [l.id, pr.id]);
       const pmName = (await one(q, 'select name from users where id = $1', [b.pm]))?.name || '';
       await tl(q, l.id, `Converted to project ${pr.code} · PM ${pmName} · survey ${fmtDate(b.surveyDate)}`, true);
       await q.query(`insert into lead_messages(lead_id, from_kind, text, tpl, status) values ($1, 'auto', $2, 'project_welcome', 'queued')`, [l.id, renderTemplate('project_welcome', [first(l.name), pr.code, fmtDate(b.surveyDate)])]);

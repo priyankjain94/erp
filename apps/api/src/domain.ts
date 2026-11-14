@@ -239,3 +239,6 @@ export const TASK_TEMPLATES_DEFAULT = [
   { title: 'Follow up factory on production status', days: 1, proof: 'comment', verify: false, priority: 'normal' },
   { title: 'Daily site visit report', days: 1, proof: 'photo', verify: false, priority: 'normal' }
 ];
+
+/* room names offered when building the scope (code is used in item codes, e.g. MBR-WR-01) */
+export const ROOM_PRESETS: [string, string][] = [['Master Bedroom', 'MBR'], ['Bedroom 2', 'BR2'], ['Bedroom 3', 'BR3'], ['Kids Room', 'KID'], ['Guest Room', 'GBR'], ['Living', 'LIV'], ['Kitchen', 'KIT'], ['Pantry', 'PAN'], ['Dining', 'DIN'], ['Dresser', 'DRS'], ['Puja', 'PUJ'], ['Utility', 'UTL'], ['Study', 'STD'], ['Foyer', 'FOY'], ['Bathroom', 'BTH']];

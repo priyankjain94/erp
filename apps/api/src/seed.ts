@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from './core/config.js';
-import { one, pool, tx, type Q } from './core/db.js';
+import { many, one, pool, tx, type Q } from './core/db.js';
 import { migrate } from './core/migrate.js';
 import { addDays, log, normPhone } from './core/util.js';
 import { AUTOMATIONS, BOXES, CHECKLIST, DEFAULT_PAYMENTS, ITEM_TYPES, STAGES, stageIdx, stageProof, stageTaskTitle } from './domain.js';
@@ -243,12 +243,22 @@ export async function seedDemo(q: Q) {
       values ($1,$2,'Drawer in the tall unit is not closing smoothly', true, 'customer app', 'SR-' || to_char(now(), 'YYMM') || '-' || lpad(nextval('ticket_seq')::text, 4, '0'), 'hardware', 'normal', '4821', now() + interval '30 hours') returning id`, [cl.rows[0].project_id, cl.rows[0].id]);
     await q.query(`insert into service_events(ticket_id, status, text, by_name) values ($1, 'open', 'Complaint registered from the customer app', 'customer app')`, [t.rows[0].id]);
   }
+  // scope of work: what was sold. Submitted projects get one line per item; P-103 is waiting for its survey.
+  const its = await many(q, `select i.id, i.project_id, i.room_code, i.room_name, i.type, i.descr from items i order by i.project_id, i.id`);
+  let ss = 0;
+  for (const it of its) {
+    const val = ({ KT: 260000, WR: 95000, TV: 55000, VN: 28000, DR: 38000, ST: 42000, SR: 22000, CU: 48000, OT: 30000 } as Record<string, number>)[it.type] || 30000;
+    await q.query(`insert into project_scope(project_id, room_name, room_code, type, descr, value, source, item_id, sort, created_by) values ($1,$2,$3,$4,$5,$6,'quote',$7,$8,'vikram')`, [it.project_id, it.room_name, it.room_code, it.type, it.descr || '', val, it.id, ++ss]);
+    await q.query('update items set value = $2, scope_id = (select max(id) from project_scope) where id = $1', [it.id, val]);
+  }
+  for (const [room, code, type, descr, size, value] of [['Kitchen', 'KIT', 'KT', 'L-shape, acrylic shutters', '3.2 m + 2.1 m', 285000], ['Master Bedroom', 'MBR', 'WR', 'Sliding, 3 doors, with loft', '2400 × 2700', 135000], ['Master Bedroom', 'MBR', 'TV', 'Wall-mounted with back panel', '1800', 60000], ['Bedroom 2', 'BR2', 'WR', 'Hinged, 2 doors', '1800 × 2400', 85000], ['Bedroom 2', 'BR2', 'ST', 'Study table with overhead shelf', '1200', 42000], ['Living', 'LIV', 'TV', 'Floor unit with fluted panel', '2400', 75000]] as const)
+    await q.query(`insert into project_scope(project_id, room_name, room_code, type, descr, size, value, source, sort, created_by) values ('P103',$1,$2,$3,$4,$5,$6,'manual',$7,'vikram')`, [room, code, type, descr, size, value, ++ss]);
 }
 
 /** Wipe all business data (keeps schema). Used by the demo reset and tests. */
 export async function wipe(q: Q) {
   await q.query(`truncate audit_log, sessions, otp_requests, wa_messages, wa_contacts, webhook_events, meta_leads_raw, jobs, reminder_log, uploads,
-    task_events, tasks, snags, work_sessions, item_boxes, documents, item_stage_log, items, room_items, wall_obstructions, walls, rooms, surveys,
+    task_events, tasks, snags, work_sessions, item_boxes, documents, item_stage_log, project_scope, items, room_items, wall_obstructions, walls, rooms, surveys,
     project_activity, payment_milestones, projects, customers, commissions, lead_timeline, lead_messages, leads, partners, users restart identity cascade`);
   await q.query(`select setval('project_seq', 101, false)`); await q.query(`select setval('item_seq', 1, false)`); await q.query(`select setval('task_seq', 1, false)`);
   await q.query(`select setval('receipt_seq', 1, false)`); await q.query(`select setval('partner_seq', 100, false)`); await q.query('delete from invoice_seq'); await q.query(`select setval('ticket_seq', 1, false)`);
