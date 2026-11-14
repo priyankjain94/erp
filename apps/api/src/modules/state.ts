@@ -122,8 +122,9 @@ export async function loadLeads(q: Q) {
 export async function staffState(p: Extract<Principal, { type: 'user' }>, q: Q = db) {
   const me = p.user.id, perms = p.perms;
   const seeAllProjects = perms.has('projects') || perms.has('ops') || perms.has('tasksAll') || perms.has('assign');
-  const users = (await many(q, 'select id, name, role, title, phone, active, members, skills from users order by created_at, name'))
-    .map(u => ({ id: u.id, name: u.name, role: u.role, title: u.title, phone: prettyPhone(u.phone), active: u.active, members: u.members, skills: u.skills.length ? u.skills : undefined }));
+  const users = (await many(q, 'select id, name, role, title, phone, active, members, skills, email, google_sub from users order by created_at, name'))
+    .map(u => ({ id: u.id, name: u.name, role: u.role, title: u.title, phone: prettyPhone(u.phone), active: u.active, members: u.members, skills: u.skills.length ? u.skills : undefined, ...(perms.has('admin') || u.id === me ? { email: u.email || '', google: !!u.google_sub } : {}) }));
+  const accessRequests = perms.has('admin') ? (await many(q, `select * from access_requests where status = 'pending' order by created_at`)).map(a => ({ id: a.id, name: a.name, phone: prettyPhone(a.phone), email: a.email || '', roleWanted: a.role_wanted, note: a.note, at: ms(a.created_at) })) : [];
   const roleRows = await many(q, 'select role, perm, allowed from role_permissions');
   const roles: Record<string, Record<string, boolean>> = JSON.parse(JSON.stringify(DEFAULT_ROLES));
   for (const r of roleRows) (roles[r.role] ||= {})[r.perm] = r.allowed;
@@ -155,7 +156,7 @@ export async function staffState(p: Extract<Principal, { type: 'user' }>, q: Q =
     autos: (await many(q, 'select * from automations order by length(id), id')).map(a => ({ id: a.id, fam: a.fam, name: a.name, when: a.when_text, then: a.then_text, on: a.enabled, runs: a.runs }))
   } : { leads: [], partners: [], autos: [] };
   const wa = await one(q, `select count(*) filter (where status = 'simulated') sim, count(*) filter (where status in ('sent','delivered','read')) sent, count(*) filter (where status = 'failed') failed from wa_messages where created_at > now() - interval '30 days'`);
-  return { erp: { me, projects, items, tasks, users, roles, audit }, crm, server: { wa } };
+  return { erp: { me, projects, items, tasks, users, roles, audit, accessRequests }, crm, server: { wa } };
 }
 
 /** What a customer sees: only their own projects, in customer-friendly terms. */

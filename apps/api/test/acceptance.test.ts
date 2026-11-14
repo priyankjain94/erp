@@ -14,6 +14,12 @@ const mockGraph = http.createServer((req, res) => {
     graphCalls.push({ path: url.pathname, body, method: req.method, sig: req.headers['x-hub-signature-256'] as string });
     res.setHeader('content-type', 'application/json');
     if (url.pathname === '/forward') return res.end('{}');
+    if (url.pathname === '/tokeninfo') {
+      const tok = url.searchParams.get('id_token') || '';
+      if (!tok.startsWith('good:')) { res.statusCode = 400; return res.end('{"error":"invalid_token"}'); }
+      const [, email, sub] = tok.split(':');
+      return res.end(JSON.stringify({ aud: 'test-client.apps.googleusercontent.com', iss: 'https://accounts.google.com', exp: String(Math.floor(Date.now() / 1000) + 600), email, email_verified: 'true', sub, name: 'Google ' + sub }));
+    }
     if (url.pathname.endsWith('/message_templates') && req.method === 'GET') return res.end(JSON.stringify({ data: [
       { name: 'mms_quotation_request', language: 'en_US', status: 'APPROVED', category: 'MARKETING', components: [{ type: 'BODY', text: 'Hi {{1}}, thanks for your interest.' }] },
       { name: 'mms_followup_day3', language: 'en_US', status: 'APPROVED', category: 'MARKETING', components: [{ type: 'BODY', text: 'Hi {{1}}, following up.' }, { type: 'BUTTONS', buttons: [{ type: 'URL', text: 'Visit' }] }] },
@@ -37,7 +43,8 @@ before(async () => {
   Object.assign(process.env, {
     NODE_ENV: 'test', DEMO_MODE: 'true', SCHEDULER_ENABLED: 'false', WORKER_ENABLED: 'false', STORAGE_LOCAL_DIR: '/tmp/mms-test-uploads',
     META_GRAPH_BASE: `http://127.0.0.1:${(mockGraph.address() as AddressInfo).port}`, META_APP_SECRET: SECRET,
-    WHATSAPP_ACCESS_TOKEN: 'test-token', WHATSAPP_PHONE_NUMBER_ID: '1111', WHATSAPP_WABA_ID: '2222', WHATSAPP_VERIFY_TOKEN: 'wa-verify', WHATSAPP_FORWARD_URL: '',
+    GOOGLE_TOKENINFO_URL: `http://127.0.0.1:${(mockGraph.address() as AddressInfo).port}/tokeninfo`,
+    WHATSAPP_ACCESS_TOKEN: 'test-token', WHATSAPP_PHONE_NUMBER_ID: '1111', WHATSAPP_WABA_ID: '2222', WHATSAPP_VERIFY_TOKEN: 'wa-verify', WHATSAPP_FORWARD_URL: '', GOOGLE_CLIENT_ID: 'test-client.apps.googleusercontent.com',
     META_PAGE_ID: 'page1', META_PAGE_ACCESS_TOKEN: 'page-token', META_LEADS_VERIFY_TOKEN: 'leads-verify'
   });
   const { migrate } = await import('../src/core/migrate.js');
@@ -531,4 +538,47 @@ test('18. partners, quotations, receipts, GST invoices, change orders, factory s
   // company profile
   assert.equal((await api('PUT', '/api/v1/settings/company', { name: 'Make My Space', gstin: 'BAD' }, T.owner)).status, 400);
   assert.ok((await api('PUT', '/api/v1/settings/company', { name: 'Make My Space', gstin: '22ABCDE1234F1Z5', warrantyYears: 5 }, T.owner)).ok);
+});
+
+test('19. sign up and Google sign-in: access request → admin approves → Google login; start fresh keeps only the super admin', async () => {
+  // unknown Google account → asked to request access
+  const g1 = await api('POST', '/api/v1/auth/google', { credential: 'good:neha@example.com:g-neha-1' });
+  assert.equal(g1.needsAccess, true); assert.equal(g1.email, 'neha@example.com');
+  assert.equal((await api('POST', '/api/v1/auth/google', { credential: 'forged-token-xxxxxxxxxxxx' })).status, 401);
+  // request access with the Google credential attached
+  assert.equal((await api('POST', '/api/v1/auth/access-request', { name: 'Neha', phone: phoneOf(0) })).status, 400, 'existing staff number');
+  assert.ok((await api('POST', '/api/v1/auth/access-request', { name: 'Neha', phone: '9844400111', roleWanted: 'Designer', credential: 'good:neha@example.com:g-neha-1' })).ok);
+  assert.equal((await api('POST', '/api/v1/auth/google', { credential: 'good:neha@example.com:g-neha-1' })).pending, true);
+  const st = await api('GET', '/api/v1/state', undefined, T.owner);
+  const ar = st.erp.accessRequests.find((a: any) => a.name === 'Neha');
+  assert.ok(ar && ar.email === 'neha@example.com');
+  assert.ok(st.erp.tasks.some((t: any) => t.title.startsWith('Access request: Neha')), 'admin gets a task');
+  assert.equal((await api('POST', `/api/v1/admin/access-requests/${ar.id}`, { approve: true, role: 'designer' }, T.ravi)).status, 403);
+  assert.equal((await api('POST', `/api/v1/admin/access-requests/${ar.id}`, { approve: true }, T.owner)).status, 400, 'role required');
+  const ap = await api('POST', `/api/v1/admin/access-requests/${ar.id}`, { approve: true, role: 'designer' }, T.owner);
+  assert.ok(ap.ok);
+  const neha = ap.state.erp.users.find((u: any) => u.email === 'neha@example.com');
+  assert.ok(neha, 'approved user carries the Google email'); assert.equal(neha.role, 'designer');
+  // Google login now works
+  const g2 = await api('POST', '/api/v1/auth/google', { credential: 'good:neha@example.com:g-neha-1' });
+  assert.ok(g2.accessToken); assert.equal(g2.user.role, 'designer');
+  // admin sets an email on an existing user → that Google account can log in
+  const ravi = st.erp.users.find((u: any) => u.id === 'ravi');
+  assert.ok((await api('PATCH', `/api/v1/users/${ravi.id}`, { email: 'Ravi@Example.com' }, T.owner)).ok);
+  assert.equal((await api('PATCH', `/api/v1/users/meera`, { email: 'ravi@example.com' }, T.owner)).status, 400, 'email unique');
+  assert.equal((await api('POST', '/api/v1/auth/google', { credential: 'good:ravi@example.com:g-ravi' })).user.id, 'ravi');
+  // decline flow
+  await api('POST', '/api/v1/auth/access-request', { name: 'Spam', phone: '9844400222' });
+  const sp = (await api('GET', '/api/v1/state', undefined, T.owner)).erp.accessRequests.find((a: any) => a.name === 'Spam');
+  assert.ok((await api('POST', `/api/v1/admin/access-requests/${sp.id}`, { approve: false }, T.owner)).ok);
+  // start fresh: only the super admin, wrong confirm and non-super-admin refused
+  T.meera = await login(phoneOf(1));
+  assert.equal((await api('POST', '/api/v1/admin/start-fresh', { confirm: 'yes' }, T.owner)).status, 400);
+  assert.equal((await api('POST', '/api/v1/admin/start-fresh', { confirm: 'START FRESH' }, T.ravi)).status, 403);
+  const sf = await api('POST', '/api/v1/admin/start-fresh', { confirm: 'START FRESH' }, T.owner);
+  assert.ok(sf.ok);
+  const { db } = await import('../src/core/db.js');
+  const counts = (await db.query(`select (select count(*) from users)::int u, (select count(*) from leads)::int l, (select count(*) from projects)::int p, (select count(*) from partners)::int pt`)).rows[0];
+  assert.deepEqual(counts, { u: 1, l: 0, p: 0, pt: 0 });
+  assert.equal((await api('GET', '/api/v1/state', undefined, T.owner)).status, 401, 'old sessions are gone');
 });

@@ -6,7 +6,8 @@ import { bad, forbidden, normPhone, notFound, slug } from '../core/util.js';
 import { DEFAULT_ROLES, PERMS, ROLE_IDS, ROLES, TYPE_IDS, WA_TEMPLATES } from '../domain.js';
 import { syncTemplates, sendTemplate, templateMap, saveTemplateMap, metaTemplates, fetchMetaTemplates, DEFAULT_TEMPLATE_MAP } from '../integrations/whatsapp.js';
 import { subscribePage, pollLeads } from '../integrations/metaLeads.js';
-import { metaLeadsLive, waVerifyToken } from '../core/config.js';
+import { demoActive, metaLeadsLive, waVerifyToken } from '../core/config.js';
+import { log } from '../core/util.js';
 import { audit, invalidatePerms, revokeAllSessions, staff, userOf } from './auth.js';
 import { staffState } from './state.js';
 import { bootstrap, seedDemo, wipe } from '../seed.js';
@@ -48,7 +49,7 @@ export function adminRoutes(r: Router) {
     return done(ctx);
   });
   r.patch('/api/v1/users/:id', staff('admin'), async ctx => {
-    const p = userOf(ctx); const b = parse(z.object({ role: z.enum(ROLE_IDS).optional(), active: z.boolean().optional(), name: z.string().trim().min(2).max(80).optional(), title: z.string().max(80).optional(), phone: z.string().optional() }).strict(), ctx.body);
+    const p = userOf(ctx); const b = parse(z.object({ role: z.enum(ROLE_IDS).optional(), active: z.boolean().optional(), name: z.string().trim().min(2).max(80).optional(), title: z.string().max(80).optional(), phone: z.string().optional(), email: z.string().trim().toLowerCase().max(120).regex(/^$|^[^@\s]+@[^@\s]+\.[^@\s]+$/, 'Enter a valid email.').optional() }).strict(), ctx.body);
     await tx(async q => {
       const u = await one(q, 'select * from users where id = $1 for update', [ctx.params.id]); if (!u) throw notFound();
       const self = u.id === p.user.id;
@@ -60,6 +61,11 @@ export function adminRoutes(r: Router) {
         await audit(q, p, 'user.active', `${u.name} ${b.active ? 'reactivated' : 'deactivated'}`, 'user', u.id);
       }
       if (b.name || b.title !== undefined) await q.query('update users set name = coalesce($2, name), title = coalesce($3, title) where id = $1', [u.id, b.name || null, b.title ?? null]);
+      if (b.email !== undefined) {
+        if (b.email && await one(q, 'select 1 from users where lower(email) = $1 and id <> $2', [b.email, u.id])) throw bad('Another user already has this email.');
+        await q.query('update users set email = $2, google_sub = case when lower(coalesce(email, \'\')) = $2 then google_sub else null end where id = $1', [u.id, b.email || null]);
+        await audit(q, p, 'user.email', `${u.name}: Google sign-in email ${b.email ? 'set' : 'removed'}`, 'user', u.id);
+      }
       if (b.phone) { const ph = normPhone(b.phone); if (!ph) throw bad('Enter a 10-digit number.'); await phoneFree(q, ph, u.id); await q.query('update users set phone = $2 where id = $1', [u.id, ph]); await revokeAllSessions(q, 'user', u.id); }
     });
     return done(ctx);
@@ -128,14 +134,53 @@ export function adminRoutes(r: Router) {
       jobs, graphVersion: config.META_GRAPH_VERSION
     };
   });
-  /* demo-only helpers: never available unless DEMO_MODE=true */
+  /* sign-up requests */
+  r.post('/api/v1/admin/access-requests/:id', staff('admin'), async ctx => {
+    const b = parse(z.object({ approve: z.boolean(), role: z.enum(ROLE_IDS).optional(), title: z.string().max(80).default('') }), ctx.body);
+    await tx(async q => {
+      const a = await one(q, `select * from access_requests where id = $1 for update`, [Number(ctx.params.id)]); if (!a) throw notFound();
+      if (a.status !== 'pending') throw bad('This request was already handled.');
+      let uid: string | null = null;
+      if (b.approve) {
+        if (!b.role) throw bad('Choose a role for this person.');
+        uid = await createUser(q, userOf(ctx), { name: a.name, phone: a.phone, role: b.role, title: b.title });
+        if (a.email) await q.query('update users set email = $2, google_sub = $3 where id = $1', [uid, a.email, a.google_sub]);
+      }
+      await q.query(`update access_requests set status = $2, decided_by = $3, decided_at = now(), user_id = $4 where id = $1`, [a.id, b.approve ? 'approved' : 'rejected', userOf(ctx).user.id, uid]);
+      await q.query(`update tasks set status = 'done', done_at = now() where auto and status <> 'done' and title like $1`, [`Access request: ${a.name} (%`]);
+      if (!b.approve) await audit(q, userOf(ctx), 'access.reject', `Declined access request from ${a.name}`, 'user', String(a.id));
+    });
+    return done(ctx);
+  });
+
+  /* start fresh: delete all sample data and keep only the super admin (settings, roles, templates and company profile are kept) */
+  r.post('/api/v1/admin/start-fresh', staff('admin'), async ctx => {
+    const b = parse(z.object({ confirm: z.literal('START FRESH') }), ctx.body);
+    const p = userOf(ctx);
+    if (!(p.user.id === 'owner' || p.user.id === 'superadmin' || p.user.phone === normPhone(config.ADMIN_PHONE))) throw forbidden('Only the super admin can do this.');
+    void b;
+    await tx(async q => {
+      const me = await one(q, 'select id, name, phone, email, google_sub from users where id = $1', [p.user.id]);
+      await wipe(q);
+      await q.query('truncate access_requests restart identity');
+      await bootstrap(q);
+      // whoever pressed the button always keeps access, even if ADMIN_PHONE is not set
+      if (me && !(await one(q, 'select 1 from users where phone = $1', [me.phone])))
+        await q.query(`insert into users(id, name, phone, role, title, email, google_sub) values ($5, $1, $2, 'admin', 'Super admin', $3, $4)`, [me.name, me.phone, me.email, me.google_sub, (await one(q, `select 1 from users where id = 'owner'`)) ? await uniqueId(q, me.name) : 'owner']);
+      else if (me) await q.query('update users set email = coalesce(email, $2), google_sub = coalesce(google_sub, $3) where phone = $1', [me.phone, me.email, me.google_sub]);
+    });
+    log.warn('start-fresh: all sample data deleted by', p.user.name);
+    return { ok: true, loggedOut: true };
+  });
+
+  /* demo-only helpers: never available unless DEMO_MODE=true and WhatsApp is not live yet */
   r.get('/api/v1/auth/demo-users', async ctx => {
-    if (!config.DEMO_MODE) return { users: [] };
+    if (!demoActive()) return { users: [] };
     if (ctx.query.get('audience') === 'customer') return { users: (await many(db, 'select distinct c.name, c.phone from customers c join projects p on p.customer_id = c.id order by c.name')).map(c => ({ name: c.name, phone: prettyPhone(c.phone) })) };
     return { users: (await many(db, 'select name, role, phone from users where active order by created_at')).map(u => ({ name: u.name, role: u.role, phone: prettyPhone(u.phone) })) };
   });
   r.post('/api/v1/admin/demo-reset', staff('admin'), async () => {
-    if (!config.DEMO_MODE) throw forbidden('Only available in demo mode.');
+    if (!demoActive()) throw forbidden('Only available in demo mode.');
     await tx(async q => { await wipe(q); await seedDemo(q); await bootstrap(q); });
     return { ok: true };
   });

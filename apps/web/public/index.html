@@ -707,7 +707,34 @@ const room = (name, code, w, d) => ({id:'R' + code + Math.random().toString(36).
 /* ---------- Login (team or customer) ---------- */
 function LoginScreen({audience = 'staff', onLogin, title = 'Team login'}){
   const [phone, setPhone] = useState(''), [step, setStep] = useState(1), [code, setCode] = useState(''), [err, setErr] = useState(''), [info, setInfo] = useState(null), [busy, setBusy] = useState(false), [demo, setDemo] = useState([]);
-  useEffect(() => { API.call('GET', '/auth/demo-users?audience=' + audience).then(r => setDemo(r.users || [])).catch(() => {}); }, []);
+  const [cfg, setCfg] = useState({}), [gCred, setGCred] = useState(null), [req, setReq] = useState(null), [sent, setSent] = useState(null);
+  const gBtn = useRef(null);
+  useEffect(() => { API.call('GET', '/auth/demo-users?audience=' + audience).then(r => setDemo(r.users || [])).catch(() => {}); API.call('GET', '/auth/config').then(setCfg).catch(() => {}); }, []);
+  // Google sign-in (staff only): Google Identity Services button
+  useEffect(() => {
+    if (audience !== 'staff' || !cfg.googleClientId || step !== 1 || req || sent) return;
+    const draw = () => { if (!window.google?.accounts?.id || !gBtn.current) return false;
+      window.google.accounts.id.initialize({client_id:cfg.googleClientId, callback:async resp => {
+        setErr(''); setBusy(true);
+        try { const r = await API.call('POST', '/auth/google', {credential:resp.credential});
+          if (r.needsAccess){ if (r.pending) setSent({name:r.name}); else { setGCred(resp.credential); setReq({name:r.name || '', phone:'', roleWanted:'', note:'', email:r.email}); } }
+          else { API.setToken(r.accessToken); await onLogin(r); } }
+        catch(x){ setErr(x.message); }
+        setBusy(false); }});
+      window.google.accounts.id.renderButton(gBtn.current, {theme:'outline', size:'large', text:'continue_with', shape:'rectangular', width:Math.min(360, gBtn.current.offsetWidth || 360)});
+      return true; };
+    if (draw()) return;
+    let sc = document.getElementById('gsi-js');
+    if (!sc){ sc = document.createElement('script'); sc.id = 'gsi-js'; sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true; document.head.appendChild(sc); }
+    const t = setInterval(() => { if (draw()) clearInterval(t); }, 300);
+    return () => clearInterval(t);
+  }, [cfg.googleClientId, step, req, sent]);
+  const sendReq = async e => { e.preventDefault(); setErr('');
+    if (req.name.trim().length < 2) return setErr('Enter your name.');
+    if (req.phone.replace(/\D/g,'').length < 10) return setErr('Enter your 10-digit WhatsApp number.');
+    setBusy(true);
+    try { await API.call('POST', '/auth/access-request', {name:req.name, phone:req.phone, roleWanted:req.roleWanted, note:req.note, ...(gCred ? {credential:gCred} : {})}); setSent({name:req.name}); setReq(null); } catch(x){ setErr(x.message); }
+    setBusy(false); };
   const next = async e => { e.preventDefault(); setErr('');
     if (phone.replace(/\D/g,'').length < 10) return setErr('Enter your 10-digit mobile number.');
     setBusy(true);
@@ -719,10 +746,22 @@ function LoginScreen({audience = 'staff', onLogin, title = 'Team login'}){
   return html`<div style=${{minHeight:'100%',display:'grid',placeItems:'center',padding:16,background:'var(--bg)',overflow:'auto'}}>
     <div className="sheet" style=${{width:'min(440px,100%)',borderTop:0,border:'1px solid var(--line)'}}>
       <header style=${{display:'grid',gap:18,paddingTop:28}}><${Mark} cls="login-logo"/><div><span className="kicker">${title}</span><h2 style=${{marginTop:10}}>${audience === 'customer' ? 'Your home, step by step.' : 'Precision, made yours.'}</h2><p>${audience === 'customer' ? 'Track your furniture, approve drawings and reach your project manager.' : 'Make My Space CRM + Operations. Sign in with your WhatsApp number.'}</p></div></header>
-      ${step === 1 ? html`<form className="form" style=${{gridTemplateColumns:'1fr'}} onSubmit=${next} noValidate>
+      ${sent ? html`<div className="form" style=${{gridTemplateColumns:'1fr'}}><div className="banner">Thanks ${sent.name}. Your request has reached the admin. You'll get a WhatsApp message once your access is approved; then log in here.</div><button className="btn ghost" onClick=${() => setSent(null)}>Back to login</button></div>`
+      : req ? html`<form className="form" style=${{gridTemplateColumns:'1fr'}} onSubmit=${sendReq} noValidate>
+          <div className="banner">${req.email ? html`Signed in with Google as <b>${req.email}</b>. ` : ''}Ask for access to the Make My Space app. An admin approves it and sets your role.</div>
+          <label>Your name<input autoFocus value=${req.name} onInput=${e => setReq({...req, name:e.target.value})}/></label>
+          <label>WhatsApp number<input inputMode="tel" value=${req.phone} onInput=${e => setReq({...req, phone:e.target.value})} placeholder="10-digit mobile"/><span className="hint">Tasks and updates come on WhatsApp.</span></label>
+          <label>Your work<select value=${req.roleWanted} onChange=${e => setReq({...req, roleWanted:e.target.value})}><option value="">Choose…</option>${['Sales','Site surveyor','Designer','Purchase','Production / factory','Project manager','Installation team lead','Operations','Accounts','Other'].map(x => html`<option key=${x}>${x}</option>`)}</select></label>
+          <label>Note for the admin (optional)<input value=${req.note} onInput=${e => setReq({...req, note:e.target.value})} placeholder="e.g. joined the Raipur showroom"/></label>
+          ${err && html`<span className="err">${err}</span>`}
+          <div className="inline"><button type="button" className="btn ghost" onClick=${() => { setReq(null); setGCred(null); setErr(''); }}>Back</button><button className="btn primary" type="submit" style=${{marginLeft:'auto'}} disabled=${busy}>Request access</button></div>
+        </form>`
+      : step === 1 ? html`<form className="form" style=${{gridTemplateColumns:'1fr'}} onSubmit=${next} noValidate>
           <label>Mobile number (WhatsApp)<input inputMode="tel" autoFocus value=${phone} onInput=${e => setPhone(e.target.value)} placeholder="10-digit mobile"/></label>
           ${err && html`<span className="err">${err}</span>`}
           <button className="btn primary" type="submit" disabled=${busy} style=${{justifyContent:'center'}}>${busy ? 'Sending…' : 'Send OTP on WhatsApp'}</button>
+          ${audience === 'staff' && cfg.googleClientId && html`<div style=${{display:'grid',gap:8,justifyItems:'center'}}><span style=${{fontSize:12,color:'var(--muted)'}}>or</span><div ref=${gBtn} style=${{width:'100%',display:'flex',justifyContent:'center',minHeight:44}}></div></div>`}
+          ${audience === 'staff' && html`<p style=${{fontSize:13,color:'var(--muted)',margin:'4px 0 0'}}>New to the team? <button type="button" className="linkbtn" onClick=${() => { setErr(''); setReq({name:'', phone:phone, roleWanted:'', note:''}); }}>Request access</button></p>`}
           ${demo.length > 0 && html`<details style=${{fontSize:12,color:'var(--muted)'}}><summary>Demo numbers</summary><div style=${{display:'grid',gap:2,marginTop:6}}>${demo.map(u => html`<button type="button" key=${u.phone} className="linkbtn" style=${{color:'var(--muted)',textAlign:'left',marginTop:0}} onClick=${() => setPhone(u.phone)}>${u.name}${u.role ? ' · ' + (roleById[u.role]?.name || u.role) : ''} · ${u.phone}</button>`)}</div></details>`}
         </form>`
       : html`<form className="form" style=${{gridTemplateColumns:'1fr'}} onSubmit=${verify}>
@@ -766,7 +805,9 @@ function UsersAdmin({erp, ops, toast}){
   return html`<section className="view"><div className="stack">
     <div className="seg" style=${{alignSelf:'start'}}>${[['users','Users'],['roles','Roles and access'],['audit','Change log'],['integrations','WhatsApp and Meta'],['company','Company profile'],['exports','Exports']].map(([id,n]) => html`<button key=${id} aria-pressed=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
     ${tab === 'users' && html`<div className="stack">
-      <div className="inline"><span style=${{color:'var(--muted)'}}>${erp.users.filter(u => u.active !== false).length} active users. Staff sign in with their mobile number and a WhatsApp OTP; no passwords.</span><button className="btn primary small" style=${{marginLeft:'auto'}} onClick=${() => setF({name:'', phone:'', role:'installer', title:''})}><${Icon} n="plus" s=${14}/>Add user</button></div>
+      <div className="inline"><span style=${{color:'var(--muted)'}}>${erp.users.filter(u => u.active !== false).length} active users. Staff sign in with a WhatsApp code, or with Google if their email is set below. No passwords.</span><button className="btn primary small" style=${{marginLeft:'auto'}} onClick=${() => setF({name:'', phone:'', role:'installer', title:''})}><${Icon} n="plus" s=${14}/>Add user</button></div>
+      ${(erp.accessRequests || []).length > 0 && html`<div className="box" style=${{borderColor:'var(--accent)'}}><h4>Access requests · ${erp.accessRequests.length} waiting</h4>
+        <table style=${{minWidth:0}}><tbody>${erp.accessRequests.map(a => html`<${AccessRow} key=${a.id} a=${a} ops=${ops}/>`)}</tbody></table></div>`}
       ${f && html`<div className="box"><h4>New user</h4><div className="form" style=${{padding:0}}>
         <label>Name<input value=${f.name} onInput=${e => setF({...f, name:e.target.value})} autoFocus/></label>
         <label>WhatsApp number<input inputMode="tel" value=${f.phone} onInput=${e => setF({...f, phone:e.target.value})} placeholder="10-digit mobile"/></label>
@@ -774,10 +815,12 @@ function UsersAdmin({erp, ops, toast}){
         <label>Title (optional)<input value=${f.title} onInput=${e => setF({...f, title:e.target.value})} placeholder="e.g. Senior designer"/></label>
         <div className="form-foot"><button className="btn ghost" onClick=${() => setF(null)}>Cancel</button><button className="btn primary" disabled=${!ok} onClick=${async () => { if (await ops.addUser({name:f.name.trim(), phone:f.phone, role:f.role, title:f.title.trim()})) setF(null); }}>Add and send invite</button></div></div></div>`}
       <div className="table-wrap"><table>
-        <thead><tr><th>User</th><th>WhatsApp</th><th>Role</th><th>Can open</th><th>Open tasks</th><th>Active</th></tr></thead>
+        <thead><tr><th>User</th><th>WhatsApp</th><th>Google sign-in email</th><th>Role</th><th>Can open</th><th>Open tasks</th><th>Active</th></tr></thead>
         <tbody>${erp.users.map(u => { const self = u.id === erp.me || u.id === 'owner'; const perms = erp.roles[u.role] || {};
           return html`<tr key=${u.id} style=${{opacity:u.active === false ? .5 : 1}}><td><span className="inline" style=${{gap:8}}><${Av} id=${u.id}/><span><b>${u.name}</b><div className="sub">${u.title || ''}</div></span></span></td>
           <td className="num">${u.phone || '—'}</td>
+          <td><input className="inp" type="email" defaultValue=${u.email || ''} placeholder="name@gmail.com" style=${{width:190}} aria-label=${'Google email of ' + u.name}
+            onBlur=${e => { const v = e.target.value.trim().toLowerCase(); if (v !== (u.email || '')) ops.updUser(u.id, {email:v}, v ? `${u.name} can now sign in with Google (${v}).` : `Google sign-in removed for ${u.name}.`); }}/>${u.google && html`<div className="sub" style=${{fontSize:11}}>Linked</div>`}</td>
           <td><select className="sel" value=${u.role} disabled=${self} onChange=${e => ops.updUser(u.id, {role:e.target.value}, `${u.name} is now ${roleById[e.target.value].name}.`)} aria-label=${'Role of ' + u.name}>${ROLES.map(r => html`<option key=${r.id} value=${r.id}>${r.name}</option>`)}</select></td>
           <td className="sub" style=${{maxWidth:260,whiteSpace:'normal'}}>${PERMS.filter(([k]) => perms[k]).map(p => p[1]).join(', ') || 'Own tasks only'}</td>
           <td className="num">${erp.tasks.filter(t => t.assignee === u.id && t.status !== 'done').length}</td>
@@ -796,8 +839,31 @@ function UsersAdmin({erp, ops, toast}){
       <ol className="chain">${(erp.audit || []).map((a,i) => html`<li key=${i}><span>${a.text} <span className="sub" style=${{color:'var(--muted)'}}>· by ${uname(a.by)}</span></span><time>${fmtDT(a.t)}</time></li>`)}</ol>${!(erp.audit || []).length && html`<p className="hint">No changes yet.</p>`}</div>`}
     ${tab === 'integrations' && html`<${Integrations} toast=${toast}/>`}
     ${tab === 'company' && html`<${CompanyProfile} toast=${toast}/>`}
+    ${tab === 'company' && html`<${StartFresh} erp=${erp} toast=${toast}/>`}
     ${tab === 'exports' && html`<div className="panel"><h3>Exports</h3><p className="hint">Download as CSV (opens in Excel or Google Sheets).</p><div className="inline" style=${{flexWrap:'wrap',gap:8,marginTop:10}}>${[['leads','Leads'],['partners','Partners and sales value'],['projects','Projects'],['payments','Payments received'],['invoices','Tax invoices'],['installer-hours','Installer hours']].map(([k, n]) => html`<button key=${k} className="btn small" onClick=${() => downloadCsv(k)}>${n}</button>`)}</div></div>`}
   </div></section>`;
+}
+function AccessRow({a, ops}){
+  const guess = {'Sales':'sales','Site surveyor':'surveyor','Designer':'designer','Purchase':'purchase','Production / factory':'production','Project manager':'pm','Installation team lead':'installer','Operations':'ops_head'}[a.roleWanted] || '';
+  const [role, setRole] = useState(guess);
+  return html`<tr><td><b>${a.name}</b><div className="sub">${a.phone}${a.email ? ' · ' + a.email : ''}</div>${a.note && html`<div className="sub">${a.note}</div>`}</td>
+    <td className="sub">${a.roleWanted || '—'}<div>${dayLabel(a.at)}</div></td>
+    <td><select className="sel" value=${role} onChange=${e => setRole(e.target.value)} aria-label="Role"><option value="">Role…</option>${ROLES.map(r => html`<option key=${r.id} value=${r.id}>${r.name}</option>`)}</select></td>
+    <td style=${{whiteSpace:'nowrap'}}><button className="btn small primary" disabled=${!role} onClick=${() => ops.api('POST', `/admin/access-requests/${a.id}`, {approve:true, role}, `${a.name} added as ${roleById[role].name}. They got a WhatsApp invite.`)}>Approve</button>
+      <button className="btn small ghost" onClick=${() => ops.api('POST', `/admin/access-requests/${a.id}`, {approve:false}, 'Request declined.')}>Decline</button></td></tr>`;
+}
+function StartFresh({erp, toast}){
+  const me = erp.users.find(u => u.id === erp.me);
+  const [open, setOpen] = useState(false), [txt, setTxt] = useState(''), [busy, setBusy] = useState(false);
+  const sample = erp.users.some(u => /^\+?91 ?90000/.test(String(u.phone || '').replace(/\s/g,' ')) || /90000 000/.test(u.phone || ''));
+  if (!(erp.me === 'owner' || erp.me === 'superadmin' || me?.title === 'Super admin')) return null;
+  return html`<div className="panel" style=${{borderColor:'var(--crit)'}}><h3>Start fresh</h3>
+    <p className="hint">Deletes every lead, project, partner, task, payment, file and user, including all sample data. Only you (the super admin) stay. Company profile, roles, WhatsApp template settings and automations are kept. This cannot be undone.${sample ? ' Sample data is still loaded.' : ''}</p>
+    ${!open ? html`<button className="btn small" style=${{color:'var(--crit)',borderColor:'var(--crit)'}} onClick=${() => setOpen(true)}>Start fresh…</button>`
+    : html`<div className="inline" style=${{gap:8,flexWrap:'wrap'}}><input className="inp" value=${txt} onInput=${e => setTxt(e.target.value)} placeholder="Type START FRESH"/>
+      <button className="btn small primary" disabled=${txt !== 'START FRESH' || busy} onClick=${async () => { setBusy(true); try { await API.call('POST', '/admin/start-fresh', {confirm:'START FRESH'}); alert('All sample data is deleted. Log in again.'); API.setToken(null); location.reload(); } catch(e){ toast(e.message, 'err'); } setBusy(false); }}>Delete everything</button>
+      <button className="btn small ghost" onClick=${() => { setOpen(false); setTxt(''); }}>Cancel</button></div>`}
+  </div>`;
 }
 function CompanyProfile({toast}){
   const [c, setC] = useState(null), [busy, setBusy] = useState(false);

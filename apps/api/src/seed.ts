@@ -24,13 +24,15 @@ async function ensureSuperAdmin(q: Q) {
   const phone = normPhone(config.ADMIN_PHONE);
   if (!phone) throw new Error('ADMIN_PHONE is not a valid mobile number');
   const existing = await one(q, 'select id from users where phone = $1', [phone]);
+  const email = config.ADMIN_EMAIL.trim().toLowerCase() || null;
   if (existing) {
-    await q.query(`update users set role = 'admin', active = true where id = $1`, [existing.id]);
+    await q.query(`update users set role = 'admin', active = true, email = coalesce($2, email) where id = $1`, [existing.id, email]);
     return;
   }
   const users = Number((await one(q, 'select count(*) n from users'))!.n);
   const id = users ? SUPER_ADMIN_ID : 'owner';
   await q.query(`insert into users(id, name, phone, role, title) values ($1, $2, $3, 'admin', 'Super admin') on conflict (id) do update set phone = excluded.phone, role = 'admin', active = true`, [id, config.ADMIN_NAME, phone]);
+  if (email) await q.query('update users set email = $2 where id = $1', [id, email]);
   log.info('super admin ready', config.ADMIN_NAME, phone.slice(0, 5) + '•••••' + phone.slice(-2));
 }
 

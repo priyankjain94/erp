@@ -17,6 +17,9 @@ const Env = z.object({
   TZ_BUSINESS: z.string().default('Asia/Kolkata'),
   ADMIN_PHONE: z.string().default(''),
   ADMIN_NAME: z.string().default('Owner'),
+  ADMIN_EMAIL: z.string().default(''),          // optional: super admin can also sign in with this Google account
+  GOOGLE_CLIENT_ID: z.string().default(''),     // Google Identity Services web client ID (public, not a secret)
+  GOOGLE_TOKENINFO_URL: z.string().default('https://oauth2.googleapis.com/tokeninfo'),
   SEED_DEMO: bool.default(false),
   DEMO_MODE: bool.default(false),           // shows OTP codes on screen + demo user switcher. NEVER in production.
   OTP_LENGTH: z.coerce.number().default(4),
@@ -63,5 +66,7 @@ export function assertProductionConfig() {
 
 /** Webhook verify token: WHATSAPP_VERIFY_TOKEN if set, otherwise derived from JWT_SECRET (stable, shown to admins on the Integrations screen). */
 export const waVerifyToken = () => config.WHATSAPP_VERIFY_TOKEN || 'mms-' + crypto.createHash('sha256').update('wa-verify:' + config.JWT_SECRET).digest('hex').slice(0, 24);
+/** Demo helpers (code on screen, user switcher, sample reset) only while WhatsApp is not live. Once the WhatsApp token is set they switch off by themselves. */
+export const demoActive = () => config.DEMO_MODE && (!config.WHATSAPP_ACCESS_TOKEN || config.NODE_ENV === 'test');
 export const whatsappLive = () => !!(config.WHATSAPP_ACCESS_TOKEN && config.WHATSAPP_PHONE_NUMBER_ID);
 export const metaLeadsLive = () => !!(config.META_PAGE_ACCESS_TOKEN && config.META_PAGE_ID);

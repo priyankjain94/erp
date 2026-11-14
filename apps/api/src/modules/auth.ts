@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import { config } from '../core/config.js';
+import { config, demoActive } from '../core/config.js';
 import { db, many, one, tx, type Q } from '../core/db.js';
 import { parse, rateLimit, type Ctx, type Router } from '../core/http.js';
 import { forbidden, HttpError, normPhone, prettyPhone, randomId, safeEqual, sha256 } from '../core/util.js';
@@ -107,6 +107,17 @@ function readCookie(ctx: Ctx, name: string) {
   return m ? m.slice(name.length + 1) : '';
 }
 
+/* ---------- Google ID token check (Google Identity Services, no client secret needed) ---------- */
+export async function verifyGoogle(credential: string) {
+  if (!config.GOOGLE_CLIENT_ID) throw new HttpError(400, 'Google sign-in is not set up yet.', 'google_off');
+  const res = await fetch(`${config.GOOGLE_TOKENINFO_URL}?id_token=${encodeURIComponent(credential)}`, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+  const t: any = res && res.ok ? await res.json().catch(() => null) : null;
+  if (!t || t.aud !== config.GOOGLE_CLIENT_ID || !['accounts.google.com', 'https://accounts.google.com'].includes(t.iss) || Number(t.exp) * 1000 < Date.now())
+    throw new HttpError(401, 'Google sign-in failed. Please try again.', 'google_bad');
+  if (String(t.email_verified) !== 'true') throw new HttpError(401, 'This Google account email is not verified.', 'google_unverified');
+  return { sub: String(t.sub), email: String(t.email).toLowerCase(), name: String(t.name || t.email.split('@')[0]) };
+}
+
 /* ---------- OTP ---------- */
 const otpHash = (phone: string, code: string) => sha256(`${config.JWT_SECRET}:${phone}:${code}`);
 const genCode = () => String(crypto.randomInt(10 ** (config.OTP_LENGTH - 1), 10 ** config.OTP_LENGTH));
@@ -120,7 +131,7 @@ export async function issueOtp(q: Q, phone: string, audience: 'staff' | 'custome
   await q.query(`insert into otp_requests(phone, audience, ref, code_hash, expires_at, ip) values ($1,$2,$3,$4, now() + ($5 || ' minutes')::interval, $6)`,
     [phone, audience, ref || null, otpHash(phone, code), String(config.OTP_TTL_MIN), ip]);
   await sendTemplate(phone, audience === 'signoff' ? 'install_signoff_otp' : 'login_otp', [code], { q, related: { type: 'otp', id: audience } });
-  return config.DEMO_MODE ? code : undefined;
+  return demoActive() ? code : undefined;
 }
 /** Check an OTP. Throws a friendly error when wrong/expired/too many attempts. */
 export async function checkOtp(q: Q, phone: string, audience: 'staff' | 'customer' | 'signoff', code: string, ref?: string) {
@@ -205,11 +216,52 @@ export function authRoutes(r: Router) {
     return { ok: true };
   });
 
-  r.get('/api/v1/auth/config', async () => ({ demoMode: config.DEMO_MODE, whatsappLive: !!config.WHATSAPP_ACCESS_TOKEN }));
+  r.get('/api/v1/auth/config', async () => ({ demoMode: demoActive(), whatsappLive: !!config.WHATSAPP_ACCESS_TOKEN, googleClientId: config.GOOGLE_CLIENT_ID || null }));
+
+  /* ---------- Google sign-in (staff) ---------- */
+  r.post('/api/v1/auth/google', async ctx => {
+    const b = parse(z.object({ credential: z.string().min(20).max(4096) }), ctx.body);
+    rateLimit('google-ip:' + ctx.ip, 60, 3600_000);
+    const g = await verifyGoogle(b.credential);
+    return tx(async q => {
+      const u = await one(q, `select id, name, role, active, phone, google_sub from users where google_sub = $1 or lower(email) = $2 order by (google_sub = $1) desc nulls last limit 1`, [g.sub, g.email]);
+      if (!u) {
+        const pending = await one(q, `select id from access_requests where status = 'pending' and (google_sub = $1 or lower(email) = $2)`, [g.sub, g.email]);
+        return { needsAccess: true, pending: !!pending, name: g.name, email: g.email };
+      }
+      if (!u.active) throw forbidden('This account is deactivated. Contact your admin.');
+      if (u.google_sub !== g.sub) await q.query('update users set google_sub = $2 where id = $1', [u.id, g.sub]);
+      const s = await createSession(q, 'user', u.id, String(ctx.req.headers['user-agent'] || ''));
+      await audit(q, { type: 'user', sid: s.sid, user: u, perms: new Set() }, 'login', `${u.name} logged in with Google`, 'user', u.id);
+      return { ...issue(ctx, 'user', u.id, s.sid, s.refresh), user: { id: u.id, name: u.name, role: u.role } };
+    });
+  });
+
+  /* ---------- sign up: anyone can ask for access; an admin approves and picks the role ---------- */
+  r.post('/api/v1/auth/access-request', async ctx => {
+    const b = parse(z.object({ name: z.string().trim().min(2).max(80), phone: z.string(), roleWanted: z.string().max(40).default(''), note: z.string().max(300).default(''), credential: z.string().max(4096).optional() }), ctx.body);
+    rateLimit('access-ip:' + ctx.ip, 10, 3600_000);
+    const phone = normPhone(b.phone);
+    if (!phone) throw new HttpError(400, 'Enter your 10-digit WhatsApp number.', 'bad_phone');
+    const g = b.credential ? await verifyGoogle(b.credential) : null;
+    return tx(async q => {
+      if (await one(q, 'select 1 from users where phone = $1', [phone])) throw new HttpError(400, 'This number already has an account. Log in instead.', 'exists');
+      if (g && await one(q, 'select 1 from users where lower(email) = $1 or google_sub = $2', [g.email, g.sub])) throw new HttpError(400, 'This Google account already has access. Log in instead.', 'exists');
+      const dup = await one(q, `select id from access_requests where status = 'pending' and phone = $1`, [phone]);
+      if (dup) await q.query('update access_requests set name = $2, role_wanted = $3, note = $4, email = coalesce($5, email), google_sub = coalesce($6, google_sub), created_at = now() where id = $1', [dup.id, b.name, b.roleWanted, b.note, g?.email || null, g?.sub || null]);
+      else {
+        await q.query('insert into access_requests(name, phone, email, google_sub, role_wanted, note) values ($1,$2,$3,$4,$5,$6)', [b.name, phone, g?.email || null, g?.sub || null, b.roleWanted, b.note]);
+        const admins = await many(q, `select id from users where role = 'admin' and active order by (phone = $1) desc limit 1`, [normPhone(config.ADMIN_PHONE) || '']);
+        if (admins[0]) { const { pushTask } = await import('./tasks.js'); const { addDays } = await import('../core/util.js');
+          await pushTask(q, { title: `Access request: ${b.name} (${prettyPhone(phone)})${b.roleWanted ? ' · wants ' + b.roleWanted : ''} — approve in Users and access`, assignee: admins[0].id, assigner: admins[0].id, deadline: addDays(1), auto: true }); }
+      }
+      return { ok: true };
+    });
+  });
 
   /** Demo only: switch to another user without OTP (the prototype's "Switch user" box). Disabled unless DEMO_MODE. */
   r.post('/api/v1/auth/demo-switch', staff(), async ctx => {
-    if (!config.DEMO_MODE) throw forbidden('Demo user switching is disabled.');
+    if (!demoActive()) throw forbidden('Demo user switching is disabled.');
     const id = String(ctx.body?.userId || '');
     return tx(async q => {
       const u = await one(q, 'select id, name, role, active from users where id = $1', [id]);
