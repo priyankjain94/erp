@@ -43,6 +43,14 @@ async function handleButton(m: Inbound) {
       else { await tx(q => customerChange(q, id, 'Customer tapped "Ask for a change" on WhatsApp — please call them', 'WhatsApp')); await sendText(m.from, 'Noted. Your designer will call you to understand the change.'); }
       return;
     }
+    if (kind === 'TICKET_RATE') {
+      const t = await one(db, `select s.id, coalesce(s.contact_phone, c.phone) phone, c.phone cphone from service_requests s join projects p on p.id = s.project_id join customers c on c.id = p.customer_id where s.id = $1`, [Number(id)]);
+      if (!t || (t.phone !== m.from && t.cphone !== m.from)) return;
+      const { handleTicketRating } = await import('../modules/support.js');
+      await tx(q => handleTicketRating(q, String(m.buttonPayload)));
+      await sendText(m.from, 'Thank you for your feedback!');
+      return;
+    }
     if (kind === 'RATE') {
       const p = await one(db, 'select p.id, c.phone from projects p join customers c on c.id = p.customer_id where p.id = $1', [id]);
       if (!p || p.phone !== m.from) return;

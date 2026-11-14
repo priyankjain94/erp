@@ -10,6 +10,7 @@ import { adminRoutes } from './modules/admin.js';
 import { authRoutes } from './modules/auth.js';
 import { crmRoutes } from './modules/crm.js';
 import { businessRoutes } from './modules/business.js';
+import { supportRoutes } from './modules/support.js';
 import { customerRoutes } from './modules/customer.js';
 import { opsRoutes } from './modules/ops.js';
 import { taskRoutes } from './modules/tasks.js';
@@ -42,7 +43,7 @@ export function buildApp() {
     return { ok: true, queued: n };
   });
 
-  authRoutes(r); adminRoutes(r); crmRoutes(r); opsRoutes(r); taskRoutes(r); customerRoutes(r); businessRoutes(r); storageRoutes(r);
+  authRoutes(r); adminRoutes(r); crmRoutes(r); opsRoutes(r); taskRoutes(r); customerRoutes(r); businessRoutes(r); supportRoutes(r); storageRoutes(r);
   installInbound();
   return createServer(r);
 }

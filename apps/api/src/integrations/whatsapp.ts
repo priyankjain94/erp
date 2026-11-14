@@ -243,7 +243,7 @@ export async function syncTemplates(opts: { create?: boolean } = { create: true 
 export function forwardWebhook(raw: Buffer, payload: any, signature?: string) {
   if (!config.WHATSAPP_FORWARD_URL) return;
   const msgs = (payload?.entry || []).flatMap((e: any) => (e.changes || []).flatMap((c: any) => c.value?.messages || []));
-  const ours = (m: any) => /^(TASK_|DRAWING_|RATE:)/.test(m?.button?.payload || m?.interactive?.button_reply?.id || '');
+  const ours = (m: any) => /^(TASK_|DRAWING_|RATE:|TICKET_RATE:)/.test(m?.button?.payload || m?.interactive?.button_reply?.id || '');
   if (msgs.length && msgs.every(ours)) return;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   // the body is relayed byte-for-byte, so Meta's own signature stays valid for the bot

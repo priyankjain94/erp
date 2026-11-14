@@ -9,13 +9,13 @@ export const ROLES = [
 export type Role = typeof ROLES[number]['id'];
 export const ROLE_IDS = ROLES.map(r => r.id) as [Role, ...Role[]];
 
-export const PERMS = ['crm', 'ops', 'projects', 'money', 'edit', 'assign', 'override', 'payments', 'tasksAll', 'survey', 'install', 'team', 'people', 'admin'] as const;
+export const PERMS = ['crm', 'ops', 'projects', 'money', 'edit', 'assign', 'override', 'payments', 'tasksAll', 'survey', 'install', 'team', 'support', 'people', 'admin'] as const;
 export type Perm = typeof PERMS[number];
 const P = (list: Perm[]) => Object.fromEntries(PERMS.map(k => [k, list.includes(k)])) as Record<Perm, boolean>;
 export const DEFAULT_ROLES: Record<Role, Record<Perm, boolean>> = {
   admin: P([...PERMS]),
-  ops_head: P(['crm', 'ops', 'projects', 'money', 'edit', 'assign', 'payments', 'tasksAll', 'survey', 'install', 'team', 'people']),
-  pm: P(['ops', 'projects', 'money', 'edit', 'assign', 'payments', 'tasksAll', 'survey', 'install', 'team']),
+  ops_head: P(['crm', 'ops', 'projects', 'money', 'edit', 'assign', 'payments', 'tasksAll', 'survey', 'install', 'team', 'support', 'people']),
+  pm: P(['ops', 'projects', 'money', 'edit', 'assign', 'payments', 'tasksAll', 'survey', 'install', 'team', 'support']),
   sales: P(['crm', 'projects', 'money']),
   surveyor: P(['survey', 'projects']),
   designer: P(['projects', 'edit']),
@@ -26,6 +26,16 @@ export const DEFAULT_ROLES: Record<Role, Record<Perm, boolean>> = {
 };
 
 /** Who may create an account. approval: anyone can ask, someone with 'people' approves. open: they join at once as defaultRole. closed: only admins add people. */
+export const TICKET_CATEGORIES = [
+  { id: 'installation', name: 'Installation issue' }, { id: 'hardware', name: 'Hardware (hinge, channel, handle)' }, { id: 'damage', name: 'Damage / breakage' },
+  { id: 'finish', name: 'Finish / colour / edge' }, { id: 'alignment', name: 'Alignment / gap / door sag' }, { id: 'missing', name: 'Missing part' },
+  { id: 'service', name: 'General service / warranty' }, { id: 'other', name: 'Other' }
+] as const;
+export const TICKET_CATEGORY_IDS = TICKET_CATEGORIES.map(c => c.id) as [string, ...string[]];
+/** open → assigned → scheduled → in_progress → resolved (waiting for happy code) → closed; on_hold anytime */
+export const TICKET_STATUS: Record<string, string> = { open: 'Registered', assigned: 'Technician assigned', scheduled: 'Visit scheduled', in_progress: 'Work in progress', on_hold: 'On hold', resolved: 'Work done, waiting for your happy code', closed: 'Closed' };
+export const TICKET_SLA_HOURS: Record<string, number> = { urgent: 24, normal: 48, low: 96 };
+
 export const SIGNUP_DEFAULT = { mode: 'approval' as 'approval' | 'open' | 'closed', defaultRole: 'guest' as Role, domains: [] as string[] };
 
 export const STAGES = [
@@ -147,6 +157,10 @@ export const WA_TEMPLATES: Record<string, { category: 'UTILITY' | 'MARKETING' | 
   handover_feedback: { category: 'UTILITY', body: 'Hello {{1}}, your Make My Space project {{2}} is complete. How would you rate us?', buttons: ['5 Excellent', '4 Good', '3 Okay'] },
   partner_update: { category: 'UTILITY', body: 'Hello {{1}}, an update on your referral {{2}}: now at {{3}}. Thank you for trusting Make My Space.' },
   staff_invite: { category: 'UTILITY', body: 'Hello {{1}}, welcome to the Make My Space team. You have joined as {{2}}. Your tasks, site visits and project updates will now come to you on this WhatsApp number.' },
+  support_ticket_raised: { category: 'UTILITY', body: 'Hello {{1}}, thank you for contacting Make My Space. Your complaint has been registered and your complaint number is {{2}}. Issue: {{3}}. We will update you on WhatsApp as it moves ahead, and you can track it any time in the Make My Space customer app.' },
+  support_visit_scheduled: { category: 'UTILITY', body: 'Hello {{1}}, an update on complaint {{2}} from Make My Space. Our service visit is planned for {{3}}. Your technician is {{4}}, reachable on {{5}}. When the work is done to your satisfaction, please share your happy code with the technician to close the complaint.' },
+  support_ticket_update: { category: 'UTILITY', body: 'Hello {{1}}, an update on your Make My Space complaint {{2}}. Current status: {{3}}. You can see the full details in the Make My Space customer app.' },
+  support_ticket_closed: { category: 'UTILITY', body: 'Hello {{1}}, your Make My Space complaint {{2}} has been resolved and closed. Thank you for your patience. How happy are you with our service?', buttons: ['Very happy', 'Okay', 'Not happy'] },
   welcome_catalogue: { category: 'UTILITY', body: 'Hello {{1}}, thank you for your interest in Make My Space. Your consultant {{2}} will call you shortly. Our kitchen and wardrobe catalogue is attached.' },
   follow_up_gentle: { category: 'UTILITY', body: 'Hello {{1}}, just checking in on your {{2}} enquiry. Would you like an updated design, or shall we fix a showroom visit?' },
   visit_reminder: { category: 'UTILITY', body: 'Hello {{1}}, a reminder of your visit to our showroom. Reply 1 to confirm or 2 to reschedule.' },

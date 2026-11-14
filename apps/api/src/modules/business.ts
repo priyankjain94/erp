@@ -350,48 +350,7 @@ export function businessRoutes(r: Router) {
     return done(ctx);
   });
 
-  /* after-sales service requests */
-  const raiseService = async (q: Q, pid: string, itemId: string | null, text: string, photo: string | null, by: string) => {
-    const pr = await one(q, 'select p.*, c.name from projects p join customers c on c.id = p.customer_id where p.id = $1', [pid]); if (!pr) throw notFound();
-    let warranty: boolean | null = null;
-    if (itemId) {
-      const it = await one(q, 'select warranty_until from items where id = $1 and project_id = $2', [itemId, pid]); if (!it) throw bad('That item is not on this project.');
-      warranty = it.warranty_until ? new Date(it.warranty_until) >= new Date(todayStr()) : null;
-    }
-    const row = await one(q, `insert into service_requests(project_id, item_id, text, photo, under_warranty, raised_by) values ($1,$2,$3,$4,$5,$6) returning id`, [pid, itemId, text, photo, warranty, by]);
-    await pushTask(q, { title: `Service request · ${pr.name}: ${text.slice(0, 80)}`, projectId: pid, itemId: itemId || undefined, assignee: pr.pm_id, assigner: pr.pm_id, deadline: addDays(2), priority: 'urgent', auto: true });
-    await act(q, pid, `Service request raised (${by}): ${text}${warranty === true ? ' · under warranty' : warranty === false ? ' · warranty expired' : ''}`);
-    return row!.id;
-  };
-  r.post('/api/v1/projects/:id/service', staff(), async ctx => {
-    const b = parse(z.object({ itemId: z.string().nullable().default(null), text: z.string().trim().min(3).max(1000), photo: fileRef.nullable().default(null) }), ctx.body);
-    await tx(q => raiseService(q, ctx.params.id, b.itemId, b.text, b.photo, userOf(ctx).user.name));
-    return done(ctx);
-  });
-  r.patch('/api/v1/service/:id', staff('edit'), async ctx => {
-    const b = parse(z.object({ status: z.enum(['open', 'scheduled', 'resolved']).optional(), visitDate: DateZ.nullable().optional(), assignee: z.string().nullable().optional(), resolution: z.string().max(1000).optional(), underWarranty: z.boolean().nullable().optional() }), ctx.body);
-    await tx(async q => {
-      const s = await one(q, 'select * from service_requests where id = $1 for update', [Number(ctx.params.id)]); if (!s) throw notFound();
-      if (b.status === 'resolved' && !(b.resolution ?? s.resolution)) throw bad('Write what was done before closing the request.');
-      if (b.assignee && !(await one(q, 'select 1 from users where id = $1 and active', [b.assignee]))) throw bad('Choose an active person.');
-      const status = b.status ?? (b.visitDate && s.status === 'open' ? 'scheduled' : s.status);
-      await q.query(`update service_requests set status = $2, visit_date = $3, assignee_id = $4, resolution = $5, under_warranty = $6, resolved_at = case when $2 = 'resolved' then coalesce(resolved_at, now()) else null end where id = $1`,
-        [s.id, status, b.visitDate !== undefined ? b.visitDate : s.visit_date, b.assignee !== undefined ? b.assignee : s.assignee_id, b.resolution ?? s.resolution, b.underWarranty !== undefined ? b.underWarranty : s.under_warranty]);
-      if (b.assignee && b.assignee !== s.assignee_id) await pushTask(q, { title: `Service visit · ${s.text.slice(0, 80)}`, projectId: s.project_id, itemId: s.item_id || undefined, assignee: b.assignee, assigner: userOf(ctx).user.id, deadline: b.visitDate || s.visit_date || addDays(2), priority: 'urgent' });
-      await act(q, s.project_id, `Service request #${s.id} ${status}${b.resolution ? ': ' + b.resolution : ''} (${userOf(ctx).user.name})`);
-    });
-    return done(ctx);
-  });
-  r.post('/api/v1/customer/projects/:id/service', customerOrPreview, async ctx => {
-    const b = parse(z.object({ itemId: z.string().nullable().default(null), text: z.string().trim().min(3).max(1000), photo: fileRef.nullable().default(null) }), ctx.body);
-    const cid = await tx(async q => {
-      const p = await one(q, 'select * from projects where id = $1', [ctx.params.id]); if (!p) throw notFound();
-      if (ctx.auth?.type === 'customer' && ctx.auth.customer.id !== p.customer_id) throw forbidden();
-      await raiseService(q, p.id, b.itemId, b.text, b.photo, 'customer app');
-      return p.customer_id;
-    });
-    return { ok: true, state: await customerState(cid) };
-  });
+  /* after-sales service: see support.ts */
 
   /* CSV exports */
   r.get('/api/v1/export/:what', staff(), async ctx => {

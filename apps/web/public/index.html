@@ -989,7 +989,8 @@ function CustomerApp({erp, toast: toastIn, live}){
     const nextInst = its.filter(i => !i.installDone && i.installer && PIDX(i.stage) >= PIDX('dispatch')).sort((a,b) => a.target < b.target ? -1 : 1)[0];
     const due = p.payments.filter(m => !m.received);
     const pendingCo = (p.changes || []).filter(c => c.status === 'pending');
-    const openSvc = (p.service || []).filter(v => v.status !== 'resolved');
+    const tix = (state.tickets || []).filter(t => t.projectId === p.id);
+    const openSvc = tix.filter(t => t.status !== 'closed');
     const out = async () => { if (live){ try { await API.call('POST', '/auth/logout'); } catch(e){} setAuthed(false); setState(null); } else { setPid(null); setState(null); } };
     const back = view !== 'home' ? () => setView('home') : null;
     if (view === 'home') screen = html`<${Phone} title=${'Hello ' + first(p.customer)} sub=${p.code + ' · ' + p.address} right=${html`<button className="btn small" style=${{background:'var(--rail-2)',color:'var(--rail-ink)',border:0}} onClick=${out}>${live ? 'Log out' : 'Close'}</button>`}>
@@ -1002,7 +1003,7 @@ function CustomerApp({erp, toast: toastIn, live}){
       <button className="mcard" onClick=${() => setView('items')}><div className="card-row"><b>Your furniture</b><span className="meta">${its.length} piece${its.length === 1 ? '' : 's'} ›</span></div></button>
       <button className="mcard" onClick=${() => setView('docs')}><div className="card-row"><b>Documents</b><span className="meta">${(p.docs || []).length ? (p.docs || []).length + ' ›' : 'Floor plan, drawings ›'}</span></div></button>
       <button className="mcard" onClick=${() => setView('pay')}><div className="card-row"><b>Payments</b><span className="meta">${due.length ? due.length + ' pending ›' : 'All paid ›'}</span></div></button>
-      ${its.some(i => i.stage === 'closed') && html`<button className="mcard" onClick=${() => setView('service')}><div className="card-row"><b>Service and warranty</b><span className="meta">${openSvc.length ? openSvc.length + ' open ›' : 'Request a visit ›'}</span></div></button>`}
+      <button className="mcard" onClick=${() => setView('service')}><div className="card-row"><b>Complaints and service</b><span className="meta">${openSvc.length ? openSvc.length + ' open ›' : 'Raise a complaint ›'}</span></div>${openSvc[0] && html`<span className="meta">${openSvc[0].no} · ${openSvc[0].statusLabel}</span>`}</button>
       <div className="inline"><button className="big" onClick=${() => setSheet({n:'complaint', text:''})}>Raise a complaint</button>${its.length && its.every(i => i.stage === 'closed') && !p.feedback ? html`<button className="big pri" onClick=${() => setSheet({n:'rate', r:5, text:''})}>Rate us</button>` : null}</div>
       ${p.feedback && html`<div className="banner good">Thank you for rating us ${p.feedback.rating}/5.</div>`}
       <span className="meta" style=${{fontSize:12,color:'var(--muted)'}}>Project manager: ${staffBy(p.pm).name || ''} · ${staffBy(p.pm).phone || ''}</span>
@@ -1017,10 +1018,19 @@ function CustomerApp({erp, toast: toastIn, live}){
       ${(p.changes || []).length ? [...p.changes].reverse().map(c => html`<div key=${c.id} className="mcard"><div className="card-row"><b>${c.desc}</b><span className=${'pill ' + (c.status === 'approved' ? 'good' : c.status === 'pending' ? 'warn' : '')}>${c.status === 'pending' ? 'Waiting for you' : c.status}</span></div>
         <span className="meta">${c.amount == null ? '' : c.amount >= 0 ? 'Adds ' + inr(c.amount) : 'Reduces ' + inr(-c.amount)}${c.days ? ' · ' + c.days + ' more day' + (c.days > 1 ? 's' : '') : ''}${c.itemId ? ' · ' + (typeById[its.find(i => i.id === c.itemId)?.type]?.name || '') : ''}</span>
         ${c.status === 'pending' && html`<div className="inline"><button className="big" onClick=${() => act(`/customer/change-orders/${c.id}/decide`, {approve:false}, 'Noted. Your project manager will call you.')}>Decline</button><button className="big go" onClick=${() => act(`/customer/change-orders/${c.id}/decide`, {approve:true}, 'Approved. Your order is updated.')}>Approve</button></div>`}</div>`) : html`<p className="meta">No changes to your order.</p>`}<//>`;
-    else if (view === 'service') screen = html`<${Phone} title="Service and warranty" sub=${p.customer} back=${back}>
-      <div className="mcard"><b>Warranty</b>${its.filter(i => i.warrantyUntil).map(i => html`<div key=${i.id} className="card-row" style=${{fontSize:13}}><span>${typeById[i.type].name} · ${i.roomName}</span><span className="meta">until ${fmtDate(String(i.warrantyUntil).slice(0,10))}</span></div>`)}${!its.some(i => i.warrantyUntil) && html`<span className="meta">Starts when each piece is handed over.</span>`}</div>
-      <button className="big pri" onClick=${() => setSheet({n:'service', text:'', itemId:''})}>Request a service visit</button>
-      ${(p.service || []).map(v => html`<div key=${v.id} className="mcard"><div className="card-row"><b>${v.text}</b><span className=${'pill ' + (v.status === 'resolved' ? 'good' : 'warn')}>${v.status === 'open' ? 'Received' : v.status}</span></div><span className="meta">${dayLabel(v.at)}${v.visitDate ? ' · visit ' + fmtDate(String(v.visitDate).slice(0,10)) : ''}${v.resolution ? ' · ' + v.resolution : ''}</span></div>`)}<//>`;
+    else if (view === 'service') screen = html`<${Phone} title="Complaints and service" sub=${p.customer} back=${back}>
+      <button className="big pri" onClick=${() => setSheet({n:'service', text:'', itemId:'', category:'hardware'})}>Raise a complaint</button>
+      ${tix.map(t => html`<div key=${t.id} className="mcard">
+        <div className="card-row"><b className="mono">${t.no}</b><span className=${'pill ' + (t.status === 'closed' ? 'good' : t.status === 'resolved' ? 'acc' : 'warn')}>${t.status === 'closed' ? 'Closed' : T_SHORT[t.status]}</span></div>
+        <span>${t.text}</span><span className="meta">${catName(t.category)} · raised ${dayLabel(t.at)}</span>
+        ${t.technician && t.status !== 'closed' && html`<span className="meta">Technician: ${t.technician}${t.technicianPhone ? ' · ' + t.technicianPhone : ''}${t.visitDate ? ' · visit ' + fmtDate(String(t.visitDate).slice(0,10)) : ''}</span>`}
+        ${t.happyCode && html`<div style=${{background:'var(--bg)',padding:'8px 10px',fontSize:13}}>Your happy code: <b style=${{fontSize:18,letterSpacing:'.25em'}}>${t.happyCode}</b><div className="meta">Share it with the technician only when you're happy with the work. It closes the complaint.</div></div>`}
+        <ol className="chain" style=${{fontSize:12.5}}>${t.events.map((e, k) => html`<li key=${k}><span>${e.text}</span><time>${fmtDT(e.t)}</time></li>`)}</ol>
+        ${t.status === 'closed' && !t.rating && html`<div className="inline" style=${{gap:6}}><span className="meta">How was our service?</span>${[5,4,3,2,1].map(n => html`<button key=${n} className="btn small" onClick=${() => act(`/customer/tickets/${t.id}/rate`, {rating:n}, 'Thank you for your feedback!')}>${n}★</button>`)}</div>`}
+        ${t.rating && html`<span className="meta">You rated ${t.rating}/5. Thank you!</span>`}
+      </div>`)}
+      ${!tix.length && html`<p className="meta">No complaints so far. If anything needs attention, raise it here and you'll get a complaint number on WhatsApp right away.</p>`}
+      <div className="mcard"><b>Warranty</b>${its.filter(i => i.warrantyUntil).map(i => html`<div key=${i.id} className="card-row" style=${{fontSize:13}}><span>${typeById[i.type].name} · ${i.roomName}</span><span className="meta">until ${fmtDate(String(i.warrantyUntil).slice(0,10))}</span></div>`)}${!its.some(i => i.warrantyUntil) && html`<span className="meta">Starts when each piece is handed over.</span>`}</div><//>`;
     else if (view === 'approve') screen = html`<${Phone} title="Approve drawings" sub=${p.customer} back=${back}>
       ${toApprove.map(i => { const wall = p.survey.rooms.find(r => r.code === i.room)?.walls.find(w => w.label === i.wall); return html`<div key=${i.id} className="mcard"><b>${typeById[i.type].name} · ${i.roomName}</b><span className="meta">Drawing ${latestDrawing(i).rev}${i.desc ? ' · ' + i.desc : ''}</span>${latestDrawing(i).url ? html`<a className="btn small" href=${latestDrawing(i).url} target="_blank" rel="noopener">Open drawing</a>` : html`<${Elevation} it=${i} wall=${wall}/>`}
         ${['size','carcass','shutter','finish','hardware','accessories'].some(k => (i.spec || {})[k]) && html`<div style=${{fontSize:13}}><span className="meta" style=${{display:'block',marginBottom:4}}>Materials you are approving</span>${['size','finish','carcass','shutter','hardware','accessories'].filter(k => (i.spec || {})[k]).map(k => html`<div key=${k}><span className="meta">${MATERIAL_FIELDS.find(m => m.id === k).label}:</span> ${i.spec[k]}</div>`)}</div>`}
@@ -1031,7 +1041,7 @@ function CustomerApp({erp, toast: toastIn, live}){
       const wrap = inner => html`<div className="sheet-m" onClick=${e => e.target === e.currentTarget && close()}><div className="in">${inner}</div></div>`;
       let overlay = null;
       if (sheet.n === 'change') overlay = wrap(html`<h3>What should change?</h3><textarea className="inp" rows="3" value=${sheet.text} onInput=${e => setSheet({...sheet, text:e.target.value})} placeholder="e.g. Please add 2 more drawers on the left"></textarea><div className="inline"><button className="big" onClick=${close}>Cancel</button><button className="big pri" disabled=${sheet.text.trim().length < 2} onClick=${async () => { if (await act(`/customer/items/${sheet.id}/change-request`, {note:sheet.text.trim()}, 'Sent to your designer. The revised drawing will come on WhatsApp.')) close(); }}>Send to designer</button></div>`);
-      if (sheet.n === 'service') overlay = wrap(html`<h3>What needs attention?</h3><select className="sel" value=${sheet.itemId} onChange=${e => setSheet({...sheet, itemId:e.target.value})}><option value="">General</option>${its.map(i => html`<option key=${i.id} value=${i.id}>${typeById[i.type].name} · ${i.roomName}</option>`)}</select><textarea className="inp" rows="3" value=${sheet.text} onInput=${e => setSheet({...sheet, text:e.target.value})} placeholder="e.g. Drawer in the kitchen is not closing smoothly"></textarea><div className="inline"><button className="big" onClick=${close}>Cancel</button><button className="big pri" disabled=${sheet.text.trim().length < 3} onClick=${async () => { if (await act(`/customer/projects/${p.id}/service`, {text:sheet.text, itemId:sheet.itemId || null}, 'Request received. We will call you to fix a visit.')) close(); }}>Send</button></div>`);
+      if (sheet.n === 'service') overlay = wrap(html`<h3>Raise a complaint</h3><select className="sel" value=${sheet.category} onChange=${e => setSheet({...sheet, category:e.target.value})}>${TICKET_CATS.map(([id, n]) => html`<option key=${id} value=${id}>${n}</option>`)}</select><select className="sel" value=${sheet.itemId} onChange=${e => setSheet({...sheet, itemId:e.target.value})}><option value="">Which piece? (optional)</option>${its.map(i => html`<option key=${i.id} value=${i.id}>${typeById[i.type].name} · ${i.roomName}</option>`)}</select><textarea className="inp" rows="3" value=${sheet.text} onInput=${e => setSheet({...sheet, text:e.target.value})} placeholder="Tell us what's wrong, e.g. the kitchen drawer is not closing smoothly"></textarea><div className="inline"><button className="big" onClick=${close}>Cancel</button><button className="big pri" disabled=${sheet.text.trim().length < 3} onClick=${async () => { try { const r = await API.call('POST', `/customer/projects/${p.id}/service`, {text:sheet.text, itemId:sheet.itemId || null, category:sheet.category}); setState(r.state); toast(`Complaint ${r.ticketNo} registered. We've sent the number and your happy code on WhatsApp.`); close(); setView('service'); } catch(e){ toast(e.message, 'err'); } }}>Send</button></div>`);
       if (sheet.n === 'complaint') overlay = wrap(html`<h3>Raise a complaint</h3><textarea className="inp" rows="3" value=${sheet.text} onInput=${e => setSheet({...sheet, text:e.target.value})} placeholder="Tell us what went wrong"></textarea><div className="inline"><button className="big" onClick=${close}>Cancel</button><button className="big pri" disabled=${sheet.text.trim().length < 2} onClick=${async () => { if (await act(`/customer/projects/${p.id}/complaint`, {text:sheet.text.trim()}, 'Complaint sent. Your project manager will call you within a day.')) close(); }}>Send</button></div>`);
       if (sheet.n === 'rate') overlay = wrap(html`<h3>How did we do?</h3><div className="inline" style=${{justifyContent:'center'}}>${[1,2,3,4,5].map(r => html`<button key=${r} className=${'btn' + (sheet.r >= r ? ' primary' : '')} onClick=${() => setSheet({...sheet, r})}>${r} ★</button>`)}</div><textarea className="inp" rows="2" value=${sheet.text} onInput=${e => setSheet({...sheet, text:e.target.value})} placeholder="Anything to add? (optional)"></textarea><button className="big pri" onClick=${async () => { if (await act(`/customer/projects/${p.id}/feedback`, {rating:sheet.r, comment:sheet.text.trim()}, 'Thank you for your feedback!')) close(); }}>Submit</button>`);
       screen = React.cloneElement(screen, {overlay});
@@ -1061,13 +1071,14 @@ const PERMS = [
   ['survey','Survey app','Capture rooms, walls and measurements'],
   ['install','Installer app','Start, pause, complete jobs, raise snags'],
   ['team','Team performance','On-time %, work time, snag rate'],
+  ['support','Customer support','Complaint desk: raise, assign teams, schedule visits, override closures'],
   ['people','Approve sign-ups','Approve access requests and give new members a role (not admin)'],
   ['admin','Users and access','Add users, change roles, edit this matrix']];
 const P = s => Object.fromEntries(PERMS.map(([k]) => [k, s.includes(k)]));
 const DEFAULT_ROLES = {
   admin:P(PERMS.map(p => p[0])),
-  ops_head:P(['crm','ops','projects','money','edit','assign','payments','tasksAll','survey','install','team','people']),
-  pm:P(['ops','projects','money','edit','assign','payments','tasksAll','survey','install','team']),
+  ops_head:P(['crm','ops','projects','money','edit','assign','payments','tasksAll','survey','install','team','support','people']),
+  pm:P(['ops','projects','money','edit','assign','payments','tasksAll','survey','install','team','support']),
   sales:P(['crm','projects','money']),
   surveyor:P(['survey','projects']),
   designer:P(['projects','edit']),
@@ -1075,7 +1086,7 @@ const DEFAULT_ROLES = {
   production:P(['projects','edit']),
   installer:P(['install']),
   guest:P([])};
-const VIEW_PERM = {dashboard:'crm', pipeline:'crm', inbox:'crm', partners:'crm', automations:'crm', ops:'ops', projects:'projects', tasks:null, survey:'survey', install:'install', team:'team', installers:'assign', users:'admin', customer:'tasksAll'};
+const VIEW_PERM = {dashboard:'crm', pipeline:'crm', inbox:'crm', partners:'crm', automations:'crm', ops:'ops', projects:'projects', tasks:null, support:'support', survey:'survey', install:'install', team:'team', installers:'assign', users:'admin', customer:'tasksAll'};
 const can = (erp, perm) => !perm || !!(erp.roles && erp.roles[userById[erp.me]?.role]?.[perm]);
 const canView = (erp, view) => can(erp, VIEW_PERM[view]);
 
@@ -1559,24 +1570,18 @@ function ChangeOrders({p, its, erp, ops}){
   </div>`;
 }
 function ServicePanel({p, its, erp, ops}){
-  const [f, setF] = useState({text:'', itemId:''});
-  const staff = TEAM.filter(u => u.active !== false && ['installer','pm','ops_head'].includes(u.role));
+  const [adding, setAdding] = useState(false), [open, setOpen] = useState(null);
   const today = todayYmd();
+  const tix = (erp.tickets || []).filter(t => t.projectId === p.id);
+  const cur = open && tix.find(t => t.id === open);
   return html`<div className="details">
     <div className="box"><h4>Warranty</h4>${its.length ? html`<table><tbody>${its.map(i => html`<tr key=${i.id}><td className="mono" style=${{fontSize:12}}>${i.code}</td><td>${typeById[i.type].name}</td><td>${i.warrantyUntil ? html`<span className=${'pill' + (String(i.warrantyUntil).slice(0,10) >= today ? ' good' : ' warn')}>${String(i.warrantyUntil).slice(0,10) >= today ? 'Until ' : 'Expired '}${fmtDate(String(i.warrantyUntil).slice(0,10))}</span>` : html`<span className="sub">Starts at handover</span>`}</td></tr>`)}</tbody></table>` : html`<span className="sub">No items yet.</span>`}</div>
-    <div className="box"><h4>New service request</h4><div className="inline" style=${{flexWrap:'wrap',gap:8}}>
-      <select className="sel" value=${f.itemId} onChange=${e => setF(x => ({...x, itemId:e.target.value}))}><option value="">General</option>${its.map(i => html`<option key=${i.id} value=${i.id}>${i.code}</option>`)}</select>
-      <input className="inp" placeholder="What does the customer report? (e.g. drawer channel stuck)" value=${f.text} onInput=${e => setF(x => ({...x, text:e.target.value}))} style=${{minWidth:260,flex:1}}/>
-      <button className="btn small primary" disabled=${f.text.trim().length < 3} onClick=${async () => { if (await ops.api('POST', `/projects/${p.id}/service`, {text:f.text, itemId:f.itemId || null}, 'Service request logged; PM has a task.')) setF({text:'', itemId:''}); }}>Log request</button></div></div>
-    ${(p.service || []).map(v => html`<div className="box" key=${v.id}><h4>#${v.id} · ${v.itemId ? its.find(i => i.id === v.itemId)?.code || '' : 'General'} <span className=${'pill' + (v.status === 'resolved' ? ' good' : ' warn')}>${v.status}</span>${v.warranty === true ? html` <span className="pill">Under warranty</span>` : v.warranty === false ? html` <span className="pill crit">Out of warranty</span>` : null}</h4>
-      <div>${v.text}</div><div className="sub" style=${{fontSize:12}}>Raised ${dayLabel(v.at)} by ${v.by}</div>${v.photo && html`<a href=${v.photo} target="_blank" rel="noopener">Photo</a>`}
-      ${v.status !== 'resolved' && can(erp, 'edit') ? html`<div className="inline" style=${{flexWrap:'wrap',gap:8,marginTop:8}}>
-        <select className="sel" value=${v.assignee || ''} onChange=${e => ops.api('PATCH', `/service/${v.id}`, {assignee:e.target.value || null}, 'Assigned; task created.')}><option value="">Assign to…</option>${staff.map(u => html`<option key=${u.id} value=${u.id}>${u.name}</option>`)}</select>
-        <input type="date" className="inp" value=${v.visitDate ? String(v.visitDate).slice(0,10) : ''} onChange=${e => ops.api('PATCH', `/service/${v.id}`, {visitDate:e.target.value || null}, 'Visit scheduled.')}/>
-        <input className="inp" placeholder="Resolution" defaultValue=${v.resolution} id=${'res-' + v.id} style=${{minWidth:200,flex:1}}/>
-        <button className="btn small" onClick=${() => ops.api('PATCH', `/service/${v.id}`, {status:'resolved', resolution:document.getElementById('res-' + v.id).value}, 'Service request closed.')}>Resolve</button></div>`
-      : v.resolution && html`<div className="sub" style=${{marginTop:6}}>Resolution: ${v.resolution}</div>`}
-    </div>`)}
+    <div className="box"><h4>Complaints · ${tix.filter(t => t.status !== 'closed').length} open</h4>
+      ${tix.length ? html`<table><tbody>${tix.map(t => html`<tr key=${t.id} className="click" onClick=${() => setOpen(t.id)}><td className="mono" style=${{fontSize:12}}>${t.no}</td><td>${t.text}</td><td><span className=${'pill ' + (T_PILL[t.status] || '')}>${T_SHORT[t.status]}</span></td><td>${t.assignee ? uname(t.assignee) : '—'}</td></tr>`)}</tbody></table>`
+        : (p.service || []).length ? html`<p className="sub">${p.service.length} complaint(s). Open the Support desk to work on them.</p>` : html`<p className="sub">No complaints on this project.</p>`}
+      ${can(erp, 'support') && html`<div className="row-btns" style=${{marginTop:8}}><button className="btn small primary" onClick=${() => setAdding(true)}>Register a complaint</button></div>`}</div>
+    ${adding && html`<${NewTicket} erp=${erp} ops=${ops} projectId=${p.id} close=${() => setAdding(false)}/>`}
+    ${cur && html`<${TicketDrawer} t=${cur} erp=${erp} ops=${ops} close=${() => setOpen(null)}/>`}
   </div>`;
 }
 function ProjectDrawer({p, erp, ui, ops, leads, close, tab, setTab}){
@@ -2153,6 +2158,113 @@ function SignPad({onSigned}){
 }
 
 /* ---------- Installer app ---------- */
+/* ---------- Customer support desk ---------- */
+const TICKET_CATS = [['installation','Installation issue'],['hardware','Hardware (hinge, channel, handle)'],['damage','Damage / breakage'],['finish','Finish / colour / edge'],['alignment','Alignment / gap / door sag'],['missing','Missing part'],['service','General service / warranty'],['other','Other']];
+const catName = id => (TICKET_CATS.find(c => c[0] === id) || [id, id])[1];
+const T_PILL = {open:'crit', assigned:'warn', scheduled:'warn', in_progress:'warn', on_hold:'', resolved:'acc', closed:'good'};
+const T_SHORT = {open:'New', assigned:'Assigned', scheduled:'Visit scheduled', in_progress:'In progress', on_hold:'On hold', resolved:'Waiting for happy code', closed:'Closed'};
+function SupportDesk({erp, ops}){
+  const tickets = erp.tickets || [];
+  const [f, setF] = useState('active'), [qy, setQy] = useState(''), [open, setOpen] = useState(null), [adding, setAdding] = useState(false);
+  const today = todayYmd();
+  const groups = {active:t => t.status !== 'closed', new:t => t.status === 'open', overdue:t => t.overdue, today:t => t.visitDate && String(t.visitDate).slice(0,10) === today && t.status !== 'closed', code:t => t.status === 'resolved', closed:t => t.status === 'closed'};
+  const list = tickets.filter(groups[f]).filter(t => !qy || [t.no, t.customer, t.phone, t.project, t.text].join(' ').toLowerCase().includes(qy.toLowerCase()));
+  const cnt = k => tickets.filter(groups[k]).length;
+  const month = new Date().toISOString().slice(0,7);
+  const closedM = tickets.filter(t => t.closedAt && new Date(t.closedAt).toISOString().slice(0,7) === month);
+  const rated = closedM.filter(t => t.rating);
+  const cur = open && tickets.find(t => t.id === open);
+  return html`<section className="view">
+    <div className="kpis" style=${{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:12,marginBottom:16}}>
+      ${[['Open complaints', cnt('active')], ['Past due time', cnt('overdue')], ['Visits today', cnt('today')], ['Waiting for happy code', cnt('code')], ['Closed this month', closedM.length], ['Average rating', rated.length ? (rated.reduce((a,t) => a + t.rating, 0) / rated.length).toFixed(1) + ' / 5' : '—']].map(([k, v]) => html`<div key=${k} className="panel" style=${{padding:'12px 14px'}}><div className="sub" style=${{fontSize:11,letterSpacing:'.08em',textTransform:'uppercase',color:'var(--muted)'}}>${k}</div><b className="num" style=${{fontSize:20,color:k === 'Past due time' && v ? 'var(--crit)' : undefined}}>${v}</b></div>`)}
+    </div>
+    <div className="toolbar">
+      <div className="chips" role="group" aria-label="Filter">${[['active','Open'],['new','New'],['overdue','Past due'],['today','Visits today'],['code','Waiting for code'],['closed','Closed']].map(([id, n]) => html`<button key=${id} className="chip" aria-pressed=${f === id} onClick=${() => setF(id)}>${n} <span className="num">${cnt(id)}</span></button>`)}</div>
+      <input className="inp" placeholder="Search complaint no., customer, phone" value=${qy} onInput=${e => setQy(e.target.value)} style=${{maxWidth:280}}/>
+      <span style=${{marginLeft:'auto'}}></span>
+      <button className="btn small primary" onClick=${() => setAdding(true)}><${Icon} n="plus" s=${14}/>New complaint</button>
+    </div>
+    ${!list.length ? html`<div className="panel"><p className="hint">${tickets.length ? 'Nothing in this list.' : 'No complaints yet. Customers raise them from their app, or you can log one when a customer calls.'}</p></div>`
+    : html`<div className="table-wrap"><table>
+      <thead><tr><th>Complaint</th><th>Customer</th><th>Issue</th><th>Technician</th><th>Visit</th><th>Status</th><th>Due</th></tr></thead>
+      <tbody>${list.map(t => html`<tr key=${t.id} className="click" onClick=${() => setOpen(t.id)}>
+        <td><b className="mono" style=${{fontSize:12.5}}>${t.no}</b>${t.priority === 'urgent' && html` <span className="pill crit">Urgent</span>`}<div className="sub">${dayLabel(t.at)}</div></td>
+        <td><b>${t.customer}</b><div className="sub">${t.project} · ${t.phone}</div></td>
+        <td style=${{maxWidth:280,whiteSpace:'normal'}}>${t.text}<div className="sub">${catName(t.category)}${t.warranty === true ? ' · in warranty' : t.warranty === false ? ' · out of warranty' : ''}</div></td>
+        <td>${t.assignee ? uname(t.assignee) : html`<span className="pill crit">Not assigned</span>`}</td>
+        <td className="num">${t.visitDate ? fmtDate(String(t.visitDate).slice(0,10)) : '—'}</td>
+        <td><span className=${'pill ' + (T_PILL[t.status] || '')}>${T_SHORT[t.status] || t.status}</span>${t.rating && html`<div className="sub">Rated ${t.rating}/5</div>`}</td>
+        <td className="num" style=${{color:t.overdue ? 'var(--crit)' : undefined}}>${t.status === 'closed' ? '—' : t.due ? (t.overdue ? 'Late ' : '') + dayLabel(t.due) : '—'}</td></tr>`)}</tbody></table></div>`}
+    ${cur && html`<${TicketDrawer} t=${cur} erp=${erp} ops=${ops} close=${() => setOpen(null)}/>`}
+    ${adding && html`<${NewTicket} erp=${erp} ops=${ops} close=${() => setAdding(false)}/>`}
+  </section>`;
+}
+function NewTicket({erp, ops, close, projectId}){
+  const [f, setF] = useState({projectId:projectId || '', itemId:'', category:'hardware', priority:'normal', text:'', contactPhone:''}), [qy, setQy] = useState('');
+  const projs = erp.projects.filter(p => !qy || [p.code, p.customer, p.phone, p.address].join(' ').toLowerCase().includes(qy.toLowerCase())).slice(0, 30);
+  const its = erp.items.filter(i => i.projectId === f.projectId);
+  const save = async () => { const r = await ops.api('POST', '/support/tickets', {...f, itemId:f.itemId || null, contactPhone:f.contactPhone || undefined}, res => `Complaint ${res.ticketNo} registered. The customer has the number and their happy code on WhatsApp.`); if (r) close(); };
+  return html`<div className="modal" role="dialog" aria-modal="true" aria-label="New complaint"><div className="scrim" onClick=${close}></div>
+    <div className="sheet"><header><h2>New complaint</h2><p>For a customer who called or walked in. They get the complaint number and a happy code on WhatsApp right away.</p></header>
+      <div className="form">
+        ${!projectId && html`<label className="full">Customer / project<input value=${qy} onInput=${e => setQy(e.target.value)} placeholder="Search name, phone or project code"/>
+          <select value=${f.projectId} onChange=${e => setF({...f, projectId:e.target.value, itemId:''})} style=${{marginTop:6}}><option value="">Choose…</option>${projs.map(p => html`<option key=${p.id} value=${p.id}>${p.customer} · ${p.code} · ${p.address || ''}</option>`)}</select></label>`}
+        <label>Furniture item<select value=${f.itemId} onChange=${e => setF({...f, itemId:e.target.value})} disabled=${!f.projectId}><option value="">Whole project / not sure</option>${its.map(i => html`<option key=${i.id} value=${i.id}>${i.code} · ${typeById[i.type].name} · ${i.roomName}</option>`)}</select></label>
+        <label>Type of problem<select value=${f.category} onChange=${e => setF({...f, category:e.target.value})}>${TICKET_CATS.map(([id, n]) => html`<option key=${id} value=${id}>${n}</option>`)}</select></label>
+        <label className="full">What is wrong<textarea rows="3" value=${f.text} onInput=${e => setF({...f, text:e.target.value})} placeholder="e.g. Wardrobe door hinge broken, door hanging"></textarea></label>
+        <label>Priority<select value=${f.priority} onChange=${e => setF({...f, priority:e.target.value})}><option value="urgent">Urgent (24 h)</option><option value="normal">Normal (48 h)</option><option value="low">Low (4 days)</option></select></label>
+        <label>Contact on site (optional)<input inputMode="tel" value=${f.contactPhone} onInput=${e => setF({...f, contactPhone:e.target.value})} placeholder="If not the customer's own number"/></label>
+        <div className="form-foot"><button className="btn ghost" onClick=${close}>Cancel</button><button className="btn primary" disabled=${!f.projectId || f.text.trim().length < 3} onClick=${save}>Register complaint</button></div>
+      </div></div></div>`;
+}
+function TicketDrawer({t, erp, ops, close}){
+  const desk = can(erp, 'support'), mine = t.assignee === erp.me;
+  const [note, setNote] = useState(''), [pub, setPub] = useState(false), [fix, setFix] = useState(''), [code, setCode] = useState(''), [ovr, setOvr] = useState(''), [showOvr, setShowOvr] = useState(false);
+  const team = erp.users.filter(u => u.active !== false && ['installer','pm','ops_head','production','surveyor'].includes(u.role));
+  const patch = (body, msg) => ops.api('PATCH', `/support/tickets/${t.id}`, body, msg);
+  const it = t.itemId && erp.items.find(i => i.id === t.itemId);
+  return html`<div role="dialog" aria-modal="true" aria-label=${'Complaint ' + t.no}><div className="scrim" onClick=${close}></div>
+    <aside className="drawer" style=${{width:'min(640px,100%)'}}><div className="d-head"><div className="d-title"><div style=${{minWidth:0}}><span className="mono" style=${{fontSize:12,color:'var(--muted)'}}>${catName(t.category)}</span><h2 className="mono">${t.no}</h2><div className="phone">${t.customer} · ${t.phone} · ${t.project}</div></div>
+        <div className="d-actions"><button className="icon-btn" onClick=${close} aria-label="Close"><${Icon} n="x"/></button></div></div></div>
+      <div className="details">
+        <div className="box"><h4>Complaint <span className=${'pill ' + (T_PILL[t.status] || '')}>${T_SHORT[t.status]}</span>${t.priority === 'urgent' && html` <span className="pill crit">Urgent</span>`}</h4>
+          <p style=${{margin:'4px 0 8px'}}>${t.text}</p>
+          <div className="sub" style=${{fontSize:12.5}}>${it ? it.code + ' · ' + typeById[it.type].name + ' · ' + it.roomName + ' · ' : ''}${t.warranty === true ? 'Under warranty' : t.warranty === false ? 'Warranty expired' : 'Warranty: n/a'} · Site: ${t.address || '—'}</div>
+          ${t.photo && html`<a href=${t.photo} target="_blank" rel="noopener">Photo</a>`}
+          ${t.status !== 'closed' && t.due && html`<div className="sub" style=${{fontSize:12.5,color:t.overdue ? 'var(--crit)' : undefined}}>${t.overdue ? 'Past due since ' : 'Due by '}${fmtDT(t.due)}</div>`}</div>
+        ${t.status !== 'closed' && desk && html`<div className="box"><h4>Assign and schedule</h4><div className="inline" style=${{flexWrap:'wrap',gap:8}}>
+          <select className="sel" value=${t.assignee || ''} onChange=${e => patch({assignee:e.target.value || null}, e.target.value ? 'Assigned. They have a task on WhatsApp.' : 'Unassigned.')} aria-label="Technician"><option value="">Technician / team…</option>${team.map(u => html`<option key=${u.id} value=${u.id}>${u.name} · ${roleById[u.role].name}</option>`)}</select>
+          <label className="inline" style=${{gap:6,fontSize:12}}>Visit<input type="date" className="inp" value=${t.visitDate ? String(t.visitDate).slice(0,10) : ''} onChange=${e => e.target.value && patch({visitDate:e.target.value}, 'Visit scheduled. The customer has the date and technician on WhatsApp.')}/></label>
+          <select className="sel" value=${t.priority} onChange=${e => patch({priority:e.target.value}, 'Priority changed.')} aria-label="Priority"><option value="urgent">Urgent</option><option value="normal">Normal</option><option value="low">Low</option></select>
+          <button className="btn small ghost" onClick=${() => ops.api('POST', `/support/tickets/${t.id}/resend-code`, {}, 'Happy code sent again to the customer.')}>Resend happy code</button>
+        </div></div>`}
+        ${t.status !== 'closed' && (desk || mine) && html`<div className="box"><h4>Work</h4>
+          <div className="inline" style=${{flexWrap:'wrap',gap:8,marginBottom:8}}>
+            ${!['in_progress','resolved'].includes(t.status) && html`<button className="btn small" onClick=${() => patch({status:'in_progress'}, 'Marked in progress.')}>Start work</button>`}
+            ${t.status !== 'on_hold' && t.status !== 'resolved' && html`<button className="btn small ghost" onClick=${() => patch({status:'on_hold'}, 'On hold. The customer was told.')}>Put on hold</button>`}
+          </div>
+          ${t.status !== 'resolved' ? html`<div className="inline" style=${{gap:8,flexWrap:'wrap'}}><input className="inp" value=${fix} onInput=${e => setFix(e.target.value)} placeholder="What was done (e.g. replaced 2 hinges, aligned door)" style=${{flex:1,minWidth:220}}/><button className="btn small primary" disabled=${fix.trim().length < 3} onClick=${async () => { if (await ops.api('POST', `/support/tickets/${t.id}/resolve`, {note:fix}, 'Work marked done. Ask the customer for their happy code.')) setFix(''); }}>Work done</button></div>`
+          : html`<p className="sub" style=${{fontSize:12.5,margin:'0 0 6px'}}>Ask the customer for the 4-digit happy code we sent them on WhatsApp. They should share it only if they're happy with the work.</p>`}
+          <div className="inline" style=${{gap:8,marginTop:10,flexWrap:'wrap'}}><input className="inp" inputMode="numeric" maxLength="4" value=${code} onInput=${e => setCode(e.target.value.replace(/\D/g,'').slice(0,4))} placeholder="Happy code" style=${{width:120,fontSize:18,letterSpacing:'.3em',textAlign:'center'}}/>
+            <button className="btn small primary" disabled=${code.length !== 4} onClick=${async () => { if (await ops.api('POST', `/support/tickets/${t.id}/close`, {code, note:fix}, `Complaint ${t.no} closed. The customer was thanked on WhatsApp.`)) { setCode(''); close(); } }}>Close with happy code</button>
+            ${desk && can(erp, 'override') && html`<button className="linkbtn" onClick=${() => setShowOvr(!showOvr)}>Close without code…</button>`}</div>
+          ${showOvr && html`<div className="inline" style=${{gap:8,marginTop:8,flexWrap:'wrap'}}><input className="inp" value=${ovr} onInput=${e => setOvr(e.target.value)} placeholder="Reason (logged), e.g. customer confirmed on a recorded call" style=${{flex:1,minWidth:240}}/><button className="btn small" disabled=${ovr.trim().length < 10} onClick=${async () => { if (await ops.api('POST', `/support/tickets/${t.id}/close`, {overrideReason:ovr}, 'Closed by the support desk (logged).')) close(); }}>Close (override)</button></div>`}
+        </div>`}
+        ${t.status === 'closed' && html`<div className="box"><h4>Closed</h4><p style=${{margin:0}}>${t.closedVia === 'override' ? 'Closed by the support desk without the happy code.' : 'Closed with the customer’s happy code.'} ${t.closeNote || ''}</p>${t.rating && html`<p className="sub">Customer rating: ${t.rating}/5</p>`}</div>`}
+        <div className="box"><h4>Timeline</h4><ol className="chain">${t.events.map((e, i) => html`<li key=${i}><span>${e.text}${e.internal ? html` <span className="pill">internal</span>` : ''} <span className="sub" style=${{color:'var(--muted)'}}>· ${e.by}</span></span><time>${fmtDT(e.t)}</time></li>`)}</ol>
+          ${t.status !== 'closed' && (desk || mine) && html`<div className="inline" style=${{gap:8,marginTop:8,flexWrap:'wrap'}}><input className="inp" value=${note} onInput=${e => setNote(e.target.value)} placeholder="Add a note" style=${{flex:1,minWidth:200}}/><label className="check" style=${{fontSize:12}}><input type="checkbox" checked=${pub} onChange=${e => setPub(e.target.checked)}/>Show to customer</label><button className="btn small" disabled=${!note.trim()} onClick=${async () => { if (await patch({note, noteForCustomer:pub}, 'Note added.')) setNote(''); }}>Add</button></div>`}</div>
+      </div></aside></div>`;
+}
+function MyServiceJobs({erp, ops}){
+  const mine = (erp.tickets || []).filter(t => t.assignee === erp.me && t.status !== 'closed');
+  const [open, setOpen] = useState(null);
+  if (!mine.length) return null;
+  const cur = open && mine.find(t => t.id === open);
+  return html`<div className="mcard" style=${{borderLeft:'4px solid var(--accent)'}}><b>Service complaints · ${mine.length}</b>
+    ${mine.map(t => html`<button key=${t.id} className="mcard" style=${{textAlign:'left'}} onClick=${() => setOpen(t.id)}><div className="card-row"><b className="mono">${t.no}</b><span className=${'pill ' + (T_PILL[t.status] || '')}>${T_SHORT[t.status]}</span></div><span>${t.customer} · ${t.address || ''}</span><span className="meta">${t.text}${t.visitDate ? ' · visit ' + fmtDate(String(t.visitDate).slice(0,10)) : ''}</span></button>`)}
+    ${cur && html`<${TicketDrawer} t=${cur} erp=${erp} ops=${ops} close=${() => setOpen(null)}/>`}</div>`;
+}
+
 function InstallApp({erp, ops}){
   const meU = userById[erp.me];
   const lockedSelf = meU.role === 'installer';
@@ -2170,6 +2282,7 @@ function InstallApp({erp, ops}){
   const status = i => i.installDone ? 'Done' : running(i) ? 'Working' : i.sessions.length ? 'Paused' : 'Not started';
 
   if (scr.n === 'list') screen = html`<${Phone} title=${'Hi ' + uname(who)} sub=${userById[who].roleName} right=${lockedSelf ? null : html`<select className="sel" style=${{background:'var(--rail-2)',color:'var(--rail-ink)',border:0,fontSize:12}} value=${who} onChange=${e => setWho(e.target.value)} aria-label="Installer">${INSTALLERS.map(u => html`<option key=${u.id} value=${u.id}>${u.name}</option>`)}</select>`}>
+    ${who === erp.me && html`<${MyServiceJobs} erp=${erp} ops=${ops}/>`}
     <div className="seg" style=${{width:'100%'}}>${[['active','Active'],['upcoming','Upcoming'],['done','Done']].map(([id,n]) => html`<button key=${id} style=${{flex:1,justifyContent:'center'}} aria-pressed=${tab === id} onClick=${() => setTab(id)}>${n} ${lists[id].length}</button>`)}</div>
     ${lists[tab].map(i => { const p = erp.projects.find(x => x.id === i.projectId); const d = daysFrom(i.target);
       return html`<button key=${i.id} className="mcard" onClick=${() => setScr({n:'job', id:i.id})}>
@@ -2272,6 +2385,7 @@ const VIEWS = [
   {id:'ops', name:'Operations', icon:'chart', g:'ops', title:'Operations dashboard'},
   {id:'projects', name:'Projects', icon:'folder', g:'ops'},
   {id:'tasks', name:'Tasks', icon:'tasks', g:'ops'},
+  {id:'support', name:'Support', icon:'chat', g:'ops', title:'Customer support desk'},
   {id:'survey', name:'Survey app', icon:'ruler', g:'ops', title:'Site survey app · mobile'},
   {id:'install', name:'Installer app', icon:'tool', g:'ops', title:'Installer app · mobile'},
   {id:'team', name:'Team', icon:'users', g:'ops', title:'Team performance'},
@@ -2395,6 +2509,7 @@ function App(){
       ${userById[erp.me]?.role === 'guest' && html`<div className="panel" style=${{margin:'16px 16px 0',borderLeft:'4px solid var(--accent)'}}><h3>Welcome to Make My Space</h3><p className="hint">Your account is active, but you don't have a role yet. ${SERVER.signup === 'open' ? 'An admin has been told you joined' : 'An admin will set it shortly'}; once they do, the screens for your work appear here. Until then you only see tasks given to you.</p></div>`}
       ${view === 'tasks' && !can(erp, 'admin') && can(erp, 'people') && html`<div style=${{margin:'16px 16px 0'}}><${PeopleBox} erp=${erp} ops=${ops}/></div>`}
       ${view === 'tasks' && html`<${Tasks} key=${erp.me + JSON.stringify(taskInit)} init=${taskInit} erp=${erp} ui=${ui} ops=${ops}/>`}
+      ${view === 'support' && html`<${SupportDesk} erp=${erp} ops=${ops}/>`}
       ${view === 'survey' && html`<${SurveyApp} erp=${erp} ops=${ops}/>`}
       ${view === 'install' && html`<${InstallApp} key=${erp.me} erp=${erp} ops=${ops}/>`}
       ${view === 'team' && html`<${Team} erp=${erp}/>`}

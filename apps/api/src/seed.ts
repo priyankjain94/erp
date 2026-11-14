@@ -238,7 +238,11 @@ export async function seedDemo(q: Q) {
     await q.query(`insert into quotes(lead_id, rev, lines, discount, gst_pct, subtotal, total, status, by_id) values ($1, 0, $2, 0, 18, $3, $4, 'sent', 'priya')`, [ql.rows[0].id, JSON.stringify(lines), v, Math.round(v * 1.18)]);
   }
   const cl = await q.query(`select i.id, i.project_id from items i where i.stage = 'closed' limit 1`);
-  if (cl.rows[0]) await q.query(`insert into service_requests(project_id, item_id, text, under_warranty, raised_by) values ($1,$2,'Drawer in the tall unit is not closing smoothly', true, 'customer app')`, [cl.rows[0].project_id, cl.rows[0].id]);
+  if (cl.rows[0]) {
+    const t = await q.query(`insert into service_requests(project_id, item_id, text, under_warranty, raised_by, ticket_no, category, priority, happy_code, due_at)
+      values ($1,$2,'Drawer in the tall unit is not closing smoothly', true, 'customer app', 'SR-' || to_char(now(), 'YYMM') || '-' || lpad(nextval('ticket_seq')::text, 4, '0'), 'hardware', 'normal', '4821', now() + interval '30 hours') returning id`, [cl.rows[0].project_id, cl.rows[0].id]);
+    await q.query(`insert into service_events(ticket_id, status, text, by_name) values ($1, 'open', 'Complaint registered from the customer app', 'customer app')`, [t.rows[0].id]);
+  }
 }
 
 /** Wipe all business data (keeps schema). Used by the demo reset and tests. */
@@ -247,7 +251,7 @@ export async function wipe(q: Q) {
     task_events, tasks, snags, work_sessions, item_boxes, documents, item_stage_log, items, room_items, wall_obstructions, walls, rooms, surveys,
     project_activity, payment_milestones, projects, customers, commissions, lead_timeline, lead_messages, leads, partners, users restart identity cascade`);
   await q.query(`select setval('project_seq', 101, false)`); await q.query(`select setval('item_seq', 1, false)`); await q.query(`select setval('task_seq', 1, false)`);
-  await q.query(`select setval('receipt_seq', 1, false)`); await q.query(`select setval('partner_seq', 100, false)`); await q.query('delete from invoice_seq');
+  await q.query(`select setval('receipt_seq', 1, false)`); await q.query(`select setval('partner_seq', 100, false)`); await q.query('delete from invoice_seq'); await q.query(`select setval('ticket_seq', 1, false)`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

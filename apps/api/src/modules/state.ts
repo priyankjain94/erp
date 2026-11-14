@@ -4,6 +4,7 @@ import { CUSTOMER_STAGE, DEFAULT_ROLES, PERMS } from '../domain.js';
 import type { Principal } from './auth.js';
 import { signedFileUrl } from '../integrations/storage.js';
 import { partnerStats } from './business.js';
+import { customerTickets, loadTickets } from './support.js';
 
 const ms = (d: Date | string | null) => d ? new Date(d).getTime() : null;
 const group = <T extends Record<string, any>>(rows: T[], key: string) => {
@@ -44,7 +45,7 @@ async function loadProjects(q: Q, ids: string[] | null, opts: { money: boolean; 
       receipts: (rcBy.get(p.id) || []).map(r => ({ id: r.id, no: r.receipt_no, amount: Number(r.amount), on: r.paid_on, mode: r.mode, ref: r.reference, milestone: r.milestone_id, note: r.note, by: r.by_id })),
       invoices: (ivBy.get(p.id) || []).map(v => ({ id: v.id, no: v.invoice_no, date: v.invoice_date, desc: v.description, taxable: Number(v.taxable), gstPct: Number(v.gst_pct), gst: Number(v.gst), total: Number(v.total) })),
       changes: (coBy.get(p.id) || []).map(c => ({ id: c.id, itemId: c.item_id, desc: c.description, amount: opts.money ? Number(c.amount) : null, days: c.days, status: c.status, via: c.decided_via, at: ms(c.created_at), decidedAt: ms(c.decided_at), by: c.by_id })),
-      service: (svBy.get(p.id) || []).map(v => ({ id: v.id, itemId: v.item_id, text: v.text, photo: signedFileUrl(v.photo), status: v.status, visitDate: v.visit_date, assignee: v.assignee_id, resolution: v.resolution, warranty: v.under_warranty, by: v.raised_by, at: ms(v.created_at), resolvedAt: ms(v.resolved_at) })),
+      service: (svBy.get(p.id) || []).map(v => ({ id: v.id, no: v.ticket_no, itemId: v.item_id, text: v.text, photo: signedFileUrl(v.photo), category: v.category, priority: v.priority, status: v.status, visitDate: v.visit_date, assignee: v.assignee_id, resolution: v.resolution, warranty: v.under_warranty, by: v.raised_by, at: ms(v.created_at), resolvedAt: ms(v.resolved_at), closedAt: ms(v.closed_at) })),
       quotes: (pqBy.get(p.id) || []).map(x => ({ id: x.id, rev: x.rev, total: Number(x.total), status: x.status, at: ms(x.created_at) })),
       activity: (actBy.get(p.id) || []).map(a => ({ t: ms(a.created_at), text: a.text })),
       docs: (docBy.get(p.id) || []).map(d => ({ id: d.id, category: d.category, title: d.title, rev: d.rev, notes: d.notes, itemId: d.item_id, by: d.by_id, at: ms(d.created_at), url: signedFileUrl(d.file), shared: d.shared })),
@@ -156,7 +157,8 @@ export async function staffState(p: Extract<Principal, { type: 'user' }>, q: Q =
     autos: (await many(q, 'select * from automations order by length(id), id')).map(a => ({ id: a.id, fam: a.fam, name: a.name, when: a.when_text, then: a.then_text, on: a.enabled, runs: a.runs }))
   } : { leads: [], partners: [], autos: [] };
   const wa = await one(q, `select count(*) filter (where status = 'simulated') sim, count(*) filter (where status in ('sent','delivered','read')) sent, count(*) filter (where status = 'failed') failed from wa_messages where created_at > now() - interval '30 days'`);
-  return { erp: { me, projects, items, tasks, users, roles, audit, accessRequests }, crm, server: { wa } };
+  const tickets = await loadTickets(q, p);
+  return { erp: { me, projects, items, tasks, users, roles, audit, accessRequests, tickets }, crm, server: { wa } };
 }
 
 /** What a customer sees: only their own projects, in customer-friendly terms. */
@@ -169,6 +171,7 @@ export async function customerState(customerId: number, q: Q = db) {
   return {
     projects: projects.map(p => ({ ...p, activity: [], notes: '' })),
     items: items.map(i => ({ ...i, customerStage: CUSTOMER_STAGE[i.stage as keyof typeof CUSTOMER_STAGE], sessions: [], log: [], boxes: [], flags: [], prodPiNo: '', prodPiAmount: null, prodPiDoc: null, hwVendor: '', hwPoDoc: null })),
-    staff: staff.map(s => ({ id: s.id, name: s.name, phone: prettyPhone(s.phone) }))
+    staff: staff.map(s => ({ id: s.id, name: s.name, phone: prettyPhone(s.phone) })),
+    tickets: await customerTickets(q, pids)
   };
 }

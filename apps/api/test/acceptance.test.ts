@@ -527,9 +527,9 @@ test('18. partners, quotations, receipts, GST invoices, change orders, factory s
   const sv = await api('POST', `/api/v1/customer/projects/${pid}/service`, { text: 'Drawer channel is stuck', itemId: T.kit }, T.cust);
   assert.ok(sv.ok);
   const sreq = (await api('GET', '/api/v1/state', undefined, T.owner)).erp.projects.find((p: any) => p.id === pid).service[0];
-  assert.equal(sreq.status, 'open');
-  assert.equal((await api('PATCH', `/api/v1/service/${sreq.id}`, { status: 'resolved' }, T.owner)).status, 400, 'needs a resolution');
-  assert.ok((await api('PATCH', `/api/v1/service/${sreq.id}`, { status: 'resolved', resolution: 'Channel replaced' }, T.owner)).ok);
+  assert.equal(sreq.status, 'open'); assert.match(sreq.no, /^SR-\d{4}-\d{4}$/);
+  assert.equal((await api('POST', `/api/v1/support/tickets/${sreq.id}/resolve`, { note: '' }, T.owner)).status, 400, 'needs what was done');
+  assert.ok((await api('POST', `/api/v1/support/tickets/${sreq.id}/resolve`, { note: 'Channel replaced' }, T.owner)).ok);
   // exports
   const csv = await fetch(base + '/api/v1/export/partners', { headers: { authorization: 'Bearer ' + T.priya } });
   assert.equal(csv.status, 200); assert.match(csv.headers.get('content-type') || '', /text\/csv/);
@@ -618,4 +618,78 @@ test('20. sign-up rules: closed, open (joins as New member with no access), appr
   assert.ok((await api('POST', '/api/v1/auth/google', { credential: 'good:asha@makemyspace.in:g-asha' })).accessToken);
   const d2 = await api('POST', '/api/v1/auth/access-request', { name: 'Outside', phone: '9866600555', credential: 'good:x@gmail.com:g-x' });
   assert.ok(d2.ok && !d2.joined, 'others wait for approval');
+});
+
+test('21. customer support: complaint number on WhatsApp, assign team, visit, close only with happy code, customer tracks and rates', async () => {
+  const { db } = await import('../src/core/db.js');
+  T.owner = await login(phoneOf(0));
+  // build a fresh customer project to raise against
+  const st0 = await api('GET', '/api/v1/state', undefined, T.owner);
+  const lead = await api('POST', '/api/v1/leads', { name: 'Support Client', phone: '9888800111', source: 'walkin', interest: 'Kitchen', value: 300000 }, T.owner);
+  const lid = lead.state.crm.leads.find((l: any) => l.name === 'Support Client').id;
+  await api('POST', `/api/v1/leads/${lid}/stage`, { stage: 'won' }, T.owner);
+  const won = await api('POST', `/api/v1/leads/${lid}/convert`, { pm: st0.erp.me, target: '2099-03-01', surveyDate: '2099-01-02', advance: true, address: 'Shankar Nagar, Raipur' }, T.owner);
+  const proj = won.state?.erp.projects.find((p: any) => p.customer === 'Support Client');
+  assert.ok(proj, 'project created'); void st0;
+  // installer team to assign
+  const tm = await api('POST', '/api/v1/teams', { name: 'Service Sam', phone: '9888800222', members: ['Raju'] }, T.owner);
+  const sam = tm.state.erp.users.find((u: any) => u.name === 'Service Sam');
+  graphCalls.length = 0;
+  // raise from the support desk
+  assert.equal((await api('POST', '/api/v1/support/tickets', { projectId: proj.id, category: 'hardware', text: 'x' }, T.owner)).status, 400);
+  const tk = await api('POST', '/api/v1/support/tickets', { projectId: proj.id, category: 'hardware', priority: 'urgent', text: 'Wardrobe hinge broken, door hanging' }, T.owner);
+  assert.match(tk.ticketNo, /^SR-\d{4}-\d{4}$/);
+  await drain();
+  const sent = graphCalls.filter(c => c.path === '/v25.0/1111/messages').map(c => c.body.template?.name);
+  assert.ok(sent.includes('mms_support_ticket_raised'), 'complaint number sent at once');
+  assert.ok(sent.includes('mms_install_signoff_otp'), 'happy code sent separately');
+  const msg = graphCalls.find(c => c.body.template?.name === 'mms_support_ticket_raised')!;
+  assert.equal(msg.body.template.components[0].parameters[1].text, tk.ticketNo);
+  // installer cannot see or touch it before assignment; staff without support cannot assign
+  const tsam = await login('9888800222');
+  assert.equal((await api('GET', '/api/v1/state', undefined, tsam)).erp.tickets.length, 0);
+  assert.equal((await api('PATCH', `/api/v1/support/tickets/${tk.id}`, { assignee: sam.id }, tsam)).status, 403);
+  // assign + schedule → customer gets visit message with technician
+  const due = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
+  assert.equal((await api('PATCH', `/api/v1/support/tickets/${tk.id}`, { visitDate: due }, T.owner)).status, 400, 'assign first');
+  assert.ok((await api('PATCH', `/api/v1/support/tickets/${tk.id}`, { assignee: sam.id }, T.owner)).ok);
+  graphCalls.length = 0;
+  const sch = await api('PATCH', `/api/v1/support/tickets/${tk.id}`, { visitDate: due, note: 'Carry 2 soft-close hinges' }, T.owner);
+  assert.equal(sch.state.erp.tickets.find((t: any) => t.id === tk.id).status, 'scheduled');
+  await drain();
+  assert.ok(graphCalls.some(c => c.body.template?.name === 'mms_support_visit_scheduled'));
+  // technician sees it, starts, resolves; wrong code refused; right code closes
+  const ss = await api('GET', '/api/v1/state', undefined, tsam);
+  assert.equal(ss.erp.tickets.length, 1); assert.ok(ss.erp.tasks.some((t: any) => t.title.includes(tk.ticketNo)), 'technician has a task');
+  assert.ok((await api('PATCH', `/api/v1/support/tickets/${tk.id}`, { status: 'in_progress' }, tsam)).ok);
+  assert.ok((await api('POST', `/api/v1/support/tickets/${tk.id}/resolve`, { note: 'Replaced both hinges, aligned door' }, tsam)).ok);
+  const code = (await db.query('select happy_code from service_requests where id = $1', [tk.id])).rows[0].happy_code;
+  const wrong = code === '1111' ? '2222' : '1111';
+  assert.equal((await api('POST', `/api/v1/support/tickets/${tk.id}/close`, { code: wrong }, tsam)).status, 400);
+  assert.equal((await api('POST', `/api/v1/support/tickets/${tk.id}/close`, { overrideReason: 'customer not reachable for code' }, tsam)).status, 403, 'technician cannot override');
+  // customer sees ticket, status timeline and their happy code; never internal notes
+  const tc = await login('9888800111', 'customer');
+  let cs = await api('GET', '/api/v1/customer/state', undefined, tc);
+  let ct = cs.state.tickets.find((t: any) => t.id === tk.id);
+  assert.equal(ct.happyCode, code); assert.equal(ct.status, 'resolved'); assert.equal(ct.technician, 'Service Sam');
+  assert.ok(!ct.events.some((e: any) => /Carry 2/.test(e.text)), 'internal note hidden');
+  graphCalls.length = 0;
+  assert.ok((await api('POST', `/api/v1/support/tickets/${tk.id}/close`, { code }, tsam)).ok);
+  await drain();
+  assert.ok(graphCalls.some(c => c.body.template?.name === 'mms_support_ticket_closed'));
+  assert.equal((await api('POST', `/api/v1/support/tickets/${tk.id}/close`, { code }, tsam)).status, 400, 'closed once');
+  cs = await api('GET', '/api/v1/customer/state', undefined, tc);
+  ct = cs.state.tickets.find((t: any) => t.id === tk.id);
+  assert.equal(ct.status, 'closed'); assert.equal(ct.happyCode, null);
+  assert.ok((await api('POST', `/api/v1/customer/tickets/${tk.id}/rate`, { rating: 5 }, tc)).ok);
+  // customer raises from their app and gets the number back
+  const cr = await api('POST', `/api/v1/customer/projects/${proj.id}/service`, { text: 'Kitchen shutter colour mismatch', category: 'finish' }, tc);
+  assert.match(cr.ticketNo, /^SR-/);
+  // support desk override close (admin has override) with a reason, logged
+  const t2 = cr.state.tickets.find((t: any) => t.no === cr.ticketNo);
+  assert.equal((await api('POST', `/api/v1/support/tickets/${t2.id}/close`, { overrideReason: 'short' }, T.owner)).status, 400);
+  assert.ok((await api('POST', `/api/v1/support/tickets/${t2.id}/close`, { overrideReason: 'Customer confirmed on phone, code lost' }, T.owner)).ok);
+  const final = await api('GET', '/api/v1/state', undefined, T.owner);
+  assert.equal(final.erp.tickets.find((t: any) => t.id === t2.id).closedVia, 'override');
+  assert.ok(final.erp.audit.some((a: any) => /without happy code/.test(a.text)));
 });
