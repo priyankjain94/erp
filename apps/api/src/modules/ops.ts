@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { config } from '../core/config.js';
 import { db, many, one, tx, type Q } from '../core/db.js';
 import { parse, type Ctx, type Router } from '../core/http.js';
-import { addDays, bad, conflict, first, fmtDate, forbidden, HttpError, normPhone, notFound, prettyPhone } from '../core/util.js';
+import { addDays, bad, conflict, first, fmtDate, forbidden, HttpError, normPhone, notFound, prettyPhone, todayStr } from '../core/util.js';
 import { WAITING_REASONS, BOXES, CHECKLIST, DEFAULT_PAYMENTS, DOC_CATEGORIES, DOC_CATEGORY_IDS, gatesFor, MATERIAL_FIELDS, ITEM_TYPES, OBSTRUCTIONS, PAUSE_REASONS, SNAG_FLOW, SNAG_TYPES, stageById, stageIdx, stageProof, STAGES, stageTaskTitle, typeName, TYPE_IDS } from '../domain.js';
 import { sendTemplate } from '../integrations/whatsapp.js';
 import { audit, can, checkOtp, issueOtp, staff, userOf, type Principal } from './auth.js';
@@ -453,6 +453,26 @@ export function opsRoutes(r: Router) {
       await act(q, s.project_id, `Surveyor ${p.user.name} checked in at site (GPS recorded)`);
     });
     return done(ctx);
+  });
+  /* the surveyor can't add scope; this asks the PM to (task + WhatsApp). The task closes when scope is added. */
+  r.post('/api/v1/surveys/:pid/ask-scope', staff('survey'), async ctx => {
+    const p = userOf(ctx);
+    const out = await tx(async q => {
+      const s = await canSurvey(q, p, ctx.params.pid);
+      if (s.status === 'submitted') throw bad('This survey is already submitted.');
+      if (await one(q, 'select 1 from project_scope where project_id = $1 and status = \'active\' limit 1', [s.project_id])) throw bad('This project already has a scope of work. Pull down to refresh.');
+      const pr = await one(q, 'select id, code, pm_id from projects where id = $1', [s.project_id]);
+      const open = await one(q, `select id, assignee_id from tasks where project_id = $1 and title like 'Add the scope of work%' and status not in ('done','missed') limit 1`, [pr.id]);
+      if (open) return { already: true, to: open.assignee_id };
+      const to = (pr.pm_id && pr.pm_id !== p.user.id ? pr.pm_id : null)
+        || (await one(q, `select id from users where role = 'ops_head' and active order by created_at limit 1`))?.id
+        || (await one(q, `select id from users where role = 'admin' and active order by created_at limit 1`))?.id;
+      if (!to) throw bad('No project manager is set for this project. Call the office.');
+      await pushTask(q, { title: `Add the scope of work for ${pr.code}: the site survey is blocked without it`, projectId: pr.id, assignee: to, assigner: p.user.id, deadline: todayStr(), priority: 'urgent' });
+      await act(q, pr.id, `Surveyor ${p.user.name} asked for the scope of work (survey can't be submitted without it)`);
+      return { already: false, to };
+    });
+    return { ok: true, ...out, state: await staffState(p) };
   });
   r.put('/api/v1/surveys/:pid/draft', staff('survey'), async ctx => {
     const p = userOf(ctx); const b = parse(DraftZ, ctx.body);

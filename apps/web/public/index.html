@@ -1511,6 +1511,7 @@ function makeOps(erp, setErp, toast, leads, crm, app){
       if (res && res.code) toast(`${res.code} created. Survey task sent to the surveyor${lead ? ', welcome message sent to the customer' : ''}.`);
       return res ? res.id : null;
     },
+    askScope: pid => run('POST', `/surveys/${pid}/ask-scope`, {}, res => res.already ? `Already asked. ${uname(res.to)} has a task to add the scope.` : `${uname(res.to)} has a task and a WhatsApp to add the scope. You get a WhatsApp when it is ready.`),
     async checkIn(pid){ const g = await geo(); return run('POST', `/surveys/${pid}/check-in`, g, 'Checked in. Survey timer started.', {queue:true}); },
     async submitSurvey(pid, sign){
       clearTimeout(timers['survey:' + pid]); delete timers['survey:' + pid];
@@ -2781,6 +2782,17 @@ function Keypad({label, mm, unit, setUnit, range, onDone, onClose}){
 }
 
 /* wall photo; tapping it drops a pin for an obstruction */
+/* shown when a survey has no scope: the surveyor can't add it, so this asks the PM */
+function AskScope({p, ops, compact}){
+  const [asked, setAsked] = useState(null);
+  const ask = async () => { const res = await ops.askScope(p.id); if (res) setAsked(res.to || true); };
+  return html`<div className="mcard" style=${{borderColor:'var(--crit)',fontSize:13.5}}>
+    <b>No scope of work yet</b>
+    <span className="meta" style=${{color:'var(--ink)'}}>${compact ? 'The survey can\'t be submitted until the project manager adds the items to make.' : 'The project manager has not added the items to make. You can measure the rooms now; the survey can be submitted once the scope is added.'}</span>
+    ${asked ? html`<span className="meta">Asked ${asked === true ? 'the project manager' : uname(asked)}. You get a WhatsApp when the scope is ready, then come back here.</span>`
+      : html`<button className="big pri" onClick=${ask}>Ask ${p.pm ? uname(p.pm) : 'the project manager'} to add it</button>`}
+  </div>`;
+}
 function PinPhoto({src, obs, onTap, onPin, disabled}){
   const tap = e => {
     if (disabled) return;
@@ -2797,6 +2809,7 @@ const CamButton = ({label, onPick, multiple, cls = 'btn small', capture = true})
 function SurveyApp({erp, ops}){
   const [scr, setScr] = useState({n:'list'});
   const [sheet, setSheet] = useState(null);
+  const [signed, setSigned] = useState(false);
   const [kp, setKp] = useState(null);
   const [unit, setUnitS] = useState(getUnit);
   const setUnit = u => { setUnitS(u); try { localStorage.setItem('mms-unit', u); } catch(e){} };
@@ -2843,6 +2856,7 @@ function SurveyApp({erp, ops}){
     ${jobs.map(j => { const s = j.survey; return html`<button key=${j.id} className="mcard" onClick=${() => setScr({n:'job', pid:j.id})}>
       <div className="card-row"><b>${j.customer}</b>${s.status === 'submitted' ? html`<span className="pill good">Submitted</span>` : s.status === 'in-progress' ? html`<span className="pill warn">In progress</span>` : html`<span className="pill acc">${dayLabel(s.scheduled)} ${clock(s.scheduled)}</span>`}</div>
       <span className="meta">${j.address} · ${j.code}</span>
+      ${s.status !== 'submitted' && !(j.scope || []).length && html`<span className="pill warn" style=${{justifySelf:'start'}}>No scope of work yet</span>`}
       ${s.status !== 'submitted' && html`<div className="inline"><a className="btn small" href=${'tel:' + j.phone.replace(/\s/g,'')} onClick=${e => e.stopPropagation()}><${Icon} n="phone" s=${14}/>${j.phone}</a><a className="btn small" target="_blank" rel="noopener" href=${'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(j.address)} onClick=${e => e.stopPropagation()}>Map</a></div>`}
     </button>`; })}
   <//>`;
@@ -2859,7 +2873,7 @@ function SurveyApp({erp, ops}){
         : html`<div className="banner"><b>Wall rule:</b> stand at the room's entry door. The wall with the door is <b>A</b>, then go clockwise: B, C, D…</div>`}
       ${p.notes && html`<div className="banner warn">${p.notes}</div>`}
       ${!done && html`<div className="mcard" style=${{fontSize:13}}><b>Steps</b>${[['Check in at site', !!s.checkIn], ['Set up each room in the scope', s.rooms.length > 0 && !unset.length], ['Photo + width + height for every wall', s.rooms.length > 0 && s.rooms.every(rm => rm.walls.every(wallOk))], ['Place every scope item on its wall', scope.length > 0 && scope.every(x => placedIds.has(x.id))], ['Review and submit', false]].map(([t, ok], i) => html`<div key=${i} className="mrow"><span className=${'wall-letter sm' + (ok ? ' ok' : '')}>${ok ? '✓' : i + 1}</span><span className="grow">${t}</span></div>`)}</div>`}
-      ${!done && !scope.length && html`<div className="banner crit">No scope of work yet. Ask the project manager to add the items to make before you go to site.</div>`}
+      ${!done && !scope.length && html`<${AskScope} p=${p} ops=${ops}/>`}
       ${!done && scope.length > 0 && html`<div className="mcard" style=${{fontSize:13}}><b>Scope of work · ${scope.filter(x => placedIds.has(x.id)).length}/${scope.length} placed</b>${[...new Set(scope.map(x => x.room))].map(r => html`<div key=${r}><span className="meta">${r}</span>${scope.filter(x => x.room === r).map(x => html`<div key=${x.id} className="mrow"><span className=${'wall-letter sm' + (placedIds.has(x.id) ? ' ok' : '')}>${placedIds.has(x.id) ? '✓' : ''}</span><span className="grow">${scopeLabel(x)}</span></div>`)}</div>`)}
         <span className="meta" style=${{fontSize:12}}>Client wants something extra? Tell the project manager; only they can add it to the scope.</span></div>`}
       ${!done && s.checkIn && unset.map(x => html`<button key=${x.roomCode} className="mcard" style=${{borderStyle:'dashed'}} onClick=${() => setupRoom(x)}><div className="card-row"><b>${x.room}</b><span className="pill">Not set up</span></div><span className="meta">Tap to set up this room and start measuring</span></button>`)}
@@ -2947,9 +2961,9 @@ function SurveyApp({erp, ops}){
     const s = p.survey, measured = r.walls.filter(wallOk).length;
     const sc = (p.scope || []).filter(x => x.roomCode === r.code && !x.itemId);
     const placed = sc.filter(x => r.items.some(i => i.scopeId === x.id));
-    const issues = [...r.walls.filter(w => !wallOk(w)).map(w => `Wall ${w.label}: ${[!w.photo && 'photo', !(Number(w.w) > 0) && 'width', !(Number(w.h) > 0) && 'height'].filter(Boolean).join(', ')} missing`),
-      ...r.walls.flatMap((w, wi) => wallChecks(r, wi).filter(c => !c.startsWith('Opposite') || wi < 2).map(c => `Wall ${w.label}: ${c}`)),
-      ...sc.filter(x => !placed.includes(x)).map(x => `${scopeLabel(x)}: not placed on a wall`)];
+    const issues = [...r.walls.filter(w => !wallOk(w)).map(w => ({t:`Wall ${w.label}: ${[!w.photo && 'photo', !(Number(w.w) > 0) && 'width', !(Number(w.h) > 0) && 'height'].filter(Boolean).join(', ')} missing`, label:w.label})),
+      ...r.walls.flatMap((w, wi) => wallChecks(r, wi).filter(c => !c.startsWith('Opposite') || wi < 2).map(c => ({t:`Wall ${w.label}: ${c}`, label:w.label}))),
+      ...sc.filter(x => !placed.includes(x)).map(x => ({t:`${scopeLabel(x)}: not placed on a wall`, x}))];
     const scopeRooms = [...new Map((p.scope || []).filter(x => !x.itemId).map(x => [x.roomCode, x])).values()];
     const unset = scopeRooms.filter(x => !s.rooms.some(rm => rm.code === x.roomCode));
     const openRoom = s.rooms.find(rm => rm.id !== r.id && !rm.walls.every(wallOk));
@@ -2968,7 +2982,7 @@ function SurveyApp({erp, ops}){
         ${sc.map(x => { const at = r.items.find(i => i.scopeId === x.id); return html`<div key=${x.id} className="mrow"><span className=${'wall-letter sm' + (at ? ' ok' : '')}>${at ? at.wall : '·'}</span><span className="grow">${scopeLabel(x)}</span></div>`; })}
         ${!sc.length && html`<span className="meta">Extra room: measured only, nothing in it is made.</span>`}
       </div>
-      ${issues.length > 0 && html`<div className="mcard" style=${{borderColor:'var(--red)'}}><b>Check before you leave the site</b>${issues.map((t, i) => html`<span key=${i} className="meta" style=${{color:'var(--ink)'}}>• ${t}</span>`)}</div>`}
+      ${issues.length > 0 && html`<div className="mcard" style=${{borderColor:'var(--red)'}}><b>Check before you leave the site</b>${issues.map((e, i) => html`<button key=${i} className="linkbtn" style=${{textAlign:'left',color:'var(--ink)',fontSize:13}} onClick=${() => e.x ? setSheet({n:'place', rid:r.id, x:e.x}) : setScr({n:'wall', pid:p.id, rid:r.id, label:e.label})}>• ${e.t} ›</button>`)}</div>`}
       <div className="inline" style=${{justifyContent:'center'}}><button className="btn small ghost" onClick=${() => setScr({n:'job', pid:p.id})}>All rooms</button><button className="btn small ghost" onClick=${() => setSheet({n:'room', name:'', code:'', shape:'rect', count:4, ceiling:r.ceiling || 2900, floor:FLOORS[0]})}>Add extra room</button></div>
     <//>`;
   }
@@ -2997,19 +3011,22 @@ function SurveyApp({erp, ops}){
       rm.items.filter(x => !x.scopeId || !(p.scope || []).some(s => s.id === x.scopeId && !s.itemId)).forEach(x => errs.push({t:`${rm.name} · wall ${x.wall}: ${typeById[x.type].name} is not in the scope of work. Remove it.`, rid:rm.id, label:x.wall}));
     });
     const scope = (p.scope || []).filter(x => !x.itemId);
-    if (!scope.length) errs.push({t:'No scope of work yet. Ask the project manager to add the items to make.'});
+    const noScope = !scope.length;
     scope.forEach(x => { const c = p.survey.rooms.reduce((k, rm) => k + rm.items.filter(i => i.scopeId === x.id).length, 0); const rm = p.survey.rooms.find(r => r.code === x.roomCode);
-      if (!rm) { if (!errs.some(e => e.t.startsWith(x.room + ' is in the scope'))) errs.push({t:`${x.room} is in the scope but not set up yet.`}); } else if (!c) errs.push({t:`${scopeLabel(x)} · ${x.room}: not placed on a wall yet.`, rid:rm.id}); });
-    const n = scope.length;
-    const jump = e => e.rid && setScr(e.label ? {n:'wall', pid:p.id, rid:e.rid, label:e.label} : {n:'room', pid:p.id, rid:e.rid});
+      if (!rm) { if (!errs.some(e => e.setup && e.setup.roomCode === x.roomCode)) errs.push({t:`${x.room} is in the scope but not set up yet. Tap to set it up.`, setup:x}); }
+      else if (!c) errs.push({t:`${scopeLabel(x)} · ${x.room}: not placed on a wall yet. Tap to choose the wall.`, place:x, rid:rm.id}); });
+    const n = scope.length, nErr = errs.length + (noScope ? 1 : 0);
+    const jump = e => e.setup ? setSheet({n:'room', name:e.setup.room, code:e.setup.roomCode, fixed:true, shape:'rect', count:4, ceiling:2900, floor:FLOORS[0]})
+      : e.place ? setSheet({n:'place', rid:e.rid, x:e.place})
+      : e.rid && setScr(e.label ? {n:'wall', pid:p.id, rid:e.rid, label:e.label} : {n:'room', pid:p.id, rid:e.rid});
     screen = html`<${Phone} title="Review and submit" sub=${p.customer} back=${() => setScr({n:'job', pid:p.id})} right=${sync}
-      foot=${html`<button className="big go" disabled=${errs.length > 0 || !n} onClick=${async () => { const res = await ops.submitSurvey(p.id, sheet === 'signed'); setSheet(null); if (res) setScr({n:'submitted', pid:p.id, created:res.created}); }}>Submit survey</button>`}>
-      <div className=${'banner ' + (errs.length ? 'crit' : 'good')}>${errs.length ? `${errs.length} thing${errs.length > 1 ? 's' : ''} to fix before submitting. Tap one to go there.` : `All ${p.survey.rooms.reduce((s,rm) => s + rm.walls.length, 0)} walls have a photo and measurements. ${n} item${n === 1 ? "" : "s"} from the scope will go to production drawing.`}</div>
+      foot=${html`<button className="big go" disabled=${nErr > 0 || !n} onClick=${async () => { const res = await ops.submitSurvey(p.id, signed); setSigned(false); if (res) setScr({n:'submitted', pid:p.id, created:res.created}); }}>Submit survey</button>`}>
+      <div className=${'banner ' + (nErr ? 'crit' : 'good')}>${nErr ? `${nErr} thing${nErr > 1 ? 's' : ''} to fix before submitting.${errs.length ? ' Tap one to fix it.' : ''}` : `All ${p.survey.rooms.reduce((s,rm) => s + rm.walls.length, 0)} walls have a photo and measurements. ${n} item${n === 1 ? "" : "s"} from the scope will go to production drawing.`}</div>
       ${localPhotos > 0 && html`<div className="banner warn">${localPhotos} photo${localPhotos > 1 ? 's are' : ' is'} still on the phone. ${online ? 'Uploading now; submit when it says Saved.' : 'Connect to the internet to upload before submitting.'}</div>`}
+      ${noScope && html`<${AskScope} p=${p} ops=${ops} compact=${true}/>`}
       ${errs.map((e,i) => html`<button key=${i} className="mcard" style=${{borderColor:'var(--crit)'}} onClick=${() => jump(e)}><span style=${{fontSize:13}}>${e.t} ›</span></button>`)}
       ${warns.map((e,i) => html`<button key=${'w'+i} className="mcard" style=${{borderColor:'var(--warn)'}} onClick=${() => jump(e)}><span style=${{fontSize:13,color:'var(--warn)'}}>${e.t} ›</span></button>`)}
-      ${!n && html`<div className="banner warn">Tag at least one piece of furniture so items can be created.</div>`}
-      <div className="mcard"><b>Customer signature (optional)</b><${SignPad} onSigned=${() => setSheet('signed')}/></div>
+      <div className="mcard"><b>Customer signature (optional)</b><${SignPad} onSigned=${() => setSigned(true)}/></div>
       <button className="btn" onClick=${() => openPrint('survey', p.id)}>Preview customer summary (PDF)</button>
       <span className="meta" style=${{fontSize:12,color:'var(--muted)'}}>On submit: rooms, walls and photos are saved to ${p.code}, items move to Production drawing, designers get tasks, and the customer gets a WhatsApp update. Open the summary, Save as PDF and share it with the customer on WhatsApp.</span>
     <//>`;
@@ -3044,6 +3061,16 @@ function SurveyApp({erp, ops}){
     <div className="presets">${SHOT_TAGS.map(t => html`<button key=${t} onClick=${() => { updRoom(y => { const ph = (y.walls[sheet.wi].photos || [])[sheet.k]; if (ph) ph.tag = t; }); setSheet(null); }}>${t}</button>`)}</div>
     <button className="big" onClick=${() => setSheet(null)}>Skip</button>
   </div></div>`;
+  if (sheet && sheet.n === 'place'){
+    const rm = p.survey.rooms.find(y => y.id === sheet.rid), x = sheet.x;
+    const put = label => { ops.updProject(p.id, pr => { const y = pr.survey.rooms.find(z => z.id === sheet.rid); const k = y.items.findIndex(i => i.scopeId === x.id); if (k >= 0) y.items[k].wall = label; else y.items.push({type:x.type, wall:label, desc:'', scopeId:x.id}); }); setSheet(null); };
+    overlay = rm && html`<div className="sheet-m" onClick=${e => e.target === e.currentTarget && setSheet(null)}><div className="in">
+      <h3>Which wall does the ${scopeLabel(x)} go on?</h3>
+      <span className="meta" style=${{fontSize:12.5}}>${rm.name}. Wall A has the entry door, then clockwise.</span>
+      <div style=${{display:'grid',gap:8}}>${rm.walls.map(w => { const others = rm.items.filter(i => i.wall === w.label && i.scopeId !== x.id); return html`<button key=${w.label} className="mrow mcard" onClick=${() => put(w.label)}><span className=${'wall-letter sm' + (wallOk(w) ? ' ok' : '')}>${w.label}</span><span className="grow" style=${{textAlign:'left'}}><b>Wall ${w.label}</b><br/><span className="meta">${Number(w.w) ? `${fmtLen(w.w, unit)} × ${fmtLen(w.h, unit)}` : 'Not measured yet'}${w.obs.length ? ' · ' + w.obs.map(o => o.type).join(', ') : ''}${others.length ? ' · has ' + others.map(i => typeById[i.type].name).join(', ') : ''}</span></span></button>`; })}</div>
+      <button className="big" onClick=${() => setSheet(null)}>Cancel</button>
+    </div></div>`;
+  }
   if (sheet && sheet.n === 'obs'){
     const ww = r.walls[sheet.wi], o = sheet.o, W = Number(ww.w), H = Number(ww.h) || Number(r.ceiling);
     const setO = patch => setSheet(s => ({...s, o:{...s.o, ...patch}}));

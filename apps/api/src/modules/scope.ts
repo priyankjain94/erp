@@ -7,6 +7,7 @@ import { audit, staff, userOf, type Principal } from './auth.js';
 import { act, ScopeLineZ, type ScopeLine } from './ops.js';
 import { staffState } from './state.js';
 import { pushTask } from './tasks.js';
+import { sendTemplate } from '../integrations/whatsapp.js';
 
 type U = Extract<Principal, { type: 'user' }>;
 
@@ -81,6 +82,14 @@ export function scopeRoutes(r: Router) {
         await act(q, pr.id, `Scope added after survey: ${typeName(s.type)} in ${room.name}, wall ${b.wall} (${it.code}) by ${p.user.name}`);
       } else {
         await act(q, pr.id, `Scope of work: ${b.lines.map(l => `${typeName(l.type)} · ${l.room}`).join(', ')} added by ${p.user.name}`);
+        // the surveyor asked for this: close the ask and tell them it's there
+        const asks = await many(q, `select id, assigner_id from tasks where project_id = $1 and title like 'Add the scope of work%' and status not in ('done','missed')`, [pr.id]);
+        for (const t of asks) {
+          await q.query(`update tasks set status = 'done', done_at = now() where id = $1`, [t.id]);
+          await q.query(`insert into task_events(task_id, e, by_id, note) values ($1, 'done', $2, 'Scope of work added')`, [t.id, p.user.id]);
+          const sv2 = await one(q, 'select u.phone from surveys s join users u on u.id = s.assignee_id where s.project_id = $1', [pr.id]);
+          if (sv2?.phone) await sendTemplate(sv2.phone, 'task_update', [`Site survey ${pr.code}`, 'the scope of work is ready, open the survey app to measure and place the items'], { q, related: { type: 'project', id: pr.id } });
+        }
       }
       await audit(q, p, 'scope.add', `Scope added to ${pr.code}: ${b.lines.length} line(s)`, 'project', pr.id);
     });

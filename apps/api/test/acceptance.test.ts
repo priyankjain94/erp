@@ -233,6 +233,27 @@ test('24. scope of work: sales builds it before the survey, surveyor cannot chan
   assert.equal((await api('DELETE', `/api/v1/projects/${T.pid}/scope/${line.id}`, { reason: 'changed mind' }, T.vikram)).status, 400, 'items in production need a change order');
 });
 
+test('26. survey without scope: surveyor asks the PM (task + WhatsApp), adding scope closes the ask and tells the surveyor', async () => {
+  const ankit = await login(P.ankit);
+  const np = await api('POST', '/api/v1/projects', { customer: 'No Scope Test', phone: '9811100033', address: 'Shankar Nagar, Raipur', value: 300000, pm: 'vikram', target: '2099-06-01', surveyDate: '2099-05-02', scope: [{ room: 'Kitchen', type: 'KT' }] }, T.owner);
+  const pid = np.id;
+  let st = await api('GET', '/api/v1/state', undefined, ankit);
+  const line = st.erp.projects.find((x: any) => x.id === pid).scope[0];
+  await api('DELETE', `/api/v1/projects/${pid}/scope/${line.id}`, { reason: 'test: empty scope' }, ankit);
+  const ask = await api('POST', `/api/v1/surveys/${pid}/ask-scope`, {}, T.sana);
+  assert.equal(ask.ok, true, JSON.stringify(ask)); assert.equal(ask.already, false); assert.equal(ask.to, 'vikram');
+  const again = await api('POST', `/api/v1/surveys/${pid}/ask-scope`, {}, T.sana);
+  assert.equal(again.already, true, 'no duplicate task');
+  const vt = (await api('GET', '/api/v1/state', undefined, T.vikram)).erp.tasks.filter((t: any) => t.projectId === pid && t.title.startsWith('Add the scope of work'));
+  assert.equal(vt.length, 1); assert.equal(vt[0].priority, 'urgent');
+  st = await api('POST', `/api/v1/projects/${pid}/scope`, { lines: [{ room: 'Kitchen', type: 'KT' }] }, ankit);
+  assert.equal(st.ok, true, JSON.stringify(st));
+  const done = (await api('GET', '/api/v1/state', undefined, T.vikram)).erp.tasks.find((t: any) => t.id === vt[0].id);
+  assert.equal(done.status, 'done', 'ask closes when scope is added');
+  assert.equal((await q1(`select count(*)::int n from wa_messages where template like '%task_update' and related_type = 'project' and related_id = $1`, [pid])).n, 1, 'surveyor told on WhatsApp');
+  assert.equal((await api('POST', `/api/v1/surveys/${pid}/ask-scope`, {}, T.sana)).status, 400, 'nothing to ask once scope exists');
+});
+
 test('6. drawing gate + customer login approves in the customer app', async () => {
   const designer = (await api('GET', '/api/v1/state', undefined, T.owner)).erp.items.find((i: any) => i.id === T.kit).designer;
   const dt = designer === 'deepa' ? T.deepa : T.arjun;
