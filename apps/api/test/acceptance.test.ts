@@ -173,6 +173,25 @@ test('5. site survey: check-in, draft, incomplete blocked, submit creates items'
   T.kit = its.find((i: any) => i.type === 'KT').id; T.cu = its.find((i: any) => i.type === 'CU').id;
 });
 
+test('22. survey app v1.10: close-up photos and obstruction pins are saved; customer measurement summary prints', async () => {
+  const sana = await login(P.sana);
+  assert.ok((await api('POST', '/api/v1/surveys/P103/check-in', { lat: 21.2, lng: 81.6 }, sana)).ok);
+  const shot = await upload(sana, 'image/jpeg'), main = await upload(sana, 'image/jpeg');
+  const wall = (l: string) => ({ label: l, w: 3600, h: 2900, photo: main, notes: '', photos: l === 'B' ? [{ ref: shot, tag: 'Switchboard' }] : [],
+    obs: l === 'B' ? [{ type: 'Switchboard', left: 1200, floor: 1200, w: 200, h: 120, px: 35.5, py: 52 }, { type: 'Window', left: 900, floor: 900, w: 1200, h: 1200 }] : [] });
+  const rooms = [{ id: 'room-m', name: 'Master Bedroom', code: 'MBR', ceiling: 2900, floor: 'Tiled, finished', shape: 'rect', walls: ['A', 'B', 'C', 'D'].map(wall), items: [{ type: 'WR', wall: 'B', desc: 'sliding, 3 doors' }] }];
+  assert.ok((await api('PUT', '/api/v1/surveys/P103/draft', { rooms }, sana)).ok);
+  assert.equal((await api('PUT', '/api/v1/surveys/P103/draft', { rooms: [{ ...rooms[0], walls: [{ ...wall('A'), obs: [{ type: 'Window', left: 0, floor: 0, w: 10, h: 10, px: 140, py: 5 }] }, wall('B'), wall('C')] }] }, sana)).status, 400, 'pin outside the photo rejected');
+  const st = await api('GET', '/api/v1/state', undefined, sana);
+  const wb = st.erp.projects.find((p: any) => p.id === 'P103').survey.rooms[0].walls.find((w: any) => w.label === 'B');
+  assert.equal(wb.photos.length, 1); assert.equal(wb.photos[0].tag, 'Switchboard'); assert.ok(wb.photos[0].url.startsWith('/api/v1/files/'));
+  assert.equal(wb.obs[0].px, 35.5); assert.equal(wb.obs[0].py, 52); assert.equal(wb.obs[1].px, null);
+  const pr = await fetch(base + '/api/v1/print/survey/P103', { headers: { authorization: 'Bearer ' + sana } });
+  assert.equal(pr.status, 200); const page = await pr.text();
+  assert.match(page, /Site measurement summary/); assert.match(page, /Master Bedroom/); assert.match(page, /Switchboard 200×120 mm, 1200 from left/); assert.match(page, /Wardrobe/);
+  assert.equal((await fetch(base + '/api/v1/print/survey/P103', { headers: { authorization: 'Bearer ' + T.ravi } })).status, 403, 'installer cannot print survey');
+});
+
 test('6. drawing gate + customer login approves in the customer app', async () => {
   const designer = (await api('GET', '/api/v1/state', undefined, T.owner)).erp.items.find((i: any) => i.id === T.kit).designer;
   const dt = designer === 'deepa' ? T.deepa : T.arjun;

@@ -1,0 +1,75 @@
+import asyncio
+from h2 import *
+async def main():
+    async with async_playwright() as pw:
+        b = await launch(pw); ctx = await b.new_context(viewport={'width':390,'height':844}, is_mobile=True, has_touch=True, service_workers='block', geolocation={'latitude':21.25,'longitude':81.63}, permissions=['geolocation'])
+        p = await ctx.new_page(); errs=[]; p.on('console', lambda m: m.type=='error' and errs.append(m.text)); p.on('pageerror', lambda e: errs.append('PAGEERR '+str(e))); await p.route('**/*', route)
+        await p.goto(BASE + '/'); await p.wait_for_timeout(1500)
+        await p.get_by_placeholder('10-digit mobile').fill('9000000007'); await p.get_by_role('button', name='Send OTP on WhatsApp').click(); await p.wait_for_timeout(600)
+        c = re.search(r'(\d{4})', await p.locator('.banner.warn').inner_text()).group(1)
+        await p.locator('input[maxlength="8"]').fill(c); await p.get_by_role('button', name='Log in').click(); await p.wait_for_timeout(1500)
+        await p.goto(BASE + '/#survey'); await p.wait_for_timeout(1200)
+        cards = p.locator('.ph-body > button.mcard')
+        for i in range(await cards.count()):
+            if 'Submitted' not in await cards.nth(i).inner_text(): await cards.nth(i).click(); break
+        await p.wait_for_timeout(600)
+        await p.get_by_role('button', name='Check in at site').click(); await p.wait_for_timeout(1200)
+        await p.get_by_role('button', name='Add room').click(); await p.wait_for_timeout(400)
+        await p.locator('.presets button', has_text='Master Bedroom').click()
+        await p.locator('.sheet-m .kp-field').click(); await p.wait_for_timeout(300)
+        await p.screenshot(path='/tmp/v0_ceiling_kp.png')
+        await p.locator('.kp-sheet').get_by_role('button', name='Cancel').click()
+        await p.locator('.sheet-m').get_by_role('button', name='Add room').click(); await p.wait_for_timeout(700)
+        print('after add room:', await p.locator('.ph-head b').inner_text())
+        await p.screenshot(path='/tmp/v1_round.png')
+        for k in range(4):
+            await p.locator('.photo-drop input[type=file]').set_input_files('/tmp/wall.jpg'); await p.wait_for_timeout(900)
+        print('after round:', (await p.locator('.ph-head').inner_text()).replace('\n',' | '))
+        await p.screenshot(path='/tmp/v2_room.png')
+        await p.locator('.ph-foot .big.pri').click(); await p.wait_for_timeout(600)   # Measure A
+        await p.screenshot(path='/tmp/v3_wall.png')
+        # width via keypad 3600
+        await p.locator('.dim').first.click(); await p.wait_for_timeout(300)
+        for k in ['3','6','00']: await p.locator('.kp button', has_text=re.compile('^'+k+'$')).click()
+        await p.screenshot(path='/tmp/v4_kp.png')
+        await p.locator('.kp-sheet .big.pri').click(); await p.wait_for_timeout(400)
+        print('tiles:', (await p.locator('.dim-tiles').inner_text()).replace('\n',' | '))
+        # tap the photo to mark a window
+        img = p.locator('.pinwrap'); bb = await img.bounding_box()
+        await p.mouse.click(bb['x'] + bb['width']*0.46, bb['y'] + bb['height']*0.5); await p.wait_for_timeout(400)
+        await p.locator('.sheet-m .chips button', has_text='Std 1200×1200').click(); await p.wait_for_timeout(300)
+        await p.screenshot(path='/tmp/v5_obs.png')
+        print('obs tiles:', (await p.locator('.sheet-m .dim-tiles').inner_text()).replace('\n',' | '))
+        await p.locator('.sheet-m').get_by_role('button', name='Add', exact=True).click(); await p.wait_for_timeout(400)
+        print('pins:', await p.locator('.pinwrap .pin').count())
+        # furniture chip + close-up
+        await p.locator('.chips button', has_text='Wardrobe').click(); await p.wait_for_timeout(300)
+        await p.locator('.shot.add input').set_input_files('/tmp/wall.jpg'); await p.wait_for_timeout(800)
+        await p.locator('.sheet-m .presets button', has_text='Switchboard').click(); await p.wait_for_timeout(300)
+        await p.screenshot(path='/tmp/v6_wall_done.png', full_page=True)
+        # feet-inches unit on wall B via swipe/next
+        await p.locator('.ph-foot .big.pri').click(); await p.wait_for_timeout(400)
+        await p.locator('.seg button', has_text='ft-in').first.click()
+        await p.locator('.dim').first.click(); await p.wait_for_timeout(300)
+        for k in ['1','1',"ft ′",'9']: await p.locator('.kp button', has_text=k).first.click()
+        print('ftin display:', (await p.locator('.kp-disp').inner_text()).replace('\n',' | '))
+        await p.locator('.kp-sheet .big.pri').click(); await p.wait_for_timeout(300)
+        # walls C, D: C should suggest same as A
+        await p.locator('.ph-foot .big.pri').click(); await p.wait_for_timeout(400)
+        await p.locator('.seg button', has_text='mm').first.click()
+        sug = p.locator('.chip-sugg'); print('suggest on C:', await sug.inner_text() if await sug.count() else None)
+        await sug.click(); await p.wait_for_timeout(300)
+        await p.locator('.ph-foot .big.pri').click(); await p.wait_for_timeout(400)
+        await p.locator('.chip-sugg').click(); await p.wait_for_timeout(300)
+        await p.screenshot(path='/tmp/v7_wallD.png')
+        await p.locator('.ph-foot .big.pri').click(); await p.wait_for_timeout(500)  # done -> room
+        await p.locator('.ph-head .back').click(); await p.wait_for_timeout(1500)
+        await p.get_by_role('button', name=re.compile('Review')).click(); await p.wait_for_timeout(2500)
+        await p.screenshot(path='/tmp/v8_review.png')
+        print('review:', (await p.locator('.ph-body').inner_text())[:400].replace('\n',' | '))
+        print('sync pill:', await p.locator('.ph-head .pill').last.inner_text())
+        await p.get_by_role('button', name='Submit survey').click(); await p.wait_for_timeout(2500)
+        print('after submit:', (await p.locator('.ph-body').first.inner_text())[:120].replace('\n',' | '))
+        print('errors:', [e[:160] for e in errs if '401' not in e and 'ERR_FAILED' not in e and 'key" prop' not in e])
+        await b.close()
+asyncio.run(main())

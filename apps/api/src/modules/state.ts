@@ -54,7 +54,8 @@ async function loadProjects(q: Q, ids: string[] | null, opts: { money: boolean; 
         rooms: (roomBy.get(p.id) || []).map(r => ({
           id: r.id, name: r.name, code: r.code, ceiling: r.ceiling, floor: r.floor, shape: r.shape,
           walls: (wallBy.get(r.id) || []).map(w => ({ label: w.label, w: w.w ?? '', h: w.h ?? '', photo: w.photo, photoUrl: signedFileUrl(w.photo), notes: w.notes,
-            obs: (obsBy.get(w.id) || []).map(o => ({ type: o.type, left: o.left_mm, floor: o.floor_mm, w: o.w, h: o.h })) })),
+            photos: (Array.isArray(w.extra_photos) ? w.extra_photos : []).map((x: { ref: string; tag?: string }) => ({ ref: x.ref, tag: x.tag || '', url: signedFileUrl(x.ref) })),
+            obs: (obsBy.get(w.id) || []).map(o => ({ type: o.type, left: o.left_mm, floor: o.floor_mm, w: o.w, h: o.h, px: o.px, py: o.py })) })),
           items: (riBy.get(r.id) || []).map(x => ({ type: x.type, wall: x.wall, desc: x.descr }))
         }))
       }

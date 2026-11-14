@@ -145,7 +145,9 @@ export async function assign(q: Q, by: U, itemIds: string[], installer: string, 
 
 /* ---------- survey ---------- */
 const WallZ = z.object({ label: z.string().regex(/^[A-H]$/), w: z.union([z.number(), z.string()]).optional(), h: z.union([z.number(), z.string()]).optional(), photo: z.string().max(400000).nullable().optional(), notes: z.string().max(1000).default(''),
-  obs: z.array(z.object({ type: z.enum(OBSTRUCTIONS as [string, ...string[]]), left: z.coerce.number().int().min(0), floor: z.coerce.number().int().min(0), w: z.coerce.number().int().positive(), h: z.coerce.number().int().positive() })).max(20).default([]) });
+  photos: z.array(z.object({ ref: z.string().min(1).max(400000), tag: z.string().max(40).default('') })).max(6).default([]),
+  obs: z.array(z.object({ type: z.enum(OBSTRUCTIONS as [string, ...string[]]), left: z.coerce.number().int().min(0), floor: z.coerce.number().int().min(0), w: z.coerce.number().int().positive(), h: z.coerce.number().int().positive(),
+    px: z.coerce.number().min(0).max(100).nullable().optional(), py: z.coerce.number().min(0).max(100).nullable().optional() })).max(20).default([]) });
 const RoomZ = z.object({ id: z.string().min(1).max(60), name: z.string().trim().min(1).max(60), code: z.string().trim().min(1).max(6), ceiling: z.coerce.number().int().min(1000).max(10000).default(2900), floor: z.string().max(60).default(''), shape: z.enum(['rect', 'L', 'custom']).default('rect'),
   walls: z.array(WallZ).min(3).max(8), items: z.array(z.object({ type: z.enum(TYPE_IDS), wall: z.string().regex(/^[A-H]$/), desc: z.string().max(200).default('') })).max(30).default([]) });
 const DraftZ = z.object({ rooms: z.array(RoomZ).max(60) });
@@ -157,8 +159,8 @@ async function saveDraft(q: Q, pid: string, rooms: z.infer<typeof RoomZ>[]) {
   for (const r of rooms) {
     await q.query('insert into rooms(id, project_id, name, code, ceiling, floor, shape, sort) values ($1,$2,$3,$4,$5,$6,$7,$8)', [r.id, pid, r.name, r.code.toUpperCase(), r.ceiling, r.floor, r.shape, sort++]);
     for (const w of r.walls) {
-      const wr = await one(q, 'insert into walls(room_id, label, w, h, photo, notes) values ($1,$2,$3,$4,$5,$6) returning id', [r.id, w.label, num(w.w), num(w.h), w.photo || null, w.notes || '']);
-      for (const o of w.obs) await q.query('insert into wall_obstructions(wall_id, type, left_mm, floor_mm, w, h) values ($1,$2,$3,$4,$5,$6)', [wr!.id, o.type, o.left, o.floor, o.w, o.h]);
+      const wr = await one(q, 'insert into walls(room_id, label, w, h, photo, notes, extra_photos) values ($1,$2,$3,$4,$5,$6,$7) returning id', [r.id, w.label, num(w.w), num(w.h), w.photo || null, w.notes || '', JSON.stringify(w.photos || [])]);
+      for (const o of w.obs) await q.query('insert into wall_obstructions(wall_id, type, left_mm, floor_mm, w, h, px, py) values ($1,$2,$3,$4,$5,$6,$7,$8)', [wr!.id, o.type, o.left, o.floor, o.w, o.h, o.px ?? null, o.py ?? null]);
     }
     for (const x of r.items) await q.query('insert into room_items(room_id, type, wall, descr) values ($1,$2,$3,$4)', [r.id, x.type, x.wall, x.desc]);
   }

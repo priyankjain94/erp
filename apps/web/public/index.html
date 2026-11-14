@@ -481,6 +481,43 @@ button.mcard:hover{border-color:var(--ink)}
 .presets button{border:1px solid var(--line-2);background:var(--surface);border-radius:0;padding:12px;font-weight:500;text-align:left}
 .presets button:hover{border-color:var(--ink)}
 .presets button[aria-pressed="true"]{border-color:var(--ink);background:var(--ink);color:#fff}
+.kp-disp{display:grid;justify-items:end;border:1.5px solid var(--ink);background:var(--white);padding:10px 14px}
+.kp-disp span{font-size:40px;font-weight:300;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.1}
+.kp-disp small{font-size:12px;color:var(--muted)}
+.kp{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.kp button{min-height:56px;font-size:24px;border:1.5px solid var(--line-2);background:var(--surface);color:var(--ink);font-variant-numeric:tabular-nums}
+.kp button:active{background:var(--ink);color:#fff}
+.kp-sheet{z-index:7}
+.seg{display:inline-flex;border:1.5px solid var(--ink)}
+.seg button{border:0;background:var(--surface);padding:6px 10px;font-size:12px;font-weight:600;color:var(--ink)}
+.seg button[aria-pressed=true]{background:var(--ink);color:#fff}
+.dim-tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.dim,.kp-field{border:1.5px solid var(--ink);background:var(--surface);padding:10px 12px;text-align:left;display:grid;gap:2px;color:var(--ink);min-height:62px;font:inherit}
+.dim small,.kp-field small{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.dim b,.kp-field b{font-size:22px;font-weight:400;font-variant-numeric:tabular-nums}
+.dim.empty b,.kp-field.est b{color:var(--muted)}
+.kp-field.est{border-style:dashed}
+.chip-sugg{border:1.5px dashed var(--ink);background:var(--white);padding:10px;font-weight:600;color:var(--ink)}
+.wdots{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
+.wdots button[aria-current=true]{outline:3px solid var(--red);outline-offset:2px}
+.pinwrap{position:relative;border:1px solid var(--line);background:var(--surface);cursor:crosshair;touch-action:manipulation}
+.pinwrap img{width:100%;height:auto;display:block;user-select:none}
+.pin-sample{height:200px;display:grid;place-items:center;background:linear-gradient(135deg,var(--surface-2),var(--line-2));color:var(--muted)}
+.pin{position:absolute;transform:translate(-50%,-50%);width:28px;height:28px;border-radius:50%;background:var(--red);color:#fff;font-size:12px;font-weight:700;display:grid;place-items:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);padding:0}
+.pin.static{position:static;transform:none;flex:none}
+.obs-row{width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);padding:8px 0 2px;color:var(--ink);font:inherit;font-size:13px}
+.shots{display:flex;gap:8px;overflow-x:auto}
+.shot{width:76px;height:76px;flex:none;position:relative;border:1px solid var(--line-2);background:var(--surface);overflow:hidden;display:grid;place-items:center;text-align:center;font-size:11.5px;color:var(--muted)}
+.shot img{width:100%;height:100%;object-fit:cover}
+.shot small{position:absolute;left:0;right:0;bottom:0;background:rgba(26,26,26,.7);color:#fff;font-size:10px;padding:1px 3px}
+.shot button{position:absolute;top:2px;right:2px;width:22px;height:22px;border:0;background:rgba(26,26,26,.7);color:#fff;font-size:11px;padding:0}
+.shot.add{border-style:dashed;cursor:pointer}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chips button{border:1px solid var(--line-2);background:var(--surface);padding:9px 11px;font-size:13px;font-weight:500;color:var(--ink)}
+.chips button.sugg{border-color:var(--ink)}
+.chips button[aria-pressed=true]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.furn-note{display:grid;gap:3px;font-size:12px;font-weight:600}
+.round-big{display:flex;gap:12px;align-items:center}
 .sig{width:100%;height:120px;border:1px solid var(--line-2);border-radius:0;background:var(--surface);touch-action:none}
 .side-note{max-width:340px;display:grid;gap:12px;font-size:13.5px;color:var(--ink-2);padding-top:6px}
 .side-note h3{font-weight:600;font-size:12px;letter-spacing:.16em;text-transform:uppercase;margin:0}
@@ -605,7 +642,7 @@ const AUTOS = [
 const ICONS = {
   dash:'M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z', board:'M4 4h4v16H4zM10 4h4v11h-4zM16 4h4v7h-4z',
   chat:'M4 5h16v11H9l-5 4z', users:'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20c0-3 3-5 6-5s6 2 6 5M16 5a3 3 0 0 1 0 6M21 20c0-2.5-1.5-4.2-3.5-4.8',
-  bolt:'M13 3 5 14h6l-1 7 8-11h-6z', plus:'M12 5v14M5 12h14', search:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4', x:'M6 6l12 12M18 6 6 18',
+  bolt:'M13 3 5 14h6l-1 7 8-11h-6z', plus:'M12 5v14M5 12h14', mic:'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3', camera:'M4 7h4l2-3h4l2 3h4v13H4zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', search:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4', x:'M6 6l12 12M18 6 6 18',
   phone:'M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a1 1 0 0 1-1 1A16 16 0 0 1 4 5a1 1 0 0 1 1-1z', cal:'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4',
   list:'M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01', send:'M4 12 20 4l-6 16-3-7z', check:'M5 12l5 5 9-10', clock:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2',
   lock:'M6 11h12v9H6zM9 11V8a3 3 0 0 1 6 0v3'};
@@ -1391,7 +1428,9 @@ function makeOps(erp, setErp, toast, leads, crm, app){
       if (before.notes !== after.notes) later('notes:' + id, () => run('PATCH', `/projects/${id}`, {notes:after.notes}), 800);
       if (!same(before.survey.rooms, after.survey.rooms)) {
         app.surveyDraft[id] = after.survey.rooms;
-        later('survey:' + id, () => API.call('PUT', `/surveys/${id}/draft`, {rooms:cleanRooms(app.surveyDraft[id])}, {queue:true, dedupe:'survey:' + id}).catch(e => toast(e.message, 'err')), 900);
+        const at = Date.now();
+        try { localStorage.setItem('mms-survey-local:' + id, JSON.stringify({at, rooms:after.survey.rooms})); } catch(e){}
+        later('survey:' + id, () => API.call('PUT', `/surveys/${id}/draft`, {rooms:cleanRooms(app.surveyDraft[id])}, {queue:true, dedupe:'survey:' + id}).then(res => { try { const l = JSON.parse(localStorage.getItem('mms-survey-local:' + id) || 'null'); if (res && !res.queued && l && l.at === at) localStorage.removeItem('mms-survey-local:' + id); } catch(e){} }).catch(e => toast(e.message, 'err')), 900);
       }
       if (!same(before.feedback, after.feedback) && after.feedback) run('POST', `/projects/${id}/feedback`, {rating:after.feedback.rating, comment:after.feedback.comment || ''});
     },
@@ -1412,6 +1451,7 @@ function makeOps(erp, setErp, toast, leads, crm, app){
     async checkIn(pid){ const g = await geo(); return run('POST', `/surveys/${pid}/check-in`, g, 'Checked in. Survey timer started.', {queue:true}); },
     async submitSurvey(pid, sign){
       clearTimeout(timers['survey:' + pid]); delete timers['survey:' + pid];
+      try { localStorage.removeItem('mms-survey-local:' + pid); } catch(e){}
       const rooms = E().projects.find(p => p.id === pid).survey.rooms;
       return run('POST', `/surveys/${pid}/submit`, {signed:!!sign, rooms:cleanRooms(rooms)}, res => `Survey submitted. ${res.created} item${res.created === 1 ? '' : 's'} created, designer tasks assigned, customer updated on WhatsApp.`);
     },
@@ -1441,7 +1481,7 @@ function makeOps(erp, setErp, toast, leads, crm, app){
 }
 function cleanRooms(rooms){
   return (rooms || []).map(r => ({id:r.id, name:r.name, code:r.code, ceiling:Number(r.ceiling) || 2900, floor:r.floor || '', shape:r.shape || 'rect',
-    walls:r.walls.map(w => ({label:w.label, w:w.w === '' ? undefined : w.w, h:w.h === '' ? undefined : w.h, photo:w.photo || null, notes:w.notes || '', obs:(w.obs || []).map(o => ({type:o.type, left:Number(o.left) || 0, floor:Number(o.floor) || 0, w:Number(o.w), h:Number(o.h)}))})),
+    walls:r.walls.map(w => ({label:w.label, w:w.w === '' ? undefined : w.w, h:w.h === '' ? undefined : w.h, photo:w.photo || null, notes:w.notes || '', photos:(w.photos || []).filter(ph => ph && ph.ref).map(ph => ({ref:ph.ref, tag:ph.tag || ''})), obs:(w.obs || []).map(o => ({type:o.type, left:Number(o.left) || 0, floor:Number(o.floor) || 0, w:Number(o.w), h:Number(o.h), px:o.px ?? null, py:o.py ?? null}))})),
     items:(r.items || []).map(x => ({type:x.type, wall:x.wall, desc:x.desc || ''}))}));
 }
 
@@ -1702,7 +1742,7 @@ function SurveyView({p}){
     <div className="banner good">Submitted by ${uname(s.assignee)} ${fmtDT(s.at)} · ${s.mins} min on site · ${s.rooms.length} rooms · ${s.rooms.reduce((a,r) => a + r.walls.length, 0)} walls${s.signed ? ' · customer signed' : ''}. Measurements in mm.</div>
     ${s.rooms.map(r => html`<div className="room-block" key=${r.id}><h5>${r.name}<span className="sub" style=${{fontWeight:400}}>ceiling ${r.ceiling} mm · ${r.floor}</span></h5>
       <div style=${{display:'flex',gap:12,padding:10,flexWrap:'wrap',alignItems:'flex-start'}}><${SketchSVG} r=${r} size=${130}/>
-      <table style=${{flex:1,minWidth:280}}><thead><tr><th>Wall</th><th>Photo</th><th className="r">W × H (mm)</th><th>Obstructions</th></tr></thead><tbody>${r.walls.map(w => html`<tr key=${w.label}><td><span className="wall-letter sm">${w.label}</span></td><td><${Thumb} src=${photoSrc(w.photo, w.photoUrl)}/></td><td className="r num">${w.w} × ${w.h}</td><td className="sub">${w.obs.length ? w.obs.map(o => `${o.type} (${o.w}×${o.h} at ${o.left} from left, ${o.floor} up)`).join('; ') : '—'}${w.notes ? ' · ' + w.notes : ''}</td></tr>`)}</tbody></table></div></div>`)}
+      <table style=${{flex:1,minWidth:280}}><thead><tr><th>Wall</th><th>Photo</th><th className="r">W × H (mm)</th><th>Obstructions</th></tr></thead><tbody>${r.walls.map(w => html`<tr key=${w.label}><td><span className="wall-letter sm">${w.label}</span></td><td><div className="inline" style=${{gap:4}}><${Thumb} src=${photoSrc(w.photo, w.photoUrl)}/>${(w.photos || []).map((ph, k) => html`<a key=${k} href=${shotSrc(ph)} target="_blank" rel="noopener" title=${ph.tag || 'Close-up'}><${Thumb} src=${shotSrc(ph)}/></a>`)}</div></td><td className="r num">${w.w} × ${w.h}</td><td className="sub">${w.obs.length ? w.obs.map(o => `${o.type} (${o.w}×${o.h} at ${o.left} from left, ${o.floor} up)`).join('; ') : '—'}${w.notes ? ' · ' + w.notes : ''}</td></tr>`)}</tbody></table></div></div>`)}
   </div>`;
 }
 
@@ -2075,18 +2115,153 @@ const SideNote = ({title, steps}) => html`<aside className="side-note"><h3>${tit
 const onSite = t => { const m = Math.max(0, Math.round((Date.now() - t)/60000)); return `${Math.floor(m/60)}h ${String(m%60).padStart(2,'0')}m`; };
 
 /* ---------- Site survey app ---------- */
+/* units: everything is stored in mm; the surveyor can type and read in mm, cm or feet-inches */
+const UNITS = [['mm','mm'],['cm','cm'],['ftin','ft-in']];
+const getUnit = () => { try { return localStorage.getItem('mms-unit') || 'mm'; } catch(e){ return 'mm'; } };
+const toFtIn = mm => { const ti = Number(mm) / 25.4; let ft = Math.floor(ti / 12), inch = Math.round((ti - ft * 12) * 2) / 2; if (inch >= 12){ ft++; inch -= 12; } return [ft, inch]; };
+const fmtLen = (mm, u) => { const n = Number(mm); if (!(n > 0)) return '—'; if (u === 'cm') return +(n / 10).toFixed(1) + ' cm'; if (u === 'ftin'){ const [ft, inch] = toFtIn(n); return `${ft}′ ${inch}″`; } return n + ' mm'; };
+const lenToInput = (mm, u) => { const n = Number(mm); if (!(n > 0)) return ''; if (u === 'cm') return String(+(n / 10).toFixed(1)); if (u === 'ftin'){ const [ft, inch] = toFtIn(n); return `${ft}'${inch || ''}`; } return String(n); };
+const inputToMm = (s, u) => {
+  s = String(s || '').trim(); if (!s) return 0;
+  if (u === 'ftin'){ const [ft, inch] = s.includes("'") ? s.split("'") : [s, '0']; return Math.round(((Number(ft) || 0) * 12 + (Number(inch) || 0)) * 25.4); }
+  const n = Number(s); if (!(n > 0)) return 0;
+  return Math.round(u === 'cm' ? n * 10 : n);
+};
+const showInput = (s, u) => !s ? '0' : u === 'ftin' ? (s.includes("'") ? `${s.split("'")[0]}′ ${s.split("'")[1] || ''}${s.split("'")[1] ? '″' : ''}` : s + '′') : s;
+/* "eleven feet nine inches", "3600", "360 cm" → value in the surveyor's unit */
+function speechToInput(t, u){
+  const w = {zero:0, one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10, eleven:11, twelve:12};
+  t = String(t).toLowerCase().replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/g, m => w[m]).replace(/,/g, '').replace(/\bpoint\b/g, '.').replace(/(\d)\s+\.\s*(\d)/g, '$1.$2');
+  const nums = (t.match(/\d+(\.\d+)?/g) || []).map(Number);
+  if (!nums.length) return null;
+  if (/feet|foot|ft/.test(t)){ const mm = Math.round((nums[0] * 12 + (nums[1] || 0)) * 25.4); return lenToInput(mm, u); }
+  let mm = /cm|centi/.test(t) ? nums[0] * 10 : /mm|milli/.test(t) ? nums[0] : u === 'cm' ? nums[0] * 10 : u === 'ftin' ? nums[0] * 304.8 : nums[0];
+  return lenToInput(Math.round(mm), u);
+}
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+/* standard sizes offered as one-tap chips; W/H = this wall's width/height. Edit to match your sites. */
+const OBS_PRESETS = {
+  'Window': [['Std 1200×1200', 1200, 1200, 900], ['1500×1200', 1500, 1200, 900], ['900×1200', 900, 1200, 900], ['Ventilator 600×450', 600, 450, 2100]],
+  'Door': [['900×2100', 900, 2100, 0], ['750×2100', 750, 2100, 0], ['1000×2100', 1000, 2100, 0], ['Sliding 1800×2100', 1800, 2100, 0]],
+  'Switchboard': [['4 module', 150, 120, 1200], ['6 module', 200, 120, 1200], ['8 module', 260, 120, 1200], ['12 module', 260, 200, 1200], ['Low socket', 90, 90, 300]],
+  'AC point': [['AC point', 100, 100, 2150]],
+  'Plumbing / drain': [['Water inlet', 100, 100, 600], ['Floor drain', 100, 100, 0]],
+  'Beam': [['300 deep', W => W, 300, (W, H) => H - 300], ['450 deep', W => W, 450, (W, H) => H - 450]],
+  'Column': [['300 wide', 300, (W, H) => H, 0], ['450 wide', 450, (W, H) => H, 0]],
+  'Gas pipe': [['Vertical run', 50, (W, H) => H, 0]],
+  'Skirting': [['100 high', W => W, 100, 0]]};
+const ROOM_FURN = {MBR:['WR','TV','DR'], BR:['WR','ST'], KID:['WR','ST'], GBR:['WR'], LIV:['TV','SR','CU'], KIT:['KT'], DIN:['CU'], DRS:['DR'], PUJ:['OT'], UTL:['OT'], BTH:['VN']};
+const furnFor = code => ROOM_FURN[code] || ROOM_FURN[String(code).replace(/\d+$/, '')] || ROOM_FURN[String(code).slice(0, 2)] || [];
+const SHOT_TAGS = ['Switchboard','Plumbing','Damage','Wall finish','Ceiling','Other'];
+const recentObs = () => { try { return JSON.parse(localStorage.getItem('mms-obs-recent')) || {}; } catch(e){ return {}; } };
+const rememberObs = o => { try { const r = recentObs(); const k = `${o.w}×${o.h}`; r[o.type] = [{w:o.w, h:o.h, floor:o.floor, k}, ...(r[o.type] || []).filter(x => x.k !== k)].slice(0, 3); localStorage.setItem('mms-obs-recent', JSON.stringify(r)); } catch(e){} };
+const shotSrc = ph => ph && (String(ph.ref).startsWith('upload:') ? ph.url : ph.ref);
+const isLocal = x => typeof x === 'string' && x.startsWith('data:');
+function wallChecks(r, wi){
+  const w = r.walls[wi], out = [], W = Number(w.w), H = Number(w.h);
+  if (W && (W > 9000 || W < 300)) out.push(`Width ${W} mm looks unusual. Check it.`);
+  if (H && (H > 6000 || H < 1500)) out.push(`Height ${H} mm looks unusual. Check it.`);
+  if (r.walls.length === 4 && W){ const o = r.walls[(wi + 2) % 4], d = Math.abs(W - Number(o.w)); if (Number(o.w) && d > 20) out.push(`Opposite wall ${o.label} is ${o.w} mm, ${d} mm different. Recheck, or add a note that the room is out of square.`); }
+  w.obs.forEach(o => { if (W && o.left + o.w > W + 5) out.push(`${o.type} runs past the end of the wall (${o.left} + ${o.w} > ${W} mm).`); if (H && o.floor + o.h > H + 5) out.push(`${o.type} is taller than the wall.`); });
+  return out;
+}
+function useOnline(){
+  const [on, setOn] = useState(navigator.onLine);
+  useEffect(() => { const a = () => setOn(true), b = () => setOn(false); window.addEventListener('online', a); window.addEventListener('offline', b); return () => { window.removeEventListener('online', a); window.removeEventListener('offline', b); }; }, []);
+  return on;
+}
+
+/* big on-screen number pad (no phone keyboard), with units and optional voice */
+function Keypad({label, mm, unit, setUnit, range, onDone, onClose}){
+  const [v, setV] = useState(() => lenToInput(mm, unit));
+  const [u, setU] = useState(unit);
+  const [listening, setListening] = useState(false), [heard, setHeard] = useState('');
+  const val = inputToMm(v, u);
+  const switchU = nu => { setV(lenToInput(val, nu)); setU(nu); setUnit(nu); };
+  const press = k => setV(s => {
+    if (k === 'del') return s.slice(0, -1);
+    if (k === "'") return s.includes("'") || !s ? s : s + "'";
+    if (k === '.'){ const seg = s.split("'").pop(); return seg.includes('.') ? s : s + (seg ? '.' : '0.'); }
+    if (s.length >= 7) return s;
+    return s === '0' ? k : s + k;
+  });
+  const listen = () => {
+    try {
+      const rec = new SpeechRec(); rec.lang = 'en-IN'; rec.interimResults = false; rec.maxAlternatives = 1;
+      rec.onresult = e => { const t = e.results[0][0].transcript, x = speechToInput(t, u); setHeard(x ? '' : `Heard "${t}". Say a number, for example "3600" or "11 feet 9 inches".`); if (x) setV(x); };
+      rec.onend = () => setListening(false); rec.onerror = () => setListening(false);
+      setListening(true); rec.start();
+    } catch(e){ setListening(false); }
+  };
+  const odd = range && val && (val < range[0] || val > range[1]);
+  const sep = u === 'mm' ? '00' : u === 'cm' ? '.' : "'";
+  return html`<div className="sheet-m kp-sheet" onClick=${e => e.target === e.currentTarget && onClose()}><div className="in">
+    <div className="card-row"><b style=${{fontSize:15}}>${label}</b><div className="seg">${UNITS.map(([id, n]) => html`<button key=${id} aria-pressed=${u === id} onClick=${() => switchU(id)}>${n}</button>`)}</div></div>
+    <div className="kp-disp"><span>${showInput(v, u)}</span><small>${u === 'ftin' ? 'feet ′ inches' : u}${u !== 'mm' && val ? ' = ' + val + ' mm' : ''}</small></div>
+    ${odd && html`<div className="banner warn" style=${{padding:'7px 10px'}}>Check this: ${val} mm is unusual here.</div>`}
+    ${heard && html`<div className="banner warn" style=${{padding:'7px 10px'}}>${heard}</div>`}
+    <div className="kp">${['1','2','3','4','5','6','7','8','9', sep, '0', 'del'].map(k => html`<button key=${k} onClick=${() => k === '00' ? (press('0'), press('0')) : press(k)} aria-label=${k === 'del' ? 'Delete' : k}>${k === 'del' ? '⌫' : k === "'" ? 'ft ′' : k}</button>`)}</div>
+    ${u === 'ftin' && html`<span className="meta" style=${{fontSize:12,color:'var(--muted)'}}>Type feet, tap ft ′, then inches. Example: 11 ft ′ 9 = 11′ 9″.</span>`}
+    <div className="inline">${SpeechRec && html`<button className="big" style=${{flex:'0 0 64px'}} aria-label="Say the number" aria-pressed=${listening} onClick=${listen}><${Icon} n="mic" s=${20}/></button>`}<button className="big" onClick=${onClose}>Cancel</button><button className="big pri" onClick=${() => onDone(val)}>${val ? 'Use ' + fmtLen(val, u) : 'Clear'}</button></div>
+  </div></div>`;
+}
+
+/* wall photo; tapping it drops a pin for an obstruction */
+function PinPhoto({src, obs, onTap, onPin, disabled}){
+  const tap = e => {
+    if (disabled) return;
+    const b = e.currentTarget.getBoundingClientRect();
+    onTap(Math.round((e.clientX - b.left) / b.width * 1000) / 10, Math.round((e.clientY - b.top) / b.height * 1000) / 10);
+  };
+  return html`<div className="pinwrap" onClick=${tap} role="button" aria-label="Tap the photo where an obstruction is">
+    ${src === 'sample' ? html`<div className="pin-sample">Sample photo (demo)</div>` : html`<img src=${src} alt="Wall photo" draggable="false"/>`}
+    ${obs.map((o, i) => o.px != null && html`<button key=${i} className="pin" style=${{left:o.px + '%', top:o.py + '%'}} onClick=${e => { e.stopPropagation(); onPin(i); }} aria-label=${o.type + ' ' + (i + 1)}>${i + 1}</button>`)}
+  </div>`;
+}
+const CamButton = ({label, onPick, multiple, cls = 'btn small', capture = true}) => html`<label className=${cls} style=${{position:'relative',overflow:'hidden'}}>${label}<input type="file" accept="image/*" capture=${capture && !multiple ? 'environment' : undefined} multiple=${!!multiple} style=${{position:'absolute',inset:0,opacity:0}} onChange=${e => { const fs = [...e.target.files]; e.target.value = ''; fs.forEach((f, i) => compressPhoto(f, d => onPick(d, i))); }}/></label>`;
+
 function SurveyApp({erp, ops}){
   const [scr, setScr] = useState({n:'list'});
   const [sheet, setSheet] = useState(null);
+  const [kp, setKp] = useState(null);
+  const [unit, setUnitS] = useState(getUnit);
+  const setUnit = u => { setUnitS(u); try { localStorage.setItem('mms-unit', u); } catch(e){} };
   const [, tick] = useState(0);
   useEffect(() => { const t = setInterval(() => tick(x => x + 1), 30000); return () => clearInterval(t); }, []);
+  const online = useOnline(), queued = useQueueCount();
   const jobs = erp.projects.filter(p => userById[erp.me].role !== 'surveyor' || p.survey.assignee === erp.me).sort((a,b) => (a.survey.status === 'submitted') - (b.survey.status === 'submitted') || b.survey.scheduled - a.survey.scheduled);
   const p = scr.pid && erp.projects.find(x => x.id === scr.pid);
   const r = p && scr.rid && p.survey.rooms.find(x => x.id === scr.rid);
   const updRoom = fn => ops.updProject(p.id, x => fn(x.survey.rooms.find(y => y.id === r.id)));
   const wallOk = w => w.photo && Number(w.w) > 0 && Number(w.h) > 0;
-  const sync = html`<span className="pill good" style=${{fontSize:10}}>Saved</span>`;
-  const steps = ['Open the job and tap Check in (time and GPS recorded).','Add each room, pick its shape; walls are labelled A, B, C… clockwise from the door.','For each wall: photo, width and height in mm, obstructions.','Tag which furniture goes on which wall.','Review flags missing data and mismatched walls, then submit.'];
+
+  /* photos are kept on the phone first and uploaded in the background; failed uploads retry automatically */
+  const localPhotos = jobs.filter(j => j.survey.status !== 'submitted').reduce((n, j) => n + j.survey.rooms.reduce((a, rm) => a + rm.walls.reduce((b, w) => b + (isLocal(w.photo) ? 1 : 0) + (w.photos || []).filter(ph => isLocal(ph.ref)).length, 0), 0), 0);
+  const uploading = useRef(false);
+  const uploadInto = (pid, rid, label, d) => uploadDataUrl(d).then(sl => ops.updProject(pid, x => {
+    const ww = x.survey.rooms.find(y => y.id === rid)?.walls.find(z => z.label === label); if (!ww) return;
+    if (ww.photo === d){ ww.photo = sl.ref; ww.photoUrl = sl.viewUrl; }
+    (ww.photos || []).forEach(ph => { if (ph.ref === d){ ph.ref = sl.ref; ph.url = sl.viewUrl; } });
+  }));
+  const jobsRef = useRef(jobs); jobsRef.current = jobs;
+  useEffect(() => {
+    const retry = async () => {
+      if (uploading.current || !navigator.onLine) return;
+      for (const j of jobsRef.current) { if (j.survey.status === 'submitted') continue;
+        for (const rm of j.survey.rooms) for (const w of rm.walls) for (const d of [w.photo, ...(w.photos || []).map(ph => ph.ref)]) if (isLocal(d)) {
+          uploading.current = true; try { await uploadInto(j.id, rm.id, w.label, d); } catch(e){ uploading.current = false; return; } uploading.current = false; return;
+        } }
+    };
+    const t = setInterval(retry, 15000); window.addEventListener('online', retry); return () => { clearInterval(t); window.removeEventListener('online', retry); };
+  }, []);
+  const waiting = localPhotos + queued;
+  const sync = !online ? html`<span className="pill warn" style=${{fontSize:10}}>Offline · saved on phone${waiting ? ` · ${waiting} waiting` : ''}</span>`
+    : waiting ? html`<span className="pill warn" style=${{fontSize:10}}>Saved on phone · ${localPhotos ? `${localPhotos} photo${localPhotos > 1 ? 's' : ''} uploading` : 'syncing'}</span>`
+    : html`<span className="pill good" style=${{fontSize:10}}>Saved</span>`;
+  const touch = useRef(null);
+  const openKp = (label, mm, onDone, range) => setKp({id:Date.now(), label, mm, onDone, range});
+
+  const steps = ['Open the job and tap Check in (time and GPS recorded).','Add each room, pick its shape; walls are labelled A, B, C… clockwise from the door.','Photo round: stand in the middle and shoot every wall one after another.','Each wall: tap Width and Height and type on the big keypad (mm, cm or feet-inches). Tap the photo where a window or switchboard is and pick a standard size.','Tap the furniture chips for that wall, swipe to the next wall.','Review flags missing data and mismatched walls, then submit and share the summary with the customer.'];
   let screen;
 
   if (scr.n === 'list') screen = html`<${Phone} title="My surveys" sub=${uname(erp.me) + ' · ' + (userById[erp.me]?.roleName || '')} right=${sync}>
@@ -2101,7 +2276,7 @@ function SurveyApp({erp, ops}){
   else if (scr.n === 'job'){
     const s = p.survey, done = s.status === 'submitted';
     screen = html`<${Phone} title=${p.customer} sub=${p.address} back=${() => setScr({n:'list'})} right=${s.checkIn && !done ? html`<span className="pill acc">${onSite(s.checkIn)}</span>` : sync}
-      foot=${done ? null : !s.checkIn ? html`<button className="big pri" onClick=${() => ops.checkIn(p.id)}>Check in at site</button>` : html`<button className="big" onClick=${() => setSheet({n:'room', name:'', code:'', shape:'rect', count:4, ceiling:2900, floor:FLOORS[0]})}><${Icon} n="plus" s=${18}/>Add room</button><button className="big pri" disabled=${!s.rooms.length} onClick=${() => setScr({n:'review', pid:p.id})}>Review</button>`}>
+      foot=${done ? html`<button className="big" onClick=${() => openPrint('survey', p.id)}>Customer summary (PDF)</button>` : !s.checkIn ? html`<button className="big pri" onClick=${() => ops.checkIn(p.id)}>Check in at site</button>` : html`<button className="big" onClick=${() => setSheet({n:'room', name:'', code:'', shape:'rect', count:4, ceiling:2900, floor:FLOORS[0]})}><${Icon} n="plus" s=${18}/>Add room</button><button className="big pri" disabled=${!s.rooms.length} onClick=${() => setScr({n:'review', pid:p.id})}>Review</button>`}>
       ${done ? html`<div className="banner good">Submitted ${fmtDT(s.at)} · ${s.mins} min on site. Read-only.</div>` : !s.checkIn ? html`<div className="banner">Scheduled ${fmtDT(s.scheduled)}. Check in when you reach the site; the survey timer starts then.</div>`
         : html`<div className="banner"><b>Wall rule:</b> stand at the room's entry door. The wall with the door is <b>A</b>, then go clockwise: B, C, D…</div>`}
       ${p.notes && html`<div className="banner warn">${p.notes}</div>`}
@@ -2114,49 +2289,95 @@ function SurveyApp({erp, ops}){
   }
 
   else if (scr.n === 'room' && r){
-    const done = p.survey.status === 'submitted';
-    screen = html`<${Phone} title=${r.name} sub=${`${r.walls.length} walls · ceiling ${r.ceiling} mm`} back=${() => setScr({n:'job', pid:p.id})} right=${sync}
-      foot=${done ? null : html`<button className="big" onClick=${() => setSheet({n:'item', type:'WR', wall:r.walls[0].label, desc:''})}>Tag furniture</button>`}>
-      <div style=${{display:'grid',placeItems:'center'}}><${SketchSVG} r=${r} size=${200}/></div>
+    const done = p.survey.status === 'submitted', noPhoto = r.walls.filter(w => !w.photo).length;
+    const firstOpen = r.walls.find(w => !wallOk(w)) || r.walls[0];
+    screen = html`<${Phone} title=${r.name} sub=${`${r.walls.length} walls · ceiling ${fmtLen(r.ceiling, unit)}`} back=${() => setScr({n:'job', pid:p.id})} right=${sync}
+      foot=${done ? null : html`<button className="big" onClick=${() => setScr({n:'round', pid:p.id, rid:r.id})}><${Icon} n="camera" s=${18}/>${noPhoto ? 'Photo round' : 'Retake photos'}</button><button className="big pri" onClick=${() => setScr({n:'wall', pid:p.id, rid:r.id, label:firstOpen.label})}>Measure ${firstOpen.label}</button>`}>
+      <div style=${{display:'grid',placeItems:'center'}}><${SketchSVG} r=${r} size=${180}/></div>
+      ${!done && noPhoto === r.walls.length && html`<div className="banner">Fastest way: tap <b>Photo round</b>, stand in the middle of the room and shoot walls ${r.walls.map(w => w.label).join(', ')} one after another. Measure after.</div>`}
       ${r.walls.map(w => html`<button key=${w.label} className="mcard" onClick=${() => setScr({n:'wall', pid:p.id, rid:r.id, label:w.label})}>
-        <div className="mrow"><span className=${'wall-letter sm' + (wallOk(w) ? ' ok' : '')}>${w.label}</span><div className="grow"><b>Wall ${w.label}</b><div className="meta">${w.w ? `${w.w} × ${w.h} mm` : 'Not measured'}${w.obs.length ? ' · ' + w.obs.map(o => o.type).join(', ') : ''}</div></div><${Thumb} src=${photoSrc(w.photo, w.photoUrl)}/></div></button>`)}
-      ${r.items.length > 0 && html`<div className="mcard"><b>Furniture in this room</b>${r.items.map((x,i) => html`<div key=${i} className="mrow"><span className="grow">${typeById[x.type].name} on wall ${x.wall}${x.desc ? ' · ' + x.desc : ''}</span>${!done && html`<button className="btn small ghost" onClick=${() => updRoom(y => y.items.splice(i,1))}>Remove</button>`}</div>`)}</div>`}
+        <div className="mrow"><span className=${'wall-letter sm' + (wallOk(w) ? ' ok' : '')}>${w.label}</span><div className="grow"><b>Wall ${w.label}</b><div className="meta">${w.w ? `${fmtLen(w.w, unit)} × ${fmtLen(w.h, unit)}` : 'Not measured'}${w.obs.length ? ' · ' + w.obs.map(o => o.type).join(', ') : ''}${r.items.some(x => x.wall === w.label) ? ' · ' + r.items.filter(x => x.wall === w.label).map(x => typeById[x.type].name).join(', ') : ''}</div></div><${Thumb} src=${photoSrc(w.photo, w.photoUrl)}/></div></button>`)}
+      ${!done && html`<button className="linkbtn" style=${{color:'var(--muted)'}} onClick=${() => setSheet({n:'roomedit', name:r.name, ceiling:r.ceiling, floor:r.floor})}>Edit room name, ceiling or floor</button>`}
+    <//>`;
+  }
+
+  else if (scr.n === 'round' && r){
+    const i = Math.min(scr.i ?? Math.max(0, r.walls.findIndex(w => !w.photo)), r.walls.length - 1), w = r.walls[i];
+    const assign = (idx, d) => { const target = r.walls[idx]; if (!target) return; updRoom(y => { y.walls.find(z => z.label === target.label).photo = d; }); uploadInto(p.id, r.id, target.label, d).catch(() => {}); };
+    const take = d => { assign(i, d); i < r.walls.length - 1 ? setScr({...scr, i:i + 1}) : setScr({n:'room', pid:p.id, rid:r.id}); };
+    screen = html`<${Phone} title=${`Photo round · ${r.name}`} sub=${`Wall ${w.label} of ${r.walls.map(x => x.label).join(' ')}`} back=${() => setScr({n:'room', pid:p.id, rid:r.id})} right=${sync}
+      foot=${html`<button className="big" disabled=${i === 0} onClick=${() => setScr({...scr, i:i - 1})}>‹ Back</button><button className="big" onClick=${() => i < r.walls.length - 1 ? setScr({...scr, i:i + 1}) : setScr({n:'room', pid:p.id, rid:r.id})}>${i < r.walls.length - 1 ? 'Skip ›' : 'Finish'}</button>`}>
+      <div className="wdots">${r.walls.map((x, k) => html`<button key=${x.label} className=${'wall-letter sm' + (x.photo ? ' ok' : '')} aria-current=${k === i} onClick=${() => setScr({...scr, i:k})}>${x.label}</button>`)}</div>
+      <div className="round-big"><span className="wall-letter">${w.label}</span><div><b>${i === 0 ? 'Wall with the entry door' : 'Turn clockwise to the next wall'}</b><div className="meta">Step back until the whole wall, floor to ceiling, fits in the photo. Hold the phone level.</div></div></div>
+      <${PhotoBox} key=${r.id + w.label + (w.photo ? 1 : 0)} src=${photoSrc(w.photo, w.photoUrl)} label=${'Tap to photograph wall ' + w.label} onPick=${d => take(d)}/>
+      <${CamButton} label="Pick from gallery" multiple=${true} capture=${false} onPick=${(d, k) => assign(i + k, d)} cls="btn"/>
+      <span className="meta" style=${{fontSize:12,color:'var(--muted)'}}>Gallery photos are given to walls ${w.label} onward, in the order you pick them.</span>
     <//>`;
   }
 
   else if (scr.n === 'wall' && r){
     const wi = r.walls.findIndex(w => w.label === scr.label), w = r.walls[wi], done = p.survey.status === 'submitted';
     const setW = (k, v) => updRoom(y => { y.walls[wi][k] = v; });
-    screen = html`<${Phone} title=${`${r.name} · Wall ${w.label}`} sub=${wi === 0 ? 'Wall with the entry door' : 'Clockwise from wall A'} back=${() => setScr({n:'room', pid:p.id, rid:r.id})} right=${html`<span className="wall-letter sm">${w.label}</span>`}
-      foot=${html`<button className="big" disabled=${wi === 0} onClick=${() => setScr({...scr, label:r.walls[wi-1].label})}>‹ ${wi > 0 ? r.walls[wi-1].label : ''}</button><button className="big pri" onClick=${() => wi < r.walls.length - 1 ? setScr({...scr, label:r.walls[wi+1].label}) : setScr({n:'room', pid:p.id, rid:r.id})}>${wi < r.walls.length - 1 ? 'Next: wall ' + r.walls[wi+1].label : 'Done'}</button>`}>
-      <${PhotoBox} key=${r.id + w.label} src=${photoSrc(w.photo, w.photoUrl)} label=${'Wide photo of wall ' + w.label} onPick=${d => { setW('photo', d); uploadDataUrl(d).then(sl => updRoom(y => { const ww = y.walls.find(z => z.label === w.label); if (ww && ww.photo === d){ ww.photo = sl.ref; ww.photoUrl = sl.viewUrl; } })).catch(() => {}); }}/>
+    const go = d => { const n = wi + d; if (n >= 0 && n < r.walls.length) setScr({...scr, label:r.walls[n].label}); };
+    const W = Number(w.w), H = Number(w.h) || Number(r.ceiling);
+    const checks = wallChecks(r, wi);
+    const opp = r.walls.length === 4 && wi >= 2 ? r.walls[wi - 2] : null;
+    const onWall = r.items.map((x, i) => ({...x, i})).filter(x => x.wall === w.label);
+    const sugg = furnFor(r.code), chips = [...sugg, ...ITEM_TYPES.map(t => t.id).filter(t => !sugg.includes(t))];
+    const newObs = (px, py) => {
+      if (done) return;
+      const o = {type:'Window', w:'', h:'', left:'', floor:'', px, py, est:{}};
+      setSheet({n:'obs', wi, idx:-1, o});
+    };
+    const addShot = d => { updRoom(y => { const ww = y.walls[wi]; ww.photos = [...(ww.photos || []), {ref:d, tag:''}].slice(0, 6); }); uploadInto(p.id, r.id, w.label, d).catch(() => {}); setSheet({n:'shot', wi, k:(w.photos || []).length}); };
+    screen = html`<${Phone} title=${`${r.name} · Wall ${w.label}`} sub=${wi === 0 ? 'Wall with the entry door' : 'Clockwise from wall A'} back=${() => setScr({n:'room', pid:p.id, rid:r.id})} right=${sync}
+      foot=${html`<button className="big" disabled=${wi === 0} onClick=${() => go(-1)}>‹ ${wi > 0 ? r.walls[wi-1].label : ''}</button><button className="big pri" onClick=${() => wi < r.walls.length - 1 ? go(1) : setScr({n:'room', pid:p.id, rid:r.id})}>${wi < r.walls.length - 1 ? 'Next: wall ' + r.walls[wi+1].label + ' ›' : 'Done'}</button>`}>
+      <div style=${{display:'grid',gap:12}} onTouchStart=${e => { touch.current = [e.touches[0].clientX, e.touches[0].clientY]; }} onTouchEnd=${e => { const t = touch.current; if (!t) return; const dx = e.changedTouches[0].clientX - t[0], dy = e.changedTouches[0].clientY - t[1]; if (Math.abs(dx) > 70 && Math.abs(dy) < 50) go(dx < 0 ? 1 : -1); touch.current = null; }}>
+      <div className="wdots">${r.walls.map(x => html`<button key=${x.label} className=${'wall-letter sm' + (wallOk(x) ? ' ok' : '')} aria-current=${x.label === w.label} onClick=${() => setScr({...scr, label:x.label})}>${x.label}</button>`)}</div>
+      ${w.photo ? html`<div style=${{display:'grid',gap:6}}>
+          <${PinPhoto} src=${photoSrc(w.photo, w.photoUrl)} obs=${w.obs} disabled=${done} onTap=${newObs} onPin=${i => !done && setSheet({n:'obs', wi, idx:i, o:{...w.obs[i], est:{}}})}/>
+          ${!done && html`<div className="card-row"><span className="meta" style=${{fontSize:12}}>Tap the photo where a window, switchboard or pipe is.</span><${CamButton} label="Retake" onPick=${d => { setW('photo', d); uploadInto(p.id, r.id, w.label, d).catch(() => {}); }}/></div>`}</div>`
+        : html`<${PhotoBox} key=${r.id + w.label} src=${null} label=${'Wide photo of wall ' + w.label} onPick=${d => { setW('photo', d); uploadInto(p.id, r.id, w.label, d).catch(() => {}); }}/>`}
       ${SERVER.demoMode && !w.photo && !done && html`<button className="linkbtn" style=${{color:'var(--muted)',marginTop:-4}} onClick=${() => setW('photo', 'sample')}>Demo: use a sample photo</button>`}
-      <div className="mm">
-        <label>Width (mm)<input inputMode="numeric" value=${w.w} onInput=${e => setW('w', e.target.value.replace(/\D/g,''))} placeholder="e.g. 3600" disabled=${done}/></label>
-        <label>Height (mm)<input inputMode="numeric" value=${w.h} onInput=${e => setW('h', e.target.value.replace(/\D/g,''))} placeholder="2900" disabled=${done}/></label>
+      <div className="shots">${(w.photos || []).map((ph, k) => html`<div key=${k} className="shot"><img src=${shotSrc(ph)} alt=${ph.tag || 'Close-up'}/>${ph.tag && html`<small>${ph.tag}</small>`}${!done && html`<button aria-label="Remove close-up" onClick=${() => updRoom(y => { y.walls[wi].photos.splice(k, 1); })}>✕</button>`}</div>`)}
+        ${!done && (w.photos || []).length < 6 && html`<${CamButton} cls="shot add" label=${html`<span><${Icon} n="plus" s=${18}/><br/>Close-up</span>`} onPick=${addShot}/>`}</div>
+      <div className="seg" style=${{justifySelf:'end'}}>${UNITS.map(([id, n]) => html`<button key=${id} aria-pressed=${unit === id} onClick=${() => setUnit(id)}>${n}</button>`)}</div>
+      <div className="dim-tiles">
+        <button className=${'dim' + (W ? '' : ' empty')} disabled=${done} onClick=${() => openKp(`Wall ${w.label} · width`, w.w, v => { setW('w', v ? String(v) : ''); setKp(null); if (v && !Number(w.h)) setTimeout(() => openKp(`Wall ${w.label} · height`, r.ceiling, v2 => { setW('h', v2 ? String(v2) : ''); setKp(null); }, [1500, 6000]), 50); }, [300, 9000])}><small>Width</small><b>${W ? fmtLen(W, unit) : 'Tap to enter'}</b></button>
+        <button className=${'dim' + (Number(w.h) ? '' : ' empty')} disabled=${done} onClick=${() => openKp(`Wall ${w.label} · height`, w.h || r.ceiling, v => { setW('h', v ? String(v) : ''); setKp(null); }, [1500, 6000])}><small>Height${Number(w.h) === Number(r.ceiling) ? ' · = ceiling' : ''}</small><b>${Number(w.h) ? fmtLen(w.h, unit) : 'Tap to enter'}</b></button>
       </div>
-      <div className="mcard"><div className="card-row"><b>Obstructions</b>${!done && html`<button className="btn small" onClick=${() => setSheet({n:'obs', type:'Window', left:'', floor:'', w:'', h:'', wi})}><${Icon} n="plus" s=${14}/>Add</button>`}</div>
-        ${w.obs.length ? w.obs.map((o,i) => html`<div key=${i} className="mrow" style=${{fontSize:13}}><span className="grow"><b>${o.type}</b> · ${o.w}×${o.h} mm, ${o.left} from left, ${o.floor} up</span>${!done && html`<button className="btn small ghost" onClick=${() => updRoom(y => y.walls[wi].obs.splice(i,1))}>✕</button>`}</div>`) : html`<span className="meta">Window, door, switchboard, AC point, plumbing, beam…</span>`}</div>
+      ${!done && opp && Number(opp.w) > 0 && !W && html`<button className="chip-sugg" onClick=${() => setW('w', String(opp.w))}>Same as wall ${opp.label}: ${fmtLen(opp.w, unit)} ✓</button>`}
+      ${checks.map((c, i) => html`<div key=${i} className="banner warn" style=${{padding:'8px 11px',fontSize:13}}>${c}</div>`)}
+      <div className="mcard"><div className="card-row"><b>Obstructions</b>${!done && html`<button className="btn small" onClick=${() => newObs(null, null)}><${Icon} n="plus" s=${14}/>${w.photo ? 'Add without pin' : 'Add'}</button>`}</div>
+        ${w.obs.length ? w.obs.map((o,i) => html`<button key=${i} className="mrow obs-row" disabled=${done} onClick=${() => setSheet({n:'obs', wi, idx:i, o:{...o, est:{}}})}><span className="pin static">${i + 1}</span><span className="grow"><b>${o.type}</b> · ${fmtLen(o.w, unit)} × ${fmtLen(o.h, unit)}<br/><span className="meta">${fmtLen(o.left, unit)} from left · ${fmtLen(o.floor, unit) === '—' ? 'at floor' : fmtLen(o.floor, unit) + ' up'}</span></span></button>`) : html`<span className="meta">${w.photo ? 'Tap the photo above to mark a window, door, switchboard, AC point, pipe or beam.' : 'Take the wall photo first, then tap on it to mark obstructions.'}</span>`}</div>
+      <div className="mcard"><b>Furniture on this wall</b>
+        <div className="chips">${chips.map(t => { const on = onWall.some(x => x.type === t); return html`<button key=${t} aria-pressed=${on} className=${sugg.includes(t) ? 'sugg' : ''} disabled=${done} onClick=${() => on ? updRoom(y => { y.items.splice(y.items.findIndex(x => x.wall === w.label && x.type === t), 1); }) : updRoom(y => { y.items.push({type:t, wall:w.label, desc:''}); })}>${on ? '✓ ' : ''}${typeById[t].name}</button>`; })}</div>
+        ${onWall.map(x => html`<label key=${x.i} className="furn-note">${typeById[x.type].name}<input className="inp" value=${x.desc} disabled=${done} placeholder="Note, e.g. sliding, 3 doors, with loft" onInput=${e => updRoom(y => { y.items[x.i].desc = e.target.value; })}/></label>`)}</div>
       <label style=${{display:'grid',gap:4,fontSize:12,fontWeight:500}}>Notes<textarea className="inp" rows="2" value=${w.notes} onInput=${e => setW('notes', e.target.value)} placeholder="e.g. Wall not plumb, 8 mm out at top" disabled=${done}></textarea></label>
+      <span className="meta" style=${{fontSize:11.5,color:'var(--muted)',textAlign:'center'}}>Swipe left or right for the next wall.</span>
+      </div>
     <//>`;
   }
 
   else if (scr.n === 'review'){
     const errs = [], warns = [];
     p.survey.rooms.forEach(rm => {
-      rm.walls.forEach(w => { const miss = [!w.photo && 'photo', !(Number(w.w) > 0) && 'width', !(Number(w.h) > 0) && 'height'].filter(Boolean); if (miss.length) errs.push(`${rm.name} · wall ${w.label}: ${miss.join(', ')} missing`); });
-      if (rm.walls.length === 4){ [[0,2],[1,3]].forEach(([a,b]) => { const d = Math.abs(Number(rm.walls[a].w) - Number(rm.walls[b].w)); if (rm.walls[a].w && rm.walls[b].w && d > 20) warns.push(`${rm.name}: walls ${rm.walls[a].label} and ${rm.walls[b].label} differ by ${d} mm. Recheck, or note that the room is out of square.`); }); }
-      if (!rm.items.length) warns.push(`${rm.name}: no furniture tagged.`);
+      rm.walls.forEach(w => { const miss = [!w.photo && 'photo', !(Number(w.w) > 0) && 'width', !(Number(w.h) > 0) && 'height'].filter(Boolean); if (miss.length) errs.push({t:`${rm.name} · wall ${w.label}: ${miss.join(', ')} missing`, rid:rm.id, label:w.label}); });
+      rm.walls.forEach((w, wi) => wallChecks(rm, wi).filter(c => !c.startsWith('Opposite') || wi < 2).forEach(c => warns.push({t:`${rm.name} · wall ${w.label}: ${c}`, rid:rm.id, label:w.label})));
+      if (!rm.items.length) warns.push({t:`${rm.name}: no furniture tagged.`, rid:rm.id});
     });
     const n = p.survey.rooms.reduce((s,rm) => s + rm.items.length, 0);
-    screen = html`<${Phone} title="Review and submit" sub=${p.customer} back=${() => setScr({n:'job', pid:p.id})}
+    const jump = e => e.rid && setScr(e.label ? {n:'wall', pid:p.id, rid:e.rid, label:e.label} : {n:'room', pid:p.id, rid:e.rid});
+    screen = html`<${Phone} title="Review and submit" sub=${p.customer} back=${() => setScr({n:'job', pid:p.id})} right=${sync}
       foot=${html`<button className="big go" disabled=${errs.length > 0 || !n} onClick=${() => { ops.submitSurvey(p.id, sheet === 'signed'); setSheet(null); setScr({n:'job', pid:p.id}); }}>Submit survey</button>`}>
-      <div className=${'banner ' + (errs.length ? 'crit' : 'good')}>${errs.length ? `${errs.length} thing${errs.length > 1 ? 's' : ''} to fix before submitting.` : `All ${p.survey.rooms.reduce((s,rm) => s + rm.walls.length, 0)} walls have a photo and measurements. ${n} furniture item${n === 1 ? "" : "s"} will be created.`}</div>
-      ${errs.map((e,i) => html`<div key=${i} className="mcard" style=${{borderColor:'var(--crit)'}}><span style=${{fontSize:13}}>${e}</span></div>`)}
-      ${warns.map((e,i) => html`<div key=${'w'+i} className="mcard" style=${{borderColor:'var(--warn)'}}><span style=${{fontSize:13,color:'var(--warn)'}}>${e}</span></div>`)}
+      <div className=${'banner ' + (errs.length ? 'crit' : 'good')}>${errs.length ? `${errs.length} thing${errs.length > 1 ? 's' : ''} to fix before submitting. Tap one to go there.` : `All ${p.survey.rooms.reduce((s,rm) => s + rm.walls.length, 0)} walls have a photo and measurements. ${n} furniture item${n === 1 ? "" : "s"} will be created.`}</div>
+      ${localPhotos > 0 && html`<div className="banner warn">${localPhotos} photo${localPhotos > 1 ? 's are' : ' is'} still on the phone. ${online ? 'Uploading now; submit when it says Saved.' : 'Connect to the internet to upload before submitting.'}</div>`}
+      ${errs.map((e,i) => html`<button key=${i} className="mcard" style=${{borderColor:'var(--crit)'}} onClick=${() => jump(e)}><span style=${{fontSize:13}}>${e.t} ›</span></button>`)}
+      ${warns.map((e,i) => html`<button key=${'w'+i} className="mcard" style=${{borderColor:'var(--warn)'}} onClick=${() => jump(e)}><span style=${{fontSize:13,color:'var(--warn)'}}>${e.t} ›</span></button>`)}
       ${!n && html`<div className="banner warn">Tag at least one piece of furniture so items can be created.</div>`}
       <div className="mcard"><b>Customer signature (optional)</b><${SignPad} onSigned=${() => setSheet('signed')}/></div>
-      <span className="meta" style=${{fontSize:12,color:'var(--muted)'}}>On submit: rooms, walls and photos are saved to ${p.code}, items move to Production drawing, designers get tasks, and the customer gets a WhatsApp update.</span>
+      <button className="btn" onClick=${() => openPrint('survey', p.id)}>Preview customer summary (PDF)</button>
+      <span className="meta" style=${{fontSize:12,color:'var(--muted)'}}>On submit: rooms, walls and photos are saved to ${p.code}, items move to Production drawing, designers get tasks, and the customer gets a WhatsApp update. Open the summary, Save as PDF and share it with the customer on WhatsApp.</span>
     <//>`;
   } else screen = null;
 
@@ -2167,27 +2388,54 @@ function SurveyApp({erp, ops}){
     <div className="presets">${ROOM_PRESETS.map(([nm, code]) => html`<button key=${code} aria-pressed=${sheet.code === code} onClick=${() => setSheet({...sheet, name:nm, code})}>${nm}</button>`)}</div>
     <div className="mm"><label className="full">Room name<input value=${sheet.name} onInput=${e => setSheet({...sheet, name:e.target.value, code:sheet.code || e.target.value.replace(/[^A-Za-z]/g,'').slice(0,3).toUpperCase()})} placeholder="or type a name"/></label>
       <label>Shape<select value=${sheet.shape} onChange=${e => setSheet({...sheet, shape:e.target.value, count:e.target.value === 'L' ? 6 : e.target.value === 'rect' ? 4 : sheet.count})}><option value="rect">Rectangle · 4 walls</option><option value="L">L-shape · 6 walls</option><option value="custom">Other</option></select></label>
-      ${sheet.shape === 'custom' ? html`<label>Number of walls<input inputMode="numeric" value=${sheet.count} onInput=${e => setSheet({...sheet, count:Math.min(8, Math.max(3, Number(e.target.value.replace(/\D/g,'')) || 3))})}/></label>` : html`<label>Ceiling (mm)<input inputMode="numeric" value=${sheet.ceiling} onInput=${e => setSheet({...sheet, ceiling:e.target.value.replace(/\D/g,'')})}/></label>`}
-      <label className="full">Floor<select value=${sheet.floor} onChange=${e => setSheet({...sheet, floor:e.target.value})}>${FLOORS.map(f => html`<option key=${f}>${f}</option>`)}</select></label></div>
+      <label>Ceiling<button type="button" className="kp-field" onClick=${() => openKp('Ceiling height', sheet.ceiling, v => { setSheet(s => ({...s, ceiling:v || 2900})); setKp(null); }, [2100, 6000])}><b>${fmtLen(sheet.ceiling, unit)}</b></button></label>
+      ${sheet.shape === 'custom' && html`<label>Number of walls<input inputMode="numeric" value=${sheet.count} onInput=${e => setSheet({...sheet, count:Math.min(8, Math.max(3, Number(e.target.value.replace(/\D/g,'')) || 3))})}/></label>`}
+      <label className=${sheet.shape === 'custom' ? '' : 'full'}>Floor<select value=${sheet.floor} onChange=${e => setSheet({...sheet, floor:e.target.value})}>${FLOORS.map(f => html`<option key=${f}>${f}</option>`)}</select></label></div>
     <div className="inline"><button className="big" onClick=${() => setSheet(null)}>Cancel</button><button className="big pri" disabled=${!sheet.name.trim()} onClick=${() => {
       const code = (sheet.code || 'RM').toUpperCase(), used = p.survey.rooms.filter(x => x.code.startsWith(code)).length, rc = used ? code.slice(0,2) + (used + 1) : code;
-      const nr = {id:'R' + Date.now().toString(36), name:sheet.name.trim(), code:rc, ceiling:Number(sheet.ceiling) || 2900, floor:sheet.floor, shape:sheet.shape, walls:LETTERS.slice(0, sheet.count).map(l => ({label:l, w:'', h:String(Number(sheet.ceiling) || 2900), photo:null, obs:[], notes:''})), items:[]};
-      ops.updProject(p.id, x => { x.survey.rooms.push(nr); }); setSheet(null); setScr({n:'room', pid:p.id, rid:nr.id}); }}>Add room</button></div>
+      const nr = {id:'R' + Date.now().toString(36), name:sheet.name.trim(), code:rc, ceiling:Number(sheet.ceiling) || 2900, floor:sheet.floor, shape:sheet.shape, walls:LETTERS.slice(0, sheet.count).map(l => ({label:l, w:'', h:String(Number(sheet.ceiling) || 2900), photo:null, photos:[], obs:[], notes:''})), items:[]};
+      ops.updProject(p.id, x => { x.survey.rooms.push(nr); }); setSheet(null); setScr({n:'round', pid:p.id, rid:nr.id}); }}>Add room</button></div>
   </div></div>`;
-  if (sheet && sheet.n === 'obs') overlay = html`<div className="sheet-m" onClick=${e => e.target === e.currentTarget && setSheet(null)}><div className="in">
-    <h3>Obstruction on wall ${r.walls[sheet.wi].label}</h3>
-    <div className="mm"><label className="full">Type<select value=${sheet.type} onChange=${e => setSheet({...sheet, type:e.target.value})}>${OBSTRUCTIONS.map(o => html`<option key=${o}>${o}</option>`)}</select></label>
-      ${[['left','From left corner (mm)'],['floor','Height from floor (mm)'],['w','Width (mm)'],['h','Height (mm)']].map(([k,l]) => html`<label key=${k}>${l}<input inputMode="numeric" value=${sheet[k]} onInput=${e => setSheet({...sheet, [k]:e.target.value.replace(/\D/g,'')})}/></label>`)}</div>
-    <div className="inline"><button className="big" onClick=${() => setSheet(null)}>Cancel</button><button className="big pri" disabled=${!sheet.w || !sheet.h} onClick=${() => { const o = {type:sheet.type, left:Number(sheet.left)||0, floor:Number(sheet.floor)||0, w:Number(sheet.w), h:Number(sheet.h)}; updRoom(y => y.walls[sheet.wi].obs.push(o)); setSheet(null); }}>Add</button></div>
+  if (sheet && sheet.n === 'roomedit') overlay = html`<div className="sheet-m" onClick=${e => e.target === e.currentTarget && setSheet(null)}><div className="in">
+    <h3>Edit ${r.name}</h3>
+    <div className="mm"><label className="full">Room name<input value=${sheet.name} onInput=${e => setSheet({...sheet, name:e.target.value})}/></label>
+      <label>Ceiling<button type="button" className="kp-field" onClick=${() => openKp('Ceiling height', sheet.ceiling, v => { setSheet(s => ({...s, ceiling:v || s.ceiling})); setKp(null); }, [2100, 6000])}><b>${fmtLen(sheet.ceiling, unit)}</b></button></label>
+      <label>Floor<select value=${sheet.floor} onChange=${e => setSheet({...sheet, floor:e.target.value})}>${FLOORS.map(f => html`<option key=${f}>${f}</option>`)}</select></label></div>
+    <span className="meta" style=${{fontSize:12,color:'var(--muted)'}}>Walls whose height still equals the old ceiling are updated to the new one.</span>
+    <div className="inline"><button className="big" onClick=${() => setSheet(null)}>Cancel</button><button className="big pri" disabled=${!sheet.name.trim()} onClick=${() => { updRoom(y => { y.walls.forEach(ww => { if (!Number(ww.h) || Number(ww.h) === Number(y.ceiling)) ww.h = String(sheet.ceiling); }); y.name = sheet.name.trim(); y.ceiling = Number(sheet.ceiling); y.floor = sheet.floor; }); setSheet(null); }}>Save</button></div>
   </div></div>`;
-  if (sheet && sheet.n === 'item') overlay = html`<div className="sheet-m" onClick=${e => e.target === e.currentTarget && setSheet(null)}><div className="in">
-    <h3>Tag furniture in ${r.name}</h3>
-    <div className="presets">${ITEM_TYPES.map(t => html`<button key=${t.id} aria-pressed=${sheet.type === t.id} onClick=${() => setSheet({...sheet, type:t.id})}>${t.name}</button>`)}</div>
-    <div className="mm"><label>On wall<select value=${sheet.wall} onChange=${e => setSheet({...sheet, wall:e.target.value})}>${r.walls.map(w => html`<option key=${w.label}>${w.label}</option>`)}</select></label><label>Short note<input value=${sheet.desc} onInput=${e => setSheet({...sheet, desc:e.target.value})} placeholder="e.g. sliding, with loft"/></label></div>
-    <div className="inline"><button className="big" onClick=${() => setSheet(null)}>Cancel</button><button className="big pri" onClick=${() => { updRoom(y => y.items.push({type:sheet.type, wall:sheet.wall, desc:sheet.desc.trim()})); setSheet(null); }}>Add ${typeById[sheet.type].name.toLowerCase()}</button></div>
+  if (sheet && sheet.n === 'shot') overlay = html`<div className="sheet-m" onClick=${e => e.target === e.currentTarget && setSheet(null)}><div className="in">
+    <h3>What is this close-up?</h3>
+    <div className="presets">${SHOT_TAGS.map(t => html`<button key=${t} onClick=${() => { updRoom(y => { const ph = (y.walls[sheet.wi].photos || [])[sheet.k]; if (ph) ph.tag = t; }); setSheet(null); }}>${t}</button>`)}</div>
+    <button className="big" onClick=${() => setSheet(null)}>Skip</button>
   </div></div>`;
+  if (sheet && sheet.n === 'obs'){
+    const ww = r.walls[sheet.wi], o = sheet.o, W = Number(ww.w), H = Number(ww.h) || Number(r.ceiling);
+    const setO = patch => setSheet(s => ({...s, o:{...s.o, ...patch}}));
+    // estimate the left / floor distance from where the pin was dropped (photo is roughly the whole wall)
+    const estimate = (base, est) => { const x = {...base}; const e = {...(est || {})};
+      if (base.px != null && W && Number(x.w) && (e.left || x.left === '')){ x.left = Math.max(0, Math.round((base.px / 100 * W - Number(x.w) / 2) / 10) * 10); e.left = true; }
+      if (base.py != null && H && Number(x.h) && x.floor === ''){ x.floor = Math.max(0, Math.round(((1 - base.py / 100) * H - Number(x.h) / 2) / 10) * 10); e.floor = true; }
+      return {...x, est:e}; };
+    const pick = ([, pw, ph, pf]) => { const f = v => typeof v === 'function' ? v(W || 3000, H) : v; setSheet(s => ({...s, o:estimate({...s.o, w:f(pw), h:f(ph), floor:pf === undefined ? s.o.floor : f(pf), left:s.o.est?.left || s.o.left === '' ? '' : s.o.left}, {...s.o.est, floor:false})})); };
+    const recent = (recentObs()[o.type] || []);
+    const field = (k, lbl) => html`<button type="button" className=${'kp-field' + (o.est?.[k] ? ' est' : '')} onClick=${() => openKp(`${o.type} · ${lbl.toLowerCase()}`, o[k], v => { setSheet(s => ({...s, o:{...s.o, [k]:v, est:{...s.o.est, [k]:false}}})); setKp(null); })}><small>${lbl}${o.est?.[k] ? ' ≈ from photo' : ''}</small><b>${o[k] === '' || o[k] == null ? 'Tap' : k === 'floor' && !Number(o[k]) ? 'At floor' : fmtLen(o[k], unit)}</b></button>`;
+    const ok = Number(o.w) > 0 && Number(o.h) > 0;
+    overlay = html`<div className="sheet-m" onClick=${e => e.target === e.currentTarget && setSheet(null)}><div className="in">
+      <h3>${sheet.idx >= 0 ? 'Edit' : 'Mark'} obstruction · wall ${ww.label}</h3>
+      <div className="chips">${OBSTRUCTIONS.map(t => html`<button key=${t} aria-pressed=${o.type === t} onClick=${() => setO({type:t})}>${t}</button>`)}</div>
+      <div><span className="meta" style=${{fontSize:12,color:'var(--muted)'}}>Size</span><div className="chips">
+        ${recent.map(x => html`<button key=${'r' + x.k} className="sugg" onClick=${() => pick([0, x.w, x.h, x.floor])}>Last used ${x.k}</button>`)}
+        ${(OBS_PRESETS[o.type] || []).map(pr => html`<button key=${pr[0]} onClick=${() => pick(pr)}>${pr[0]}</button>`)}</div></div>
+      <div className="dim-tiles">${field('w', 'Width')}${field('h', 'Height')}${field('left', 'From left corner')}${field('floor', 'From floor')}</div>
+      ${(o.est?.left || o.est?.floor) && html`<span className="meta" style=${{fontSize:12,color:'var(--warn)'}}>≈ values are estimated from where you tapped on the photo. Measure and tap them to confirm.</span>`}
+      <div className="inline">${sheet.idx >= 0 ? html`<button className="big" onClick=${() => { updRoom(y => y.walls[sheet.wi].obs.splice(sheet.idx, 1)); setSheet(null); }}>Delete</button>` : html`<button className="big" onClick=${() => setSheet(null)}>Cancel</button>`}
+        <button className="big pri" disabled=${!ok} onClick=${() => { const n = {type:o.type, left:Number(o.left) || 0, floor:Number(o.floor) || 0, w:Number(o.w), h:Number(o.h), px:o.px ?? null, py:o.py ?? null}; rememberObs(n); updRoom(y => { if (sheet.idx >= 0) y.walls[sheet.wi].obs[sheet.idx] = n; else y.walls[sheet.wi].obs.push(n); }); setSheet(null); }}>${sheet.idx >= 0 ? 'Save' : 'Add'}</button></div>
+    </div></div>`;
+  }
+  const kpOverlay = kp && html`<${Keypad} key=${kp.id} label=${kp.label} mm=${kp.mm} unit=${unit} setUnit=${setUnit} range=${kp.range} onDone=${kp.onDone} onClose=${() => setKp(null)}/>`;
 
-  return html`<section className="view"><div className="phone-wrap">${screen && React.cloneElement(screen, {overlay})}<${SideNote} title="Survey app flow" steps=${steps}/></div></section>`;
+  return html`<section className="view"><div className="phone-wrap">${screen && React.cloneElement(screen, {overlay:html`${overlay}${kpOverlay}`})}<${SideNote} title="Survey app flow" steps=${steps}/></div></section>`;
 }
 function SignPad({onSigned}){
   const ref = useRef(null), drawing = useRef(false);
@@ -2454,7 +2702,11 @@ function App(){
   const queued = useQueueCount();
   const erpRef = useRef(erp); erpRef.current = erp;
   const appRef = useRef(null);
-  if (!appRef.current) appRef.current = {timers:{}, pending:{}, surveyDraft:{}, deferred:null};
+  if (!appRef.current){
+    appRef.current = {timers:{}, pending:{}, surveyDraft:{}, deferred:null};
+    // restore survey work that was saved on the phone but not yet on the server (app closed or offline)
+    try { Object.keys(localStorage).filter(k => k.startsWith('mms-survey-local:')).forEach(k => { const l = JSON.parse(localStorage.getItem(k)); if (l && l.rooms && Date.now() - l.at < 14 * 24 * HR) appRef.current.surveyDraft[k.slice(17)] = l.rooms; else localStorage.removeItem(k); }); } catch(e){}
+  }
   const app = appRef.current;
   app.cur = () => erpRef.current;
   app.applyState = st => {

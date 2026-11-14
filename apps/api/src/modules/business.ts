@@ -9,6 +9,7 @@ import { audit, can, customerOrPreview, staff, userOf } from './auth.js';
 import { act } from './ops.js';
 import { customerState, staffState } from './state.js';
 import { pushTask } from './tasks.js';
+import { signedFileUrl } from '../integrations/storage.js';
 
 const done = async (ctx: Ctx, extra: Record<string, unknown> = {}) => ({ ok: true, ...extra, state: await staffState(userOf(ctx)) });
 const rupees = (n: number) => '₹' + Math.round(Number(n) || 0).toLocaleString('en-IN');
@@ -260,6 +261,32 @@ export function businessRoutes(r: Router) {
         <table><tbody><tr><td>Item</td><td>${esc(s.code)} · ${esc(s.room_name)}</td></tr><tr><td>Part to replace</td><td><b>${esc(s.part)}</b></td></tr><tr><td>Problem</td><td>${esc(s.type)}${s.note ? ' — ' + esc(s.note) : ''}</td></tr>
         ${['carcass', 'shutter', 'finish', 'edge', 'hardware', 'handles'].filter(k => spec[k]).map(k => `<tr><td>${k[0].toUpperCase() + k.slice(1)}</td><td>${esc(spec[k])}</td></tr>`).join('')}
         <tr><td>Cost</td><td>${s.cost !== null ? '₹ ' + inr(s.cost) : '—'}${s.payer ? ' · borne by ' + esc(s.payer) : ''}</td></tr></tbody></table>`;
+    } else if (kind === 'survey') {
+      if (!can(ctx, 'survey') && !can(ctx, 'projects')) throw forbidden();
+      const pr = await one(db, 'select p.*, c.name cname, c.phone cphone, s.status sstatus, s.submitted_at, s.check_in_at, u.name surveyor from projects p join customers c on c.id = p.customer_id left join surveys s on s.project_id = p.id left join users u on u.id = s.assignee_id where p.id = $1', [id]); if (!pr) throw notFound();
+      const rooms = await many(db, 'select * from rooms where project_id = $1 order by sort', [id]);
+      const TYPE: Record<string, string> = { WR: 'Wardrobe', TV: 'TV unit', VN: 'Vanity', KT: 'Kitchen', DR: 'Dresser', ST: 'Study unit', SR: 'Shoe rack', CU: 'Crockery unit', OT: 'Other' };
+      const img = (ref: string | null) => { const u = ref && (ref.startsWith('data:') ? ref : signedFileUrl(ref)); return u ? `<img src="${esc(u)}" alt="">` : '<div class="noimg">No photo</div>'; };
+      let wallsTotal = 0;
+      const blocks: string[] = [];
+      for (const rm of rooms) {
+        const walls = await many(db, 'select * from walls where room_id = $1 order by label', [rm.id]);
+        const items = await many(db, 'select * from room_items where room_id = $1 order by id', [rm.id]);
+        wallsTotal += walls.length;
+        const rows: string[] = [];
+        for (const w of walls) {
+          const obs = await many(db, 'select * from wall_obstructions where wall_id = $1 order by id', [w.id]);
+          const furn = items.filter(x => x.wall === w.label).map(x => TYPE[x.type] || x.type);
+          rows.push(`<div class="wall"><div class="ph">${img(w.photo)}</div><div><b>Wall ${esc(w.label)}</b> · ${w.w ? esc(w.w) + ' × ' + esc(w.h) + ' mm' : 'not measured'}
+            ${obs.length ? '<br><small>' + obs.map(o => `${esc(o.type)} ${o.w}×${o.h} mm, ${o.left_mm} from left, ${o.floor_mm} up`).join('<br>') + '</small>' : ''}
+            ${furn.length ? '<br><span class="tag">' + furn.map(esc).join(' · ') + '</span>' : ''}${w.notes ? '<br><small>Note: ' + esc(w.notes) + '</small>' : ''}</div></div>`);
+        }
+        blocks.push(`<h4>${esc(rm.name)} <small>· ceiling ${rm.ceiling} mm · ${esc(rm.floor || '')}</small></h4>${rows.join('')}`);
+      }
+      title = `Site measurement summary ${pr.code}`;
+      body = `<h2>Site measurement summary</h2><div class="meta"><div><b>Customer</b><br>${esc(pr.cname)}<br>${esc(pr.cphone)}<br>${esc(pr.address)}</div><div><b>Project</b> ${esc(pr.code)}<br><b>Measured by</b> ${esc(pr.surveyor || '—')}<br><b>Date</b> ${new Date(pr.submitted_at || pr.check_in_at || Date.now()).toLocaleDateString('en-IN')}<br><b>Rooms / walls</b> ${rooms.length} / ${wallsTotal}</div></div>
+        ${blocks.join('') || '<p>No rooms measured yet.</p>'}
+        <p><small>All sizes in millimetres, measured on site. Please tell us within 2 days if anything looks wrong (for example a window on a different wall); production drawings are made from these measurements.</small></p>`;
     } else throw notFound();
     const page = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
       body{font:13px/1.5 Inter,system-ui,Arial,sans-serif;color:#1A1A1A;max-width:780px;margin:24px auto;padding:0 24px}
@@ -270,7 +297,7 @@ export function businessRoutes(r: Router) {
       table{width:100%;border-collapse:collapse;margin:8px 0}th,td{border-bottom:1px solid #ddd;padding:7px 6px;text-align:left;vertical-align:top}
       th{border-bottom:2px solid #1A1A1A;font-size:11px;text-transform:uppercase;letter-spacing:.08em}.r{text-align:right}
       tfoot td{border:0}.grand td{border-top:2px solid #1A1A1A;font-weight:700;font-size:15px}small{color:#666}
-      .sign{margin-top:48px;text-align:right}.bar{position:sticky;top:0;background:#F7F4F0;padding:8px;margin:-24px -24px 16px;text-align:right}
+      .sign{margin-top:48px;text-align:right}.wall{display:grid;grid-template-columns:180px 1fr;gap:12px;padding:8px 0;border-bottom:1px solid #eee;break-inside:avoid}.wall img{width:180px;height:120px;object-fit:cover;display:block}.noimg{width:180px;height:120px;background:#f2f2f2;display:grid;place-items:center;color:#999}.tag{font-weight:600}.bar{position:sticky;top:0;background:#F7F4F0;padding:8px;margin:-24px -24px 16px;text-align:right}
       .bar button{background:#F40009;color:#fff;border:0;padding:8px 16px;font-weight:600;cursor:pointer}@media print{.bar{display:none}body{margin:0}}
     </style></head><body><div class="bar"><button onclick="print()">Print / Save as PDF</button></div>
     <header><b>${esc(c.name)}</b><div class="co">${esc(c.legalName)}${c.legalName ? '<br>' : ''}${esc(c.address)}<br>${esc(c.phone)} · ${esc(c.email)}${c.gstin ? '<br>GSTIN ' + esc(c.gstin) : ''}</div></header>${body}</body></html>`;
