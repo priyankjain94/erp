@@ -17,7 +17,8 @@ export interface TplMap { name: string; params?: (number | string)[]; buttons?: 
 export const DEFAULT_TEMPLATE_MAP: Record<string, TplMap> = {
   welcome_catalogue: { name: 'mms_quotation_request', params: [0], buttons: false },
   follow_up_gentle: { name: 'mms_followup_day3', params: [0], buttons: false },
-  quote_followup: { name: 'mms_followup_day7', params: [0], buttons: false }
+  quote_followup: { name: 'mms_followup_day7', params: [0], buttons: false },
+  staff_invite: { name: 'mms_team_access', params: [0, 1] }
 };
 export interface MetaTpl { name: string; language: string; status: string; category: string; params: number; quickReplies: number }
 async function settingsValue<T>(key: string, fallback: T, q: Q = db): Promise<T> { return ((await one(q, 'select value from settings where key = $1', [key]))?.value ?? fallback) as T; }
