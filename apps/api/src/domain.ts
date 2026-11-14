@@ -3,25 +3,30 @@
 export const ROLES = [
   { id: 'admin', name: 'Owner / Admin' }, { id: 'ops_head', name: 'Operations head' }, { id: 'pm', name: 'Project coordinator' },
   { id: 'sales', name: 'Sales' }, { id: 'surveyor', name: 'Site surveyor' }, { id: 'designer', name: 'Designer' },
-  { id: 'purchase', name: 'Purchase' }, { id: 'production', name: 'Production coordinator' }, { id: 'installer', name: 'Installer' }
+  { id: 'purchase', name: 'Purchase' }, { id: 'production', name: 'Production coordinator' }, { id: 'installer', name: 'Installer' },
+  { id: 'guest', name: 'New member (no role yet)' }
 ] as const;
 export type Role = typeof ROLES[number]['id'];
 export const ROLE_IDS = ROLES.map(r => r.id) as [Role, ...Role[]];
 
-export const PERMS = ['crm', 'ops', 'projects', 'money', 'edit', 'assign', 'override', 'payments', 'tasksAll', 'survey', 'install', 'team', 'admin'] as const;
+export const PERMS = ['crm', 'ops', 'projects', 'money', 'edit', 'assign', 'override', 'payments', 'tasksAll', 'survey', 'install', 'team', 'people', 'admin'] as const;
 export type Perm = typeof PERMS[number];
 const P = (list: Perm[]) => Object.fromEntries(PERMS.map(k => [k, list.includes(k)])) as Record<Perm, boolean>;
 export const DEFAULT_ROLES: Record<Role, Record<Perm, boolean>> = {
   admin: P([...PERMS]),
-  ops_head: P(['crm', 'ops', 'projects', 'money', 'edit', 'assign', 'payments', 'tasksAll', 'survey', 'install', 'team']),
+  ops_head: P(['crm', 'ops', 'projects', 'money', 'edit', 'assign', 'payments', 'tasksAll', 'survey', 'install', 'team', 'people']),
   pm: P(['ops', 'projects', 'money', 'edit', 'assign', 'payments', 'tasksAll', 'survey', 'install', 'team']),
   sales: P(['crm', 'projects', 'money']),
   surveyor: P(['survey', 'projects']),
   designer: P(['projects', 'edit']),
   purchase: P(['projects', 'edit']),
   production: P(['projects', 'edit']),
-  installer: P(['install'])
+  installer: P(['install']),
+  guest: P([])
 };
+
+/** Who may create an account. approval: anyone can ask, someone with 'people' approves. open: they join at once as defaultRole. closed: only admins add people. */
+export const SIGNUP_DEFAULT = { mode: 'approval' as 'approval' | 'open' | 'closed', defaultRole: 'guest' as Role, domains: [] as string[] };
 
 export const STAGES = [
   { id: 'survey', name: 'Site survey', short: 'Survey', owner: 'surveyor', days: 2 },

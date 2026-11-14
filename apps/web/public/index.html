@@ -717,7 +717,7 @@ function LoginScreen({audience = 'staff', onLogin, title = 'Team login'}){
       window.google.accounts.id.initialize({client_id:cfg.googleClientId, callback:async resp => {
         setErr(''); setBusy(true);
         try { const r = await API.call('POST', '/auth/google', {credential:resp.credential});
-          if (r.needsAccess){ if (r.pending) setSent({name:r.name}); else { setGCred(resp.credential); setReq({name:r.name || '', phone:'', roleWanted:'', note:'', email:r.email}); } }
+          if (r.needsAccess){ if (cfg.signup === 'closed') setErr('This Google account has no access. Ask your admin to add you.'); else if (r.pending) setSent({name:r.name}); else { setGCred(resp.credential); setReq({name:r.name || '', phone:'', roleWanted:'', note:'', email:r.email}); } }
           else { API.setToken(r.accessToken); await onLogin(r); } }
         catch(x){ setErr(x.message); }
         setBusy(false); }});
@@ -733,7 +733,7 @@ function LoginScreen({audience = 'staff', onLogin, title = 'Team login'}){
     if (req.name.trim().length < 2) return setErr('Enter your name.');
     if (req.phone.replace(/\D/g,'').length < 10) return setErr('Enter your 10-digit WhatsApp number.');
     setBusy(true);
-    try { await API.call('POST', '/auth/access-request', {name:req.name, phone:req.phone, roleWanted:req.roleWanted, note:req.note, ...(gCred ? {credential:gCred} : {})}); setSent({name:req.name}); setReq(null); } catch(x){ setErr(x.message); }
+    try { const r = await API.call('POST', '/auth/access-request', {name:req.name, phone:req.phone, roleWanted:req.roleWanted, note:req.note, ...(gCred ? {credential:gCred} : {})}); setSent({name:req.name, joined:!!r.joined}); setReq(null); } catch(x){ setErr(x.message); }
     setBusy(false); };
   const next = async e => { e.preventDefault(); setErr('');
     if (phone.replace(/\D/g,'').length < 10) return setErr('Enter your 10-digit mobile number.');
@@ -746,7 +746,7 @@ function LoginScreen({audience = 'staff', onLogin, title = 'Team login'}){
   return html`<div style=${{minHeight:'100%',display:'grid',placeItems:'center',padding:16,background:'var(--bg)',overflow:'auto'}}>
     <div className="sheet" style=${{width:'min(440px,100%)',borderTop:0,border:'1px solid var(--line)'}}>
       <header style=${{display:'grid',gap:18,paddingTop:28}}><${Mark} cls="login-logo"/><div><span className="kicker">${title}</span><h2 style=${{marginTop:10}}>${audience === 'customer' ? 'Your home, step by step.' : 'Precision, made yours.'}</h2><p>${audience === 'customer' ? 'Track your furniture, approve drawings and reach your project manager.' : 'Make My Space CRM + Operations. Sign in with your WhatsApp number.'}</p></div></header>
-      ${sent ? html`<div className="form" style=${{gridTemplateColumns:'1fr'}}><div className="banner">Thanks ${sent.name}. Your request has reached the admin. You'll get a WhatsApp message once your access is approved; then log in here.</div><button className="btn ghost" onClick=${() => setSent(null)}>Back to login</button></div>`
+      ${sent ? html`<div className="form" style=${{gridTemplateColumns:'1fr'}}><div className="banner">${sent.joined ? html`Welcome ${sent.name}. Your account is ready: log in below with your WhatsApp number${gCred ? ' or Google' : ''}. Your manager will give you a role.` : html`Thanks ${sent.name}. Your request has reached the admin. You'll get a WhatsApp message once your access is approved; then log in here.`}</div><button className="btn ghost" onClick=${() => setSent(null)}>Back to login</button></div>`
       : req ? html`<form className="form" style=${{gridTemplateColumns:'1fr'}} onSubmit=${sendReq} noValidate>
           <div className="banner">${req.email ? html`Signed in with Google as <b>${req.email}</b>. ` : ''}Ask for access to the Make My Space app. An admin approves it and sets your role.</div>
           <label>Your name<input autoFocus value=${req.name} onInput=${e => setReq({...req, name:e.target.value})}/></label>
@@ -761,7 +761,7 @@ function LoginScreen({audience = 'staff', onLogin, title = 'Team login'}){
           ${err && html`<span className="err">${err}</span>`}
           <button className="btn primary" type="submit" disabled=${busy} style=${{justifyContent:'center'}}>${busy ? 'Sending…' : 'Send OTP on WhatsApp'}</button>
           ${audience === 'staff' && cfg.googleClientId && html`<div style=${{display:'grid',gap:8,justifyItems:'center'}}><span style=${{fontSize:12,color:'var(--muted)'}}>or</span><div ref=${gBtn} style=${{width:'100%',display:'flex',justifyContent:'center',minHeight:44}}></div></div>`}
-          ${audience === 'staff' && html`<p style=${{fontSize:13,color:'var(--muted)',margin:'4px 0 0'}}>New to the team? <button type="button" className="linkbtn" onClick=${() => { setErr(''); setReq({name:'', phone:phone, roleWanted:'', note:''}); }}>Request access</button></p>`}
+          ${audience === 'staff' && cfg.signup !== 'closed' && html`<p style=${{fontSize:13,color:'var(--muted)',margin:'4px 0 0'}}>New to the team? <button type="button" className="linkbtn" onClick=${() => { setErr(''); setReq({name:'', phone:phone, roleWanted:'', note:''}); }}>Request access</button></p>`}
           ${demo.length > 0 && html`<details style=${{fontSize:12,color:'var(--muted)'}}><summary>Demo numbers</summary><div style=${{display:'grid',gap:2,marginTop:6}}>${demo.map(u => html`<button type="button" key=${u.phone} className="linkbtn" style=${{color:'var(--muted)',textAlign:'left',marginTop:0}} onClick=${() => setPhone(u.phone)}>${u.name}${u.role ? ' · ' + (roleById[u.role]?.name || u.role) : ''} · ${u.phone}</button>`)}</div></details>`}
         </form>`
       : html`<form className="form" style=${{gridTemplateColumns:'1fr'}} onSubmit=${verify}>
@@ -806,8 +806,8 @@ function UsersAdmin({erp, ops, toast}){
     <div className="seg" style=${{alignSelf:'start'}}>${[['users','Users'],['roles','Roles and access'],['audit','Change log'],['integrations','WhatsApp and Meta'],['company','Company profile'],['exports','Exports']].map(([id,n]) => html`<button key=${id} aria-pressed=${tab === id} onClick=${() => setTab(id)}>${n}</button>`)}</div>
     ${tab === 'users' && html`<div className="stack">
       <div className="inline"><span style=${{color:'var(--muted)'}}>${erp.users.filter(u => u.active !== false).length} active users. Staff sign in with a WhatsApp code, or with Google if their email is set below. No passwords.</span><button className="btn primary small" style=${{marginLeft:'auto'}} onClick=${() => setF({name:'', phone:'', role:'installer', title:''})}><${Icon} n="plus" s=${14}/>Add user</button></div>
-      ${(erp.accessRequests || []).length > 0 && html`<div className="box" style=${{borderColor:'var(--accent)'}}><h4>Access requests · ${erp.accessRequests.length} waiting</h4>
-        <table style=${{minWidth:0}}><tbody>${erp.accessRequests.map(a => html`<${AccessRow} key=${a.id} a=${a} ops=${ops}/>`)}</tbody></table></div>`}
+      <${PeopleBox} erp=${erp} ops=${ops}/>
+      <${SignupRules} erp=${erp} ops=${ops} toast=${toast}/>
       ${f && html`<div className="box"><h4>New user</h4><div className="form" style=${{padding:0}}>
         <label>Name<input value=${f.name} onInput=${e => setF({...f, name:e.target.value})} autoFocus/></label>
         <label>WhatsApp number<input inputMode="tel" value=${f.phone} onInput=${e => setF({...f, phone:e.target.value})} placeholder="10-digit mobile"/></label>
@@ -843,12 +843,45 @@ function UsersAdmin({erp, ops, toast}){
     ${tab === 'exports' && html`<div className="panel"><h3>Exports</h3><p className="hint">Download as CSV (opens in Excel or Google Sheets).</p><div className="inline" style=${{flexWrap:'wrap',gap:8,marginTop:10}}>${[['leads','Leads'],['partners','Partners and sales value'],['projects','Projects'],['payments','Payments received'],['invoices','Tax invoices'],['installer-hours','Installer hours']].map(([k, n]) => html`<button key=${k} className="btn small" onClick=${() => downloadCsv(k)}>${n}</button>`)}</div></div>`}
   </div></section>`;
 }
-function AccessRow({a, ops}){
+function PeopleBox({erp, ops}){
+  const reqs = erp.accessRequests || [], guests = erp.users.filter(u => u.role === 'guest' && u.active !== false);
+  if (!reqs.length && !guests.length) return null;
+  return html`<div className="box" style=${{borderColor:'var(--accent)'}}>
+    ${reqs.length > 0 && html`<h4>Access requests · ${reqs.length} waiting</h4><table style=${{minWidth:0}}><tbody>${reqs.map(a => html`<${AccessRow} key=${a.id} a=${a} ops=${ops} admin=${can(erp, 'admin')}/>`)}</tbody></table>`}
+    ${guests.length > 0 && html`<h4 style=${{marginTop:reqs.length ? 14 : 0}}>New members without a role · ${guests.length}</h4><table style=${{minWidth:0}}><tbody>${guests.map(u => html`<${GuestRow} key=${u.id} u=${u} ops=${ops} admin=${can(erp, 'admin')}/>`)}</tbody></table>`}
+  </div>`;
+}
+function GuestRow({u, ops, admin}){
+  const [role, setRole] = useState('');
+  return html`<tr><td><b>${u.name}</b><div className="sub">${u.phone}${u.email ? ' · ' + u.email : ''}${u.title ? ' · ' + u.title : ''}</div></td>
+    <td><select className="sel" value=${role} onChange=${e => setRole(e.target.value)} aria-label="Role"><option value="">Role…</option>${ROLES.filter(r => r.id !== 'guest' && (admin || r.id !== 'admin')).map(r => html`<option key=${r.id} value=${r.id}>${r.name}</option>`)}</select></td>
+    <td><button className="btn small primary" disabled=${!role} onClick=${() => ops.api('POST', `/users/${u.id}/assign-role`, {role}, `${u.name} is now ${roleById[role].name}.`)}>Give role</button></td></tr>`;
+}
+function SignupRules({erp, ops, toast}){
+  const [r, setR] = useState(null), [busy, setBusy] = useState(false);
+  useEffect(() => { API.call('GET', '/settings/signup').then(x => setR({...x.signup, domainsText:(x.signup.domains || []).join(', ')})).catch(e => toast(e.message, 'err')); }, []);
+  if (!r || !can(erp, 'admin')) return null;
+  const save = async () => { setBusy(true);
+    const res = await ops.api('PUT', '/settings/signup', {mode:r.mode, defaultRole:r.defaultRole, domains:r.domainsText.split(/[,\s]+/).map(x => x.trim()).filter(Boolean)}, 'Sign-up rules saved.');
+    if (res?.signup) setR({...res.signup, domainsText:res.signup.domains.join(', ')}); setBusy(false); };
+  const M = [['approval','Anyone can ask; an approver says yes','People fill "Request access" (or use Google). Nobody gets in until someone with "Approve sign-ups" picks their role.'],
+    ['open','Anyone can join straight away','They can log in at once with the starting role below. Use with "New member" so they see nothing until you give a role.'],
+    ['closed','Only admins add people','The "Request access" link is hidden. Admins add every person under Users.']];
+  return html`<div className="box"><h4>Sign-up rules</h4>
+    <div style=${{display:'grid',gap:8}}>${M.map(([id, t, d]) => html`<label key=${id} style=${{display:'flex',gap:10,alignItems:'flex-start',cursor:'pointer'}}><input type="radio" name="su-mode" checked=${r.mode === id} onChange=${() => setR({...r, mode:id})} style=${{width:'auto',marginTop:3}}/><span><b>${t}</b><div className="sub" style=${{fontSize:12.5}}>${d}</div></span></label>`)}</div>
+    <div className="inline" style=${{gap:10,flexWrap:'wrap',marginTop:12}}>
+      <label style=${{display:'grid',gap:4,fontSize:12}}>New people start as<select className="sel" value=${r.defaultRole} onChange=${e => setR({...r, defaultRole:e.target.value})}>${ROLES.filter(x => x.id !== 'admin').map(x => html`<option key=${x.id} value=${x.id}>${x.name}</option>`)}</select></label>
+      <label style=${{display:'grid',gap:4,fontSize:12,flex:1,minWidth:220}}>Company email domains that join without approval (Google sign-up only)<input className="inp" value=${r.domainsText} onInput=${e => setR({...r, domainsText:e.target.value})} placeholder="e.g. makemyspace.in"/></label>
+    </div>
+    <p className="sub" style=${{fontSize:12.5,margin:'10px 0'}}>What a new member sees is set by the <b>New member (no role yet)</b> column in Roles and access. By default it's nothing but tasks given to them: no leads, projects, money or customer data. Nobody can ever sign up as Owner / Admin. Public email domains such as gmail.com are ignored for auto-join.</p>
+    <button className="btn small primary" disabled=${busy} onClick=${save}>Save rules</button></div>`;
+}
+function AccessRow({a, ops, admin = true}){
   const guess = {'Sales':'sales','Site surveyor':'surveyor','Designer':'designer','Purchase':'purchase','Production / factory':'production','Project manager':'pm','Installation team lead':'installer','Operations':'ops_head'}[a.roleWanted] || '';
   const [role, setRole] = useState(guess);
   return html`<tr><td><b>${a.name}</b><div className="sub">${a.phone}${a.email ? ' · ' + a.email : ''}</div>${a.note && html`<div className="sub">${a.note}</div>`}</td>
     <td className="sub">${a.roleWanted || '—'}<div>${dayLabel(a.at)}</div></td>
-    <td><select className="sel" value=${role} onChange=${e => setRole(e.target.value)} aria-label="Role"><option value="">Role…</option>${ROLES.map(r => html`<option key=${r.id} value=${r.id}>${r.name}</option>`)}</select></td>
+    <td><select className="sel" value=${role} onChange=${e => setRole(e.target.value)} aria-label="Role"><option value="">Role…</option>${ROLES.filter(r => admin || r.id !== 'admin').map(r => html`<option key=${r.id} value=${r.id}>${r.name}</option>`)}</select></td>
     <td style=${{whiteSpace:'nowrap'}}><button className="btn small primary" disabled=${!role} onClick=${() => ops.api('POST', `/admin/access-requests/${a.id}`, {approve:true, role}, `${a.name} added as ${roleById[role].name}. They got a WhatsApp invite.`)}>Approve</button>
       <button className="btn small ghost" onClick=${() => ops.api('POST', `/admin/access-requests/${a.id}`, {approve:false}, 'Request declined.')}>Decline</button></td></tr>`;
 }
@@ -1012,7 +1045,8 @@ function CustomerApp({erp, toast: toastIn, live}){
 const ROLES = [
   {id:'admin', name:'Owner / Admin'}, {id:'ops_head', name:'Operations head'}, {id:'pm', name:'Project coordinator'},
   {id:'sales', name:'Sales'}, {id:'surveyor', name:'Site surveyor'}, {id:'designer', name:'Designer'},
-  {id:'purchase', name:'Purchase'}, {id:'production', name:'Production coordinator'}, {id:'installer', name:'Installer'}];
+  {id:'purchase', name:'Purchase'}, {id:'production', name:'Production coordinator'}, {id:'installer', name:'Installer'},
+  {id:'guest', name:'New member (no role yet)'}];
 const roleById = Object.fromEntries(ROLES.map(r => [r.id, r]));
 const PERMS = [
   ['crm','CRM','Leads, inbox, partners and automations'],
@@ -1027,18 +1061,20 @@ const PERMS = [
   ['survey','Survey app','Capture rooms, walls and measurements'],
   ['install','Installer app','Start, pause, complete jobs, raise snags'],
   ['team','Team performance','On-time %, work time, snag rate'],
+  ['people','Approve sign-ups','Approve access requests and give new members a role (not admin)'],
   ['admin','Users and access','Add users, change roles, edit this matrix']];
 const P = s => Object.fromEntries(PERMS.map(([k]) => [k, s.includes(k)]));
 const DEFAULT_ROLES = {
   admin:P(PERMS.map(p => p[0])),
-  ops_head:P(['crm','ops','projects','money','edit','assign','payments','tasksAll','survey','install','team']),
+  ops_head:P(['crm','ops','projects','money','edit','assign','payments','tasksAll','survey','install','team','people']),
   pm:P(['ops','projects','money','edit','assign','payments','tasksAll','survey','install','team']),
   sales:P(['crm','projects','money']),
   surveyor:P(['survey','projects']),
   designer:P(['projects','edit']),
   purchase:P(['projects','edit']),
   production:P(['projects','edit']),
-  installer:P(['install'])};
+  installer:P(['install']),
+  guest:P([])};
 const VIEW_PERM = {dashboard:'crm', pipeline:'crm', inbox:'crm', partners:'crm', automations:'crm', ops:'ops', projects:'projects', tasks:null, survey:'survey', install:'install', team:'team', installers:'assign', users:'admin', customer:'tasksAll'};
 const can = (erp, perm) => !perm || !!(erp.roles && erp.roles[userById[erp.me]?.role]?.[perm]);
 const canView = (erp, view) => can(erp, VIEW_PERM[view]);
@@ -2356,6 +2392,8 @@ function App(){
       ${view === 'automations' && html`<${Automations} autos=${autos} toggle=${toggleAuto}/>`}
       ${view === 'ops' && html`<${OpsDashboard} erp=${erp} ui=${ui} ops=${ops}/>`}
       ${view === 'projects' && html`<${Projects} erp=${erp} ui=${ui} ops=${ops}/>`}
+      ${userById[erp.me]?.role === 'guest' && html`<div className="panel" style=${{margin:'16px 16px 0',borderLeft:'4px solid var(--accent)'}}><h3>Welcome to Make My Space</h3><p className="hint">Your account is active, but you don't have a role yet. ${SERVER.signup === 'open' ? 'An admin has been told you joined' : 'An admin will set it shortly'}; once they do, the screens for your work appear here. Until then you only see tasks given to you.</p></div>`}
+      ${view === 'tasks' && !can(erp, 'admin') && can(erp, 'people') && html`<div style=${{margin:'16px 16px 0'}}><${PeopleBox} erp=${erp} ops=${ops}/></div>`}
       ${view === 'tasks' && html`<${Tasks} key=${erp.me + JSON.stringify(taskInit)} init=${taskInit} erp=${erp} ui=${ui} ops=${ops}/>`}
       ${view === 'survey' && html`<${SurveyApp} erp=${erp} ops=${ops}/>`}
       ${view === 'install' && html`<${InstallApp} key=${erp.me} erp=${erp} ops=${ops}/>`}

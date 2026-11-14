@@ -124,7 +124,7 @@ export async function staffState(p: Extract<Principal, { type: 'user' }>, q: Q =
   const seeAllProjects = perms.has('projects') || perms.has('ops') || perms.has('tasksAll') || perms.has('assign');
   const users = (await many(q, 'select id, name, role, title, phone, active, members, skills, email, google_sub from users order by created_at, name'))
     .map(u => ({ id: u.id, name: u.name, role: u.role, title: u.title, phone: prettyPhone(u.phone), active: u.active, members: u.members, skills: u.skills.length ? u.skills : undefined, ...(perms.has('admin') || u.id === me ? { email: u.email || '', google: !!u.google_sub } : {}) }));
-  const accessRequests = perms.has('admin') ? (await many(q, `select * from access_requests where status = 'pending' order by created_at`)).map(a => ({ id: a.id, name: a.name, phone: prettyPhone(a.phone), email: a.email || '', roleWanted: a.role_wanted, note: a.note, at: ms(a.created_at) })) : [];
+  const accessRequests = perms.has('admin') || perms.has('people') ? (await many(q, `select * from access_requests where status = 'pending' order by created_at`)).map(a => ({ id: a.id, name: a.name, phone: prettyPhone(a.phone), email: a.email || '', roleWanted: a.role_wanted, note: a.note, at: ms(a.created_at) })) : [];
   const roleRows = await many(q, 'select role, perm, allowed from role_permissions');
   const roles: Record<string, Record<string, boolean>> = JSON.parse(JSON.stringify(DEFAULT_ROLES));
   for (const r of roleRows) (roles[r.role] ||= {})[r.perm] = r.allowed;

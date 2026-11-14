@@ -582,3 +582,40 @@ test('19. sign up and Google sign-in: access request → admin approves → Goog
   assert.deepEqual(counts, { u: 1, l: 0, p: 0, pt: 0 });
   assert.equal((await api('GET', '/api/v1/state', undefined, T.owner)).status, 401, 'old sessions are gone');
 });
+
+test('20. sign-up rules: closed, open (joins as New member with no access), approvers cannot create admins, company domain auto-join', async () => {
+  T.owner = await login(phoneOf(0));
+  // defaults: approval mode
+  assert.equal((await api('GET', '/api/v1/auth/config')).signup, 'approval');
+  // closed
+  assert.equal((await api('PUT', '/api/v1/settings/signup', { mode: 'closed', defaultRole: 'admin' }, T.owner)).status, 400, 'never sign up as admin');
+  assert.ok((await api('PUT', '/api/v1/settings/signup', { mode: 'closed', defaultRole: 'guest' }, T.owner)).ok);
+  assert.equal((await api('POST', '/api/v1/auth/access-request', { name: 'Closed Out', phone: '9866600111' })).status, 403);
+  // open: joins straight away as guest, sees nothing but own tasks
+  await api('PUT', '/api/v1/settings/signup', { mode: 'open', defaultRole: 'guest' }, T.owner);
+  const j = await api('POST', '/api/v1/auth/access-request', { name: 'Open Joiner', phone: '9866600222', roleWanted: 'Sales' });
+  assert.equal(j.joined, true);
+  const tg = await login('9866600222');
+  const gs = await api('GET', '/api/v1/state', undefined, tg);
+  assert.equal(gs.crm.leads.length, 0); assert.equal(gs.erp.projects.length, 0); assert.equal(gs.erp.items.length, 0);
+  assert.equal((await api('GET', '/api/v1/export/leads', undefined, tg)).status, 403);
+  // an approver with 'people' (ops head) gives a role, but cannot make admin
+  const gid = gs.erp.me;
+  const ownerState = await api('GET', '/api/v1/state', undefined, T.owner);
+  assert.ok(ownerState.erp.tasks.some((t: any) => t.title.startsWith('New member: Open Joiner')), 'approver gets a task');
+  const opsId = (await api('POST', '/api/v1/users', { name: 'Ops Approver', phone: '9866600333', role: 'ops_head' }, T.owner)).state.erp.users.find((u: any) => u.name === 'Ops Approver').id;
+  const tops = await login('9866600333');
+  assert.equal((await api('POST', `/api/v1/users/${gid}/assign-role`, { role: 'admin' }, tops)).status, 403);
+  assert.ok((await api('POST', `/api/v1/users/${gid}/assign-role`, { role: 'sales' }, tops)).ok);
+  assert.equal((await api('POST', `/api/v1/users/${gid}/assign-role`, { role: 'pm' }, tops)).status, 403, 'only new members can be re-roled by approvers');
+  assert.equal((await api('GET', '/api/v1/state', undefined, tg)).erp.users.find((u: any) => u.id === gid).role, 'sales');
+  void opsId;
+  // approval mode + company domain: Google sign-up from that domain joins at once
+  await api('PUT', '/api/v1/settings/signup', { mode: 'approval', defaultRole: 'guest', domains: ['@makemyspace.in', 'gmail.com'] }, T.owner);
+  assert.deepEqual((await api('GET', '/api/v1/settings/signup', undefined, T.owner)).signup.domains, ['makemyspace.in'], 'public domains ignored');
+  const d1 = await api('POST', '/api/v1/auth/access-request', { name: 'Domain Staff', phone: '9866600444', credential: 'good:asha@makemyspace.in:g-asha' });
+  assert.equal(d1.joined, true);
+  assert.ok((await api('POST', '/api/v1/auth/google', { credential: 'good:asha@makemyspace.in:g-asha' })).accessToken);
+  const d2 = await api('POST', '/api/v1/auth/access-request', { name: 'Outside', phone: '9866600555', credential: 'good:x@gmail.com:g-x' });
+  assert.ok(d2.ok && !d2.joined, 'others wait for approval');
+});

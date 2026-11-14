@@ -4,7 +4,7 @@ import { config, demoActive } from '../core/config.js';
 import { db, many, one, tx, type Q } from '../core/db.js';
 import { parse, rateLimit, type Ctx, type Router } from '../core/http.js';
 import { forbidden, HttpError, normPhone, prettyPhone, randomId, safeEqual, sha256 } from '../core/util.js';
-import { DEFAULT_ROLES, PERMS, type Perm } from '../domain.js';
+import { DEFAULT_ROLES, PERMS, ROLE_IDS, SIGNUP_DEFAULT, type Perm } from '../domain.js';
 import { sendTemplate } from '../integrations/whatsapp.js';
 
 export type Principal =
@@ -105,6 +105,23 @@ function issue(ctx: Ctx, subjectType: 'user' | 'customer', subjectId: string, si
 function readCookie(ctx: Ctx, name: string) {
   const m = String(ctx.req.headers.cookie || '').split(';').map(s => s.trim()).find(s => s.startsWith(name + '='));
   return m ? m.slice(name.length + 1) : '';
+}
+
+export async function signupRules(q: Q = db) {
+  const v = (await one(q, `select value from settings where key = 'signup'`))?.value || {};
+  const r = { ...SIGNUP_DEFAULT, ...v };
+  if (!(ROLE_IDS as readonly string[]).includes(r.defaultRole) || r.defaultRole === 'admin') r.defaultRole = 'guest';
+  r.domains = (r.domains || []).map((d: string) => String(d).toLowerCase().replace(/^@/, '').trim()).filter(Boolean);
+  return r as typeof SIGNUP_DEFAULT;
+}
+
+/** Task for the people who can approve sign-ups (the super admin first, then anyone with the 'people' permission). */
+async function notifyApprovers(q: Q, title: string) {
+  const who = await many(q, `select u.id from users u where u.active and (u.role = 'admin' or exists (select 1 from role_permissions rp where rp.role = u.role and rp.perm = 'people' and rp.allowed))
+    order by (u.phone = $1) desc, (u.role = 'admin') desc limit 1`, [normPhone(config.ADMIN_PHONE) || '']);
+  if (!who[0]) return;
+  const { pushTask } = await import('./tasks.js'); const { addDays } = await import('../core/util.js');
+  await pushTask(q, { title, assignee: who[0].id, assigner: who[0].id, deadline: addDays(1), auto: true });
 }
 
 /* ---------- Google ID token check (Google Identity Services, no client secret needed) ---------- */
@@ -216,7 +233,7 @@ export function authRoutes(r: Router) {
     return { ok: true };
   });
 
-  r.get('/api/v1/auth/config', async () => ({ demoMode: demoActive(), whatsappLive: !!config.WHATSAPP_ACCESS_TOKEN, googleClientId: config.GOOGLE_CLIENT_ID || null }));
+  r.get('/api/v1/auth/config', async () => ({ demoMode: demoActive(), whatsappLive: !!config.WHATSAPP_ACCESS_TOKEN, googleClientId: config.GOOGLE_CLIENT_ID || null, signup: (await signupRules()).mode }));
 
   /* ---------- Google sign-in (staff) ---------- */
   r.post('/api/v1/auth/google', async ctx => {
@@ -244,16 +261,26 @@ export function authRoutes(r: Router) {
     const phone = normPhone(b.phone);
     if (!phone) throw new HttpError(400, 'Enter your 10-digit WhatsApp number.', 'bad_phone');
     const g = b.credential ? await verifyGoogle(b.credential) : null;
+    const rules = await signupRules();
+    if (rules.mode === 'closed') throw new HttpError(403, 'New sign-ups are closed. Ask your admin to add you.', 'signup_closed');
+    // join at once: open sign-up, or a Google account from a trusted company domain
+    const instant = rules.mode === 'open' || (!!g && rules.domains.includes(g.email.split('@')[1]));
     return tx(async q => {
       if (await one(q, 'select 1 from users where phone = $1', [phone])) throw new HttpError(400, 'This number already has an account. Log in instead.', 'exists');
       if (g && await one(q, 'select 1 from users where lower(email) = $1 or google_sub = $2', [g.email, g.sub])) throw new HttpError(400, 'This Google account already has access. Log in instead.', 'exists');
+      if (instant) {
+        const { createUser } = await import('./admin.js');
+        const uid = await createUser(q, null, { name: b.name, phone, role: rules.defaultRole, title: b.roleWanted ? 'Wants: ' + b.roleWanted : '' });
+        if (g) await q.query('update users set email = $2, google_sub = $3 where id = $1', [uid, g.email, g.sub]);
+        await q.query(`insert into access_requests(name, phone, email, google_sub, role_wanted, note, status, decided_at, user_id) values ($1,$2,$3,$4,$5,$6,'approved',now(),$7)`, [b.name, phone, g?.email || null, g?.sub || null, b.roleWanted, b.note, uid]);
+        await notifyApprovers(q, `New member: ${b.name} (${prettyPhone(phone)}) joined as ${rules.defaultRole === 'guest' ? 'a new member with no access' : rules.defaultRole}${b.roleWanted ? ' · wants ' + b.roleWanted : ''} — set their role in Users and access`);
+        return { ok: true, joined: true };
+      }
       const dup = await one(q, `select id from access_requests where status = 'pending' and phone = $1`, [phone]);
       if (dup) await q.query('update access_requests set name = $2, role_wanted = $3, note = $4, email = coalesce($5, email), google_sub = coalesce($6, google_sub), created_at = now() where id = $1', [dup.id, b.name, b.roleWanted, b.note, g?.email || null, g?.sub || null]);
       else {
         await q.query('insert into access_requests(name, phone, email, google_sub, role_wanted, note) values ($1,$2,$3,$4,$5,$6)', [b.name, phone, g?.email || null, g?.sub || null, b.roleWanted, b.note]);
-        const admins = await many(q, `select id from users where role = 'admin' and active order by (phone = $1) desc limit 1`, [normPhone(config.ADMIN_PHONE) || '']);
-        if (admins[0]) { const { pushTask } = await import('./tasks.js'); const { addDays } = await import('../core/util.js');
-          await pushTask(q, { title: `Access request: ${b.name} (${prettyPhone(phone)})${b.roleWanted ? ' · wants ' + b.roleWanted : ''} — approve in Users and access`, assignee: admins[0].id, assigner: admins[0].id, deadline: addDays(1), auto: true }); }
+        await notifyApprovers(q, `Access request: ${b.name} (${prettyPhone(phone)})${b.roleWanted ? ' · wants ' + b.roleWanted : ''} — approve in Users and access`);
       }
       return { ok: true };
     });

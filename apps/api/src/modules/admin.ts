@@ -8,7 +8,7 @@ import { syncTemplates, sendTemplate, templateMap, saveTemplateMap, metaTemplate
 import { subscribePage, pollLeads } from '../integrations/metaLeads.js';
 import { demoActive, metaLeadsLive, waVerifyToken } from '../core/config.js';
 import { log } from '../core/util.js';
-import { audit, invalidatePerms, revokeAllSessions, staff, userOf } from './auth.js';
+import { audit, invalidatePerms, revokeAllSessions, signupRules, staff, userOf } from './auth.js';
 import { staffState } from './state.js';
 import { bootstrap, seedDemo, wipe } from '../seed.js';
 import { many } from '../core/db.js';
@@ -135,7 +135,31 @@ export function adminRoutes(r: Router) {
     };
   });
   /* sign-up requests */
-  r.post('/api/v1/admin/access-requests/:id', staff('admin'), async ctx => {
+  /* sign-up rules (admins) */
+  r.get('/api/v1/settings/signup', staff('people'), async () => ({ signup: await signupRules() }));
+  r.put('/api/v1/settings/signup', staff('admin'), async ctx => {
+    const b = parse(z.object({ mode: z.enum(['approval', 'open', 'closed']), defaultRole: z.enum(ROLE_IDS).refine(r => r !== 'admin', 'New sign-ups can never start as admin.'), domains: z.array(z.string().trim().toLowerCase().regex(/^@?[a-z0-9.-]+\.[a-z]{2,}$/, 'Enter domains like makemyspace.in')).max(10).default([]) }), ctx.body);
+    const domains = b.domains.map(d => d.replace(/^@/, '')).filter(d => !['gmail.com', 'googlemail.com', 'yahoo.com', 'outlook.com', 'hotmail.com'].includes(d));
+    await db.query(`insert into settings(key, value) values ('signup', $1) on conflict (key) do update set value = excluded.value`, [JSON.stringify({ ...b, domains })]);
+    await audit(db, userOf(ctx), 'signup.rules', `Sign-up rules: ${b.mode}, new people start as ${roleName(b.defaultRole)}${domains.length ? ', auto-join for ' + domains.join(', ') : ''}`, 'settings', 'signup');
+    return done(ctx, { signup: await signupRules() });
+  });
+  /* people with 'people' may give a role to a new member (never admin unless they are admin) */
+  r.post('/api/v1/users/:id/assign-role', staff('people'), async ctx => {
+    const b = parse(z.object({ role: z.enum(ROLE_IDS) }), ctx.body); const p = userOf(ctx);
+    if (b.role === 'admin' && !p.perms.has('admin')) throw forbidden('Only an admin can make someone an admin.');
+    await tx(async q => {
+      const u = await one(q, 'select * from users where id = $1 for update', [ctx.params.id]); if (!u) throw notFound();
+      if (u.role !== 'guest' && !p.perms.has('admin')) throw forbidden('You can only set the role of new members. Ask an admin to change other roles.');
+      await q.query(`update users set role = $2, title = case when title like 'Wants: %' then '' else title end where id = $1`, [u.id, b.role]);
+      await q.query(`update tasks set status = 'done', done_at = now() where auto and status <> 'done' and title like $1`, [`New member: ${u.name} (%`]);
+      await audit(q, p, 'user.role', `${u.name}: role ${roleName(u.role)} → ${roleName(b.role)}`, 'user', u.id);
+    });
+    invalidatePerms();
+    return done(ctx);
+  });
+
+  r.post('/api/v1/admin/access-requests/:id', staff('people'), async ctx => {
     const b = parse(z.object({ approve: z.boolean(), role: z.enum(ROLE_IDS).optional(), title: z.string().max(80).default('') }), ctx.body);
     await tx(async q => {
       const a = await one(q, `select * from access_requests where id = $1 for update`, [Number(ctx.params.id)]); if (!a) throw notFound();
@@ -143,6 +167,7 @@ export function adminRoutes(r: Router) {
       let uid: string | null = null;
       if (b.approve) {
         if (!b.role) throw bad('Choose a role for this person.');
+        if (b.role === 'admin' && !userOf(ctx).perms.has('admin')) throw forbidden('Only an admin can make someone an admin.');
         uid = await createUser(q, userOf(ctx), { name: a.name, phone: a.phone, role: b.role, title: b.title });
         if (a.email) await q.query('update users set email = $2, google_sub = $3 where id = $1', [uid, a.email, a.google_sub]);
       }
