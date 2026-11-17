@@ -12,4 +12,9 @@ jobs:
     timeout-minutes: 3
     steps:
       - name: Ping the app
-        run: curl -fsS --retry 3 --retry-delay 20 --max-time 90 https://erp.makemyspace.in/api/health || true
+        run: |
+          curl -fsS --retry 3 --retry-delay 20 --max-time 90 https://erp.makemyspace.in/api/health || true
+          echo
+          for i in 1 2 3; do curl -s -o /dev/null -w "health: connect %{time_connect}s  first byte %{time_starttransfer}s  total %{time_total}s\n" https://erp.makemyspace.in/api/health; done
+          curl -s -o /dev/null -H 'Accept-Encoding: gzip' -w "page: %{size_download} bytes  first byte %{time_starttransfer}s  total %{time_total}s\n" https://erp.makemyspace.in/
+          curl -sI -H 'Accept-Encoding: gzip' https://erp.makemyspace.in/ | grep -iE 'content-encoding|etag|server|platform' || true
