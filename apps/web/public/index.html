@@ -310,6 +310,11 @@ tr.expand td{background:var(--warm);padding:14px}
 .src-opt[aria-pressed="true"]{border-color:var(--ink);background:var(--ink);color:#fff}
 .src-opt[aria-pressed="true"] .sw{outline:1px solid #fff}
 .form-foot{grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
+/* v1.17: while a save is on its way, a thin bar runs across the top and form buttons can't be pressed twice */
+html.saving body::after{content:"";position:fixed;left:0;top:0;height:3px;width:40%;background:var(--red,#e30613);z-index:9999;animation:savebar 1s ease-in-out infinite;pointer-events:none}
+@keyframes savebar{0%{left:-40%}100%{left:100%}}
+html.saving .form-foot .btn.primary,html.saving .sheet button[type=submit]{pointer-events:none;opacity:.6;cursor:progress}
+@media (prefers-reduced-motion:reduce){html.saving body::after{animation:none;width:100%;opacity:.5}}
 .reasons{display:grid;gap:6px;padding:14px 24px 24px}
 
 .toasts{position:fixed;right:max(16px,env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));display:grid;gap:8px;z-index:60;max-width:min(400px,calc(100% - 32px))}
@@ -1302,15 +1307,41 @@ const API = (() => {
   const qKey = 'mms-offline-queue';
   const readQ = () => { try { return JSON.parse(localStorage.getItem(qKey)) || []; } catch(e){ return []; } };
   const writeQ = q => { try { localStorage.setItem(qKey, JSON.stringify(q)); } catch(e){} try { window.dispatchEvent(new Event('mms-queue')); } catch(e){} };
-  async function refresh(){
-    try {
-      const r = await fetch('/api/v1/auth/refresh', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify({audience})});
-      if (!r.ok) return false;
-      token = (await r.json()).accessToken; return true;
-    } catch(e){ return false; }
+  // one renewal at a time: parallel requests that find the login expired all wait for the same renewal
+  let renewing = null;
+  function refresh(){
+    if (!renewing) renewing = (async () => {
+      try {
+        const r = await fetch('/api/v1/auth/refresh', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify({audience})});
+        if (!r.ok) return false;
+        token = (await r.json()).accessToken; return true;
+      } catch(e){ return false; }
+    })().finally(() => { setTimeout(() => { renewing = null; }, 0); });
+    return renewing;
   }
-  async function call(method, path, body, opts = {}){
-    const doFetch = () => fetch('/api/v1' + path, {method, credentials:'same-origin', headers:{'Content-Type':'application/json', ...(token ? {Authorization:'Bearer ' + token} : {})}, body: body === undefined ? undefined : JSON.stringify(body)});
+  // The server leaves out data sections the app already has (unchanged); merge them back so every caller sees the whole state.
+  let have = null, cache = null;
+  const merge = st => {
+    if (!st || !st.__h) return st;
+    const full = {};
+    for (const top of Object.keys(st)) { if (top === '__h') continue; const v = st[top]; full[top] = v && typeof v === 'object' && !Array.isArray(v) ? {...((cache && cache[top]) || {}), ...v} : v; }
+    // a section left out keeps the fingerprint of what we actually hold, so the two never drift apart
+    const h = {}; for (const k of Object.keys(st.__h)){ const [t, n] = k.split('.'); h[k] = st[t] && Object.prototype.hasOwnProperty.call(st[t], n) ? st.__h[k] : ((have && have[k]) || st.__h[k]); }
+    have = h; cache = full; return full;
+  };
+  // the same save sent twice while the first is still running (double tap) is sent once
+  const inflight = new Map(); let busyN = 0;
+  const busy = d => { busyN = Math.max(0, busyN + d); try { document.documentElement.classList.toggle('saving', busyN > 0); } catch(e){} };
+  function call(method, path, body, opts = {}){
+    if (method === 'GET') return send(method, path, body, opts);
+    const key = method + ' ' + path + ' ' + JSON.stringify(body === undefined ? null : body);
+    if (inflight.has(key)) return inflight.get(key);
+    busy(1);
+    const p = send(method, path, body, opts).finally(() => { inflight.delete(key); busy(-1); });
+    inflight.set(key, p); return p;
+  }
+  async function send(method, path, body, opts = {}){
+    const doFetch = () => fetch('/api/v1' + path, {method, credentials:'same-origin', headers:{'Content-Type':'application/json', ...(token ? {Authorization:'Bearer ' + token} : {}), ...(have && token ? {'X-State-Have':JSON.stringify(have)} : {})}, body: body === undefined ? undefined : JSON.stringify(body)});
     let r;
     try { r = await doFetch(); }
     catch(e){
@@ -1321,8 +1352,9 @@ const API = (() => {
       if (await refresh()) r = await doFetch();
       else { onAuthLost(); const err = new Error('Please log in again.'); err.status = 401; throw err; }
     }
-    const data = r.status === 204 ? {} : await r.json().catch(() => ({}));
+    let data = r.status === 204 ? {} : await r.json().catch(() => ({}));
     if (!r.ok){ const err = new Error(data.message || 'Something went wrong.'); err.status = r.status; err.data = data; throw err; }
+    if (data && data.__h) data = merge(data); else if (data && data.state && data.state.__h) data = {...data, state:merge(data.state)};
     return data;
   }
   let flushing = false;
@@ -1339,7 +1371,7 @@ const API = (() => {
     if (!r.ok){ const d = await r.json().catch(() => ({})); throw new Error(d.message || 'Could not open the document.'); }
     return r;
   }
-  return { call, raw, refresh, flush, pending: () => readQ().length, setToken: t => { token = t; }, setAudience: a => { audience = a; }, onAuthLost: fn => { onAuthLost = fn; } };
+  return { call, raw, refresh, flush, busy: () => busyN, pending: () => readQ().length, setToken: t => { if (t !== token){ have = null; cache = null; } token = t; }, setAudience: a => { audience = a; }, onAuthLost: fn => { onAuthLost = fn; } };
 })();
 const SERVER = {demoMode:false, whatsappLive:false};
 fetch('/api/v1/auth/config').then(r => r.json()).then(c => Object.assign(SERVER, c)).catch(() => {});
@@ -2651,7 +2683,9 @@ function NewProject({leads, erp, ops, close, ui}){
   const [lines, setLines] = useState([]);
   const quote = lead && ((lead.quotes || []).find(q => q.status === 'accepted') || (lead.quotes || [])[lead.quotes?.length - 1]);
   const ok = lines.length && (lead ? f.address.trim() : f.customer.trim() && f.phone.replace(/\D/g,'').length >= 10 && f.address.trim());
-  const submit = e => { e.preventDefault(); if (!ok) return; ops.convert(lead || null, lead ? {...f, customer:lead.name, phone:lead.phone, value:lead.value, scope:cleanScope(lines)} : {...f, scope:cleanScope(lines)}).then(id => { if (id){ close(); ui.openProject(id); } }); };
+  const [saving, setSaving] = useState(false);
+  const submit = e => { e.preventDefault(); if (!ok || saving) return; setSaving(true);
+    ops.convert(lead || null, lead ? {...f, customer:lead.name, phone:lead.phone, value:lead.value, scope:cleanScope(lines)} : {...f, scope:cleanScope(lines)}).then(id => { setSaving(false); if (id){ close(); ui.openProject(id); } }, () => setSaving(false)); };
   return html`<div className="modal" role="dialog" aria-modal="true" aria-label="New project"><div className="scrim" onClick=${close}></div>
     <form className="sheet" onSubmit=${submit}><header><h2>New project</h2><p>Pick a won lead from the CRM so nothing is typed twice, or enter a direct order.</p></header>
       <div className="form">
@@ -2663,7 +2697,7 @@ function NewProject({leads, erp, ops, close, ui}){
         <label>Target handover<input type="date" value=${f.target} onInput=${e => setF({...f, target:e.target.value})}/></label>
         <label className="check"><input type="checkbox" checked=${f.advance} onChange=${() => setF({...f, advance:!f.advance})}/>Advance received</label>
         <div className="full"><h4 style=${{margin:'4px 0 8px'}}>Scope of work</h4><${ScopeEditor} key=${f.lead} lines=${lines} setLines=${setLines} quote=${quote} money=${can(erp, 'money')}/></div>
-        <div className="form-foot"><button type="button" className="btn ghost" onClick=${close}>Cancel</button><button type="submit" className="btn primary" disabled=${!ok}>Create project</button></div>
+        <div className="form-foot"><button type="button" className="btn ghost" onClick=${close}>Cancel</button><button type="submit" className="btn primary" disabled=${!ok || saving} aria-busy=${saving ? 'true' : 'false'}>${saving ? 'Creating…' : 'Create project'}</button></div>
       </div></form></div>`;
 }
 
@@ -3362,6 +3396,21 @@ function App(){
     API.onAuthLost(() => setBoot('login'));
     API.refresh().then(ok => ok ? app.reload().catch(() => setBoot('login')) : setBoot('login'));
   }, []);
+  // keep the screen current: new WhatsApp replies, Meta leads and other people's changes arrive without a reload.
+  // Every 60 s while the app is in front, and straight away when the app comes back to the front.
+  useEffect(() => {
+    if (boot !== 'ready') return;
+    let last = Date.now(), running = false;
+    const tick = async force => {
+      if (running || API.busy() || document.visibilityState !== 'visible' || !navigator.onLine) return;
+      if (!force && Date.now() - last < 55000) return;
+      running = true; try { const st = await API.call('GET', '/state'); last = Date.now(); app.applyState(st); } catch(e){} running = false;
+    };
+    const t = setInterval(() => tick(false), 60000);
+    const vis = () => { if (document.visibilityState === 'visible' && Date.now() - last > 15000) tick(true); };
+    document.addEventListener('visibilitychange', vis); window.addEventListener('focus', vis);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', vis); window.removeEventListener('focus', vis); };
+  }, [boot]);
   if (erp.users.length) syncTeam(erp.users);
   const allowed = canView(erp, view);
   useEffect(() => { if (boot === 'ready' && !canView(erp, view)){ const v = VIEWS.find(x => canView(erp, x.id)); if (v) go(v.id); } }, [erp.me, boot]);
@@ -3849,7 +3898,7 @@ function PartnerBroadcast({call, close}){
   const send = async e => { e.preventDefault(); setTried(true); if (errs.file || errs.note || blocked) return; setBusy(true);
     const r = await call('POST', '/partners/broadcast', {ref:file.ref, filename, note:note.trim(), types}, r => `Monthly update sent to ${r.recipients} partner${r.recipients > 1 ? 's' : ''} on WhatsApp.`);
     setBusy(false); if (r) close(); };
-  const preview = `Hello [partner], here is what is new at Make My Space this month: ${note.trim() || '…'}. ${video ? 'Watch the short video above.' : 'The details are in the attached file.'} Reply to this message to book a showroom walk-through for you or your clients.`;
+  const preview = `Hello [partner], here is what is new at Make My Space this month: ${note.trim().replace(/[.\s]+$/, '') || '[what is new]'}. ${video ? 'Watch the short video above.' : 'The details are in the attached file.'} Reply to this message to book a showroom walk-through for you or your clients.`;
   return html`<div className="modal" role="dialog" aria-modal="true" aria-label="Send monthly update to partners">
     <div className="scrim" onClick=${close}></div>
     <form className="sheet" onSubmit=${send} noValidate>
@@ -3937,9 +3986,11 @@ function AddLead({leads, close, add, call, erp}){
   const clients = leads.filter(l => l.stage === 'won');
   const errs = {name:!f.name.trim(), phone:digits.length !== 10, source:!f.source, ref:(s?.family === 'partner' || s?.family === 'referral') && !f.ref};
   const ok = !Object.values(errs).some(Boolean);
-  const submit = e => { e.preventDefault(); setTried(true); if (!ok) return;
+  const [saving, setSaving] = useState(false);
+  const submit = async e => { e.preventDefault(); setTried(true); if (!ok || saving) return;
     const owner = s.family === 'partner' ? partnerById[f.ref].owner : f.owner;
-    add({...f, owner, phone:'+91 ' + digits.slice(0,5) + ' ' + digits.slice(5), showroom: f.source === 'walkin' ? f.showroom : '', dup:!!dup}); };
+    setSaving(true);
+    try { await add({...f, owner, phone:'+91 ' + digits.slice(0,5) + ' ' + digits.slice(5), showroom: f.source === 'walkin' ? f.showroom : '', dup:!!dup}); } finally { setSaving(false); } };
   return html`<div className="modal" role="dialog" aria-modal="true" aria-label="Add lead">
     <div className="scrim" onClick=${close}></div>
     <form className="sheet" onSubmit=${submit} noValidate>
@@ -3961,7 +4012,7 @@ function AddLead({leads, close, add, call, erp}){
         <label>Budget (₹)<input id="f-value" inputMode="numeric" value=${f.value} onInput=${e => set('value', e.target.value.replace(/\D/g,''))} placeholder="350000"/></label>
         <label>Area<input id="f-area" value=${f.area} onInput=${e => set('area', e.target.value)} placeholder="Locality"/></label>
         ${s?.family !== 'partner' && html`<label>Owner<select id="f-owner" value=${f.owner} onChange=${e => set('owner', e.target.value)}>${OWNERS.map(o => html`<option key=${o}>${o}</option>`)}</select></label>`}
-        <div className="form-foot"><button type="button" className="btn ghost" onClick=${close}>Cancel</button><button type="submit" className="btn primary">Add lead</button></div>
+        <div className="form-foot"><button type="button" className="btn ghost" onClick=${close}>Cancel</button><button type="submit" className="btn primary" disabled=${saving} aria-busy=${saving ? 'true' : 'false'}>${saving ? 'Saving…' : 'Add lead'}</button></div>
       </div>
     </form>
     ${newPartner && html`<${PartnerForm} init=${null} erp=${erp} close=${() => setNewPartner(false)} save=${async b => { const r = await call('POST', '/partners', {...b, type:f.source}, `${b.name} added as a partner.`); if (r?.id) set('ref', r.id); return !!r; }}/>`}
@@ -4131,7 +4182,18 @@ function LostDialog({lead, close, pick}){
 const isCustomerPortal = /^\/c(\/|$)/.test(location.pathname);
 if (isCustomerPortal) API.setAudience('customer');
 ReactDOM.createRoot(document.getElementById('root')).render(isCustomerPortal ? html`<${CustomerApp} live=${true}/>` : html`<${App}/>`);
-if ('serviceWorker' in navigator && location.protocol !== 'file:') window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+  // the app opens from the saved copy; when a newer version has been downloaded, offer it
+  navigator.serviceWorker.addEventListener('message', e => {
+    if (!e.data || e.data.type !== 'mms-update' || document.getElementById('mms-update')) return;
+    const d = document.createElement('div'); d.id = 'mms-update'; d.setAttribute('role', 'status');
+    d.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:calc(76px + env(safe-area-inset-bottom,0px));z-index:9998;background:#111;color:#fff;padding:10px 14px;display:flex;gap:12px;align-items:center;font:13px Inter,system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.25)';
+    d.innerHTML = '<span>A new version of the app is ready.</span>';
+    const b = document.createElement('button'); b.textContent = 'Reload'; b.style.cssText = 'background:#e30613;color:#fff;border:0;padding:6px 12px;font:600 13px Inter,system-ui,sans-serif;cursor:pointer';
+    b.onclick = () => location.reload(); d.appendChild(b); document.body.appendChild(d);
+  });
+}
 </script>
 
 </body></html>

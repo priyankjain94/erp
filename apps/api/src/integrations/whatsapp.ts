@@ -59,6 +59,12 @@ export async function fetchMetaTemplates(): Promise<MetaTpl[]> {
 }
 
 /** Is this system template approved on Meta? null = not checked yet (no template list cached). */
+/** Approval of several templates with two reads (for the data the app loads). */
+export async function templatesApproved(internals: string[], q: Q = db): Promise<Map<string, boolean | null>> {
+  const [meta, map] = await Promise.all([metaTemplates(q), templateMap(q)]);
+  return new Map(internals.map(i => [i, meta.length ? meta.some(m => m.name === (map[i]?.name || 'mms_' + i) && m.status === 'APPROVED') : null]));
+}
+
 export async function templateApproved(internal: string, q: Q = db): Promise<boolean | null> {
   const meta = await metaTemplates(q); if (!meta.length) return null;
   const name = (await templateMap(q))[internal]?.name || 'mms_' + internal;

@@ -611,6 +611,13 @@ test('15. security basics: logout revokes, refresh rotation, headers', async () 
   const v = await api('POST', '/api/v1/auth/otp/verify', { phone: P.deepa, audience: 'staff', code: r.devCode });
   const ref1 = await api('POST', '/api/v1/auth/refresh', { refreshToken: v.refreshToken, audience: 'user' });
   assert.ok(ref1.accessToken);
+  // a parallel renewal with the token replaced a moment ago gets an access token (no logout), but no new refresh token
+  const race = await api('POST', '/api/v1/auth/refresh', { refreshToken: v.refreshToken, audience: 'user' });
+  assert.ok(race.accessToken, 'parallel renewal within the grace period works'); assert.equal(race.refreshToken, undefined);
+  const both = await Promise.all([1, 2].map(() => api('POST', '/api/v1/auth/refresh', { refreshToken: ref1.refreshToken, audience: 'user' })));
+  assert.ok(both.every(x => x.accessToken), 'two renewals at the same moment both succeed');
+  // later, the replaced token is reuse: rejected and the session ends
+  await q1(`update sessions set rotated_at = now() - interval '5 minutes' where id = $1 returning id`, [v.refreshToken.split('.')[0]]);
   assert.equal((await api('POST', '/api/v1/auth/refresh', { refreshToken: v.refreshToken, audience: 'user' })).status, 401, 'old refresh token reuse is rejected');
   await api('POST', '/api/v1/auth/logout', {}, ref1.accessToken);
   assert.equal((await api('GET', '/api/v1/state', undefined, ref1.accessToken)).status, 401);
@@ -980,4 +987,37 @@ test('28. partners: WhatsApp welcome, monthly PDF / video update, templates with
   assert.equal(vt!.body.category, 'MARKETING');
   assert.ok(graphCalls.some(c => c.path.endsWith('/app1/uploads')), 'example file uploaded through the resumable upload API');
   await db.query(`delete from settings where key = 'wa_templates_meta'`);
+});
+
+test('29. speed and safety: compressed replies, only changed data sections, no duplicates from double taps', async () => {
+  // compressed
+  const raw = await fetch(base + '/api/v1/state', { headers: { authorization: 'Bearer ' + T.owner, 'accept-encoding': 'gzip' } });
+  assert.equal(raw.headers.get('content-encoding'), 'gzip');
+  const page = await fetch(base + '/', { headers: { 'accept-encoding': 'gzip' } });
+  if (page.status === 200) assert.equal(page.headers.get('content-encoding'), 'gzip');
+  // sections: first load returns fingerprints, the next one with nothing changed returns no data
+  const first = await api('GET', '/api/v1/state', undefined, T.owner, { 'x-state-have': '{}' });
+  assert.ok(first.__h && first.__h['crm.leads'] && first.erp.projects, 'fingerprints + full data');
+  const same = await api('GET', '/api/v1/state', undefined, T.owner, { 'x-state-have': JSON.stringify(first.__h) });
+  assert.equal(Object.keys(same.erp).length + Object.keys(same.crm).length, 0, 'nothing changed: nothing sent');
+  const add = await api('POST', '/api/v1/leads', { name: 'Section Test', phone: '9811177701', source: 'online', sub: 'Website' }, T.owner, { 'x-state-have': JSON.stringify(first.__h) });
+  assert.ok(add.ok && add.state.crm.leads, 'changed section sent');
+  assert.equal(add.state.erp.roles, undefined, 'unchanged section left out');
+  assert.equal(add.state.erp.users, undefined);
+  // double tap: the same lead twice at the same moment = one lead
+  const two = await Promise.all([1, 2].map(() => api('POST', '/api/v1/leads', { name: 'Tap Twice', phone: '9811177702', source: 'online', sub: 'Website' }, T.owner)));
+  assert.deepEqual(two.map(x => x.ok ? 200 : x.status).sort(), [200, 409]);
+  assert.equal((await q1(`select count(*)::int n from leads where phone = '+919811177702'`)).n, 1);
+  // two different people with the same number at the same moment: both kept, the second flagged as a duplicate
+  const pair = await Promise.all(['Asha Verma', 'Ravi Verma'].map(n => api('POST', '/api/v1/leads', { name: n, phone: '9811177703', source: 'online', sub: 'Website' }, T.owner)));
+  assert.ok(pair.every(x => x.ok)); assert.deepEqual(pair.map(x => !!x.dup).sort(), [false, true]);
+  // double tap on Create project = one project
+  const proj = { customer: 'Double Tap', phone: '9811177704', address: 'Shankar Nagar, Raipur', value: 300000, pm: (await q1(`select id from users where role = 'admin' limit 1`)).id, target: '2099-06-01', surveyDate: '2099-05-01', scope: [{ room: 'Kitchen', type: 'KT' }] };
+  const pp = await Promise.all([1, 2].map(() => api('POST', '/api/v1/projects', proj, T.owner)));
+  assert.deepEqual(pp.map(x => x.ok ? 200 : x.status).sort(), [200, 409], JSON.stringify(pp.map(x => x.message)));
+  // too many OTP requests says when to try again
+  const adm = String((await q1(`select phone from users where role = 'admin' and active limit 1`)).phone).slice(-10);
+  for (let i = 0; i < 6; i++) await api('POST', '/api/v1/auth/otp/request', { phone: adm, audience: 'staff' });
+  const lim = await api('POST', '/api/v1/auth/otp/request', { phone: adm, audience: 'staff' });
+  assert.equal(lim.status, 429); assert.match(lim.message, /try again after|wait a minute/);
 });

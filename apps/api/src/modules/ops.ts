@@ -220,7 +220,15 @@ export function opsRoutes(r: Router) {
 
   r.post('/api/v1/projects', staff('assign'), async ctx => {
     const b = parse(ProjectZ, ctx.body);
-    const out = await tx(q => createProject(q, userOf(ctx), b));
+    const out = await tx(async q => {
+      // the same order submitted twice (double tap, two people) becomes one project
+      const phone = normPhone(b.phone);
+      await q.query('select pg_advisory_xact_lock(hashtext($1))', ['project:' + (b.leadId || phone || b.customer)]);
+      const recent = await one(q, `select p.code from projects p join customers c on c.id = p.customer_id
+        where p.created_at > now() - interval '2 minutes' and (($1::text is not null and p.lead_id = $1) or ($2::text is not null and c.phone = $2 and lower(trim(c.name)) = lower(trim($3)))) limit 1`, [b.leadId || null, phone || null, b.customer]);
+      if (recent) throw new HttpError(409, `${recent.code} was created for this client a moment ago. Open it from Projects.`, 'duplicate_recent');
+      return createProject(q, userOf(ctx), b);
+    });
     return done(ctx, out);
   });
   r.patch('/api/v1/projects/:id', staff(), async ctx => {
