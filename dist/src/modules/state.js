@@ -2,7 +2,7 @@ import { db, many, one } from '../core/db.js';
 import { prettyPhone } from '../core/util.js';
 import { AUTOMATIONS, CUSTOMER_STAGE, DEFAULT_ROLES, PERMS } from '../domain.js';
 import { signedFileUrl } from '../integrations/storage.js';
-import { templateApproved } from '../integrations/whatsapp.js';
+import { templatesApproved } from '../integrations/whatsapp.js';
 import { stageTargets, taskTemplates } from './tasks.js';
 import { loadDrafts } from './workflow.js';
 import { partnerStats } from './business.js';
@@ -19,27 +19,29 @@ const group = (rows, key) => {
     return m;
 };
 async function loadProjects(q, ids, opts) {
-    const where = ids ? 'where p.id = any($1::text[])' : '';
-    const projects = await many(q, `select p.*, c.name customer, c.phone from projects p join customers c on c.id = p.customer_id ${where} order by p.created_at desc`, ids ? [ids] : []);
+    if (ids && !ids.length)
+        return [];
+    // one round trip: the projects and all their children are read at the same time ($1 null = every project)
+    const pids = ids;
+    const [projects, pays, acts, surveys, rooms, walls, obs, ritems, pdocs, rcpts, invs, cos, svc, pquotes, scopeRows] = await Promise.all([
+        many(q, 'select p.*, c.name customer, c.phone from projects p join customers c on c.id = p.customer_id where p.id = any(coalesce($1::text[], array(select id from projects))) order by p.created_at desc', [pids]),
+        many(q, 'select * from payment_milestones where project_id = any(coalesce($1::text[], array(select id from projects))) order by sort, id', [pids]),
+        many(q, 'select project_id, text, created_at from project_activity where project_id = any(coalesce($1::text[], array(select id from projects))) order by created_at, id', [pids]),
+        many(q, 'select * from surveys where project_id = any(coalesce($1::text[], array(select id from projects)))', [pids]),
+        many(q, 'select * from rooms where project_id = any(coalesce($1::text[], array(select id from projects))) order by sort, name', [pids]),
+        many(q, 'select w.* from walls w join rooms r on r.id = w.room_id where r.project_id = any(coalesce($1::text[], array(select id from projects))) order by w.label', [pids]),
+        many(q, 'select o.* from wall_obstructions o join walls w on w.id = o.wall_id join rooms r on r.id = w.room_id where r.project_id = any(coalesce($1::text[], array(select id from projects))) order by o.id', [pids]),
+        many(q, 'select ri.* from room_items ri join rooms r on r.id = ri.room_id where r.project_id = any(coalesce($1::text[], array(select id from projects))) order by ri.id', [pids]),
+        many(q, `select * from project_docs where project_id = any(coalesce($1::text[], array(select id from projects))) ${opts.customer ? 'and shared' : ''} ${opts.money ? '' : opts.internal ? "and category <> 'quotation'" : "and category not in ('pi','po','quotation')"} order by created_at desc, id desc`, [pids]),
+        opts.money ? many(q, 'select * from payment_receipts where project_id = any(coalesce($1::text[], array(select id from projects))) order by paid_on, id', [pids]) : [],
+        opts.money ? many(q, 'select * from invoices where project_id = any(coalesce($1::text[], array(select id from projects))) order by invoice_date, id', [pids]) : [],
+        many(q, 'select * from change_orders where project_id = any(coalesce($1::text[], array(select id from projects))) order by created_at, id', [pids]),
+        many(q, 'select * from service_requests where project_id = any(coalesce($1::text[], array(select id from projects))) order by created_at desc, id desc', [pids]),
+        opts.money && !opts.customer ? many(q, `select q.id, q.rev, q.total, q.status, q.created_at, p.id project_id from quotes q join projects p on p.lead_id = q.lead_id where p.id = any(coalesce($1::text[], array(select id from projects))) order by q.rev`, [pids]) : [],
+        many(q, `select * from project_scope where project_id = any(coalesce($1::text[], array(select id from projects))) and status = 'active' order by sort, id`, [pids])
+    ]);
     if (!projects.length)
         return [];
-    const pids = projects.map(p => p.id);
-    const [pays, acts, surveys, rooms, walls, obs, ritems, pdocs, rcpts, invs, cos, svc, pquotes, scopeRows] = await Promise.all([
-        many(q, 'select * from payment_milestones where project_id = any($1::text[]) order by sort, id', [pids]),
-        many(q, 'select project_id, text, created_at from project_activity where project_id = any($1::text[]) order by created_at, id', [pids]),
-        many(q, 'select * from surveys where project_id = any($1::text[])', [pids]),
-        many(q, 'select * from rooms where project_id = any($1::text[]) order by sort, name', [pids]),
-        many(q, 'select w.* from walls w join rooms r on r.id = w.room_id where r.project_id = any($1::text[]) order by w.label', [pids]),
-        many(q, 'select o.* from wall_obstructions o join walls w on w.id = o.wall_id join rooms r on r.id = w.room_id where r.project_id = any($1::text[]) order by o.id', [pids]),
-        many(q, 'select ri.* from room_items ri join rooms r on r.id = ri.room_id where r.project_id = any($1::text[]) order by ri.id', [pids]),
-        many(q, `select * from project_docs where project_id = any($1::text[]) ${opts.customer ? 'and shared' : ''} ${opts.money ? '' : opts.internal ? "and category <> 'quotation'" : "and category not in ('pi','po','quotation')"} order by created_at desc, id desc`, [pids]),
-        opts.money ? many(q, 'select * from payment_receipts where project_id = any($1::text[]) order by paid_on, id', [pids]) : [],
-        opts.money ? many(q, 'select * from invoices where project_id = any($1::text[]) order by invoice_date, id', [pids]) : [],
-        many(q, 'select * from change_orders where project_id = any($1::text[]) order by created_at, id', [pids]),
-        many(q, 'select * from service_requests where project_id = any($1::text[]) order by created_at desc, id desc', [pids]),
-        opts.money && !opts.customer ? many(q, `select q.id, q.rev, q.total, q.status, q.created_at, p.id project_id from quotes q join projects p on p.lead_id = q.lead_id where p.id = any($1::text[]) order by q.rev`, [pids]) : [],
-        many(q, `select * from project_scope where project_id = any($1::text[]) and status = 'active' order by sort, id`, [pids])
-    ]);
     const scBy = group(scopeRows, 'project_id');
     const rcBy = group(rcpts, 'project_id'), ivBy = group(invs, 'project_id'), coBy = group(cos, 'project_id'), svBy = group(svc, 'project_id'), pqBy = group(pquotes, 'project_id');
     const docBy = group(pdocs, 'project_id'), payBy = group(pays, 'project_id'), actBy = group(acts, 'project_id'), roomBy = group(rooms, 'project_id'), wallBy = group(walls, 'room_id'), obsBy = group(obs, 'wall_id'), riBy = group(ritems, 'room_id');
@@ -75,17 +77,17 @@ async function loadProjects(q, ids, opts) {
     });
 }
 async function loadItems(q, where, params) {
-    const items = await many(q, `select * from items ${where} order by created_at, id`, params);
+    const IDS = `any(array(select id from items ${where}))`;
+    const [items, docs, boxes, sess, snags, logs] = await Promise.all([
+        many(q, `select * from items ${where} order by created_at, id`, params),
+        many(q, `select * from documents where item_id = ${IDS} and kind = 'drawing' order by id`, params),
+        many(q, `select * from item_boxes where item_id = ${IDS} order by n`, params),
+        many(q, `select * from work_sessions where item_id = ${IDS} order by start_at`, params),
+        many(q, `select * from snags where item_id = ${IDS} order by created_at`, params),
+        many(q, `select * from item_stage_log where item_id = ${IDS} order by in_at, id`, params)
+    ]);
     if (!items.length)
         return [];
-    const ids = items.map(i => i.id);
-    const [docs, boxes, sess, snags, logs] = await Promise.all([
-        many(q, `select * from documents where item_id = any($1::text[]) and kind = 'drawing' order by id`, [ids]),
-        many(q, 'select * from item_boxes where item_id = any($1::text[]) order by n', [ids]),
-        many(q, 'select * from work_sessions where item_id = any($1::text[]) order by start_at', [ids]),
-        many(q, 'select * from snags where item_id = any($1::text[]) order by created_at', [ids]),
-        many(q, 'select * from item_stage_log where item_id = any($1::text[]) order by in_at, id', [ids])
-    ]);
     const d = group(docs, 'item_id'), b = group(boxes, 'item_id'), s = group(sess, 'item_id'), n = group(snags, 'item_id'), l = group(logs, 'item_id');
     return items.map(i => ({
         id: i.id, code: i.code, projectId: i.project_id, room: i.room_code, roomName: i.room_name, type: i.type, wall: i.wall, desc: i.descr,
@@ -105,11 +107,15 @@ async function loadItems(q, where, params) {
     }));
 }
 async function loadTasks(q, where, params) {
-    const tasks = await many(q, `select * from tasks ${where} order by created_at desc, id`, params);
+    const IDS = `any(array(select id from tasks ${where}))`;
+    const [tasks, evRows, msgRows] = await Promise.all([
+        many(q, `select * from tasks ${where} order by created_at desc, id`, params),
+        many(q, `select * from task_events where task_id = ${IDS} order by created_at, id`, params),
+        many(q, `select related_id, phone, template, kind, status, created_at from wa_messages where related_type = 'task' and direction = 'out' and related_id = ${IDS} order by id`, params)
+    ]);
     if (!tasks.length)
         return [];
-    const ev = group(await many(q, 'select * from task_events where task_id = any($1::text[]) order by created_at, id', [tasks.map(t => t.id)]), 'task_id');
-    const msg = group(await many(q, `select related_id, phone, template, kind, status, created_at from wa_messages where related_type = 'task' and direction = 'out' and related_id = any($1::text[]) order by id`, [tasks.map(t => t.id)]), 'related_id');
+    const ev = group(evRows, 'task_id'), msg = group(msgRows, 'related_id');
     return tasks.map(t => ({
         id: t.id, title: t.title, projectId: t.project_id, itemId: t.item_id, assignee: t.assignee_id, assigner: t.assigner_id, created: ms(t.created_at),
         deadline: t.deadline, originalDeadline: t.original_deadline || t.deadline, priority: t.priority, status: t.status, blockedReason: t.blocked_reason, auto: t.auto, proof: t.proof, repeat: t.repeat, reminders: t.reminders,
@@ -120,11 +126,13 @@ async function loadTasks(q, where, params) {
     }));
 }
 export async function loadLeads(q) {
-    const leads = await many(q, `select l.*, u.name owner_name from leads l left join users u on u.id = l.owner_id order by l.created_at desc`);
-    const ids = leads.map(l => l.id);
-    const msgs = group(await many(q, 'select * from lead_messages where lead_id = any($1::text[]) order by created_at, id', [ids]), 'lead_id');
-    const tl = group(await many(q, 'select * from lead_timeline where lead_id = any($1::text[]) order by created_at, id', [ids]), 'lead_id');
-    const qts = group(await many(q, 'select * from quotes where lead_id = any($1::text[]) order by rev', [ids]), 'lead_id');
+    const [leads, m, t, qq] = await Promise.all([
+        many(q, `select l.*, u.name owner_name from leads l left join users u on u.id = l.owner_id order by l.created_at desc`),
+        many(q, 'select * from lead_messages order by created_at, id'),
+        many(q, 'select * from lead_timeline order by created_at, id'),
+        many(q, 'select * from quotes order by rev')
+    ]);
+    const msgs = group(m, 'lead_id'), tl = group(t, 'lead_id'), qts = group(qq, 'lead_id');
     return leads.map(l => ({
         id: l.id, name: l.name, phone: prettyPhone(l.phone), source: l.source, sub: l.sub, ref: l.ref_partner_id || l.ref_lead_id || null, showroom: l.showroom,
         stage: l.stage, owner: l.owner_name || '', value: l.value, interest: l.interest, area: l.area, fu: l.follow_up, lastIn: ms(l.last_inbound_at),
@@ -135,39 +143,49 @@ export async function loadLeads(q) {
         quotes: (qts.get(l.id) || []).map(x => ({ id: x.id, rev: x.rev, lines: x.lines, discount: Number(x.discount), gstPct: Number(x.gst_pct), subtotal: Number(x.subtotal), total: Number(x.total), notes: x.notes, status: x.status, at: ms(x.created_at), by: x.by_id }))
     }));
 }
-/** Everything the signed-in staff member may see, in the shapes the web app renders. */
+/** Everything the signed-in staff member may see, in the shapes the web app renders. Independent reads run at the same time. */
 export async function staffState(p, q = db) {
     const me = p.user.id, perms = p.perms;
     const seeAllProjects = perms.has('projects') || perms.has('ops') || perms.has('tasksAll') || perms.has('assign');
-    const users = (await many(q, 'select id, name, role, title, phone, active, members, skills, email, google_sub from users order by created_at, name'))
-        .map(u => ({ id: u.id, name: u.name, role: u.role, title: u.title, phone: prettyPhone(u.phone), active: u.active, members: u.members, skills: u.skills.length ? u.skills : undefined, ...(perms.has('admin') || u.id === me ? { email: u.email || '', google: !!u.google_sub } : {}) }));
-    const accessRequests = perms.has('admin') || perms.has('people') ? (await many(q, `select * from access_requests where status = 'pending' order by created_at`)).map(a => ({ id: a.id, name: a.name, phone: prettyPhone(a.phone), email: a.email || '', roleWanted: a.role_wanted, note: a.note, at: ms(a.created_at) })) : [];
-    const roleRows = await many(q, 'select role, perm, allowed from role_permissions');
+    const [userRows, accessRows, roleRows, itemsProjects, tasks, auditRows, crmPart, wa, tickets, stageT, taskT, drafts] = await Promise.all([
+        many(q, 'select id, name, role, title, phone, active, members, skills, email, google_sub from users order by created_at, name'),
+        perms.has('admin') || perms.has('people') ? many(q, `select * from access_requests where status = 'pending' order by created_at`) : Promise.resolve([]),
+        many(q, 'select role, perm, allowed from role_permissions'),
+        (async () => {
+            if (seeAllProjects) {
+                const [items, projects] = await Promise.all([loadItems(q, '', []), loadProjects(q, null, { money: perms.has('money'), internal: perms.has('edit') || perms.has('ops') })]);
+                return { items, projects };
+            }
+            const items = await loadItems(q, 'where installer_id = $1', [me]);
+            return { items, projects: await loadProjects(q, [...new Set(items.map(i => i.projectId))], { money: false }) };
+        })(),
+        perms.has('tasksAll') ? loadTasks(q, '', []) : loadTasks(q, 'where assignee_id = $1 or assigner_id = $1', [me]),
+        perms.has('admin') ? many(q, 'select actor_id, text, created_at from audit_log order by id desc limit 100') : Promise.resolve([]),
+        perms.has('crm') ? Promise.all([
+            loadLeads(q), partnerStats(q), many(q, 'select * from commissions order by created_at'), many(q, 'select * from partners order by name'),
+            many(q, 'select * from automations order by length(id), id'), templatesApproved([...new Set(AUTOMATIONS.map(a => a.tpl).filter(Boolean))], q)
+        ]) : Promise.resolve(null),
+        one(q, `select count(*) filter (where status = 'simulated') sim, count(*) filter (where status in ('sent','delivered','read')) sent, count(*) filter (where status = 'failed') failed from wa_messages where created_at > now() - interval '30 days'`),
+        loadTickets(q, p), stageTargets(q), taskTemplates(q), loadDrafts(q, p)
+    ]);
+    const users = userRows.map(u => ({ id: u.id, name: u.name, role: u.role, title: u.title, phone: prettyPhone(u.phone), active: u.active, members: u.members, skills: u.skills.length ? u.skills : undefined, ...(perms.has('admin') || u.id === me ? { email: u.email || '', google: !!u.google_sub } : {}) }));
+    const accessRequests = accessRows.map(a => ({ id: a.id, name: a.name, phone: prettyPhone(a.phone), email: a.email || '', roleWanted: a.role_wanted, note: a.note, at: ms(a.created_at) }));
     const roles = JSON.parse(JSON.stringify(DEFAULT_ROLES));
     for (const r of roleRows)
         (roles[r.role] ||= {})[r.perm] = r.allowed;
     for (const k of PERMS)
         roles.admin[k] = true;
-    let items, projects;
-    if (seeAllProjects) {
-        items = await loadItems(q, '', []);
-        projects = await loadProjects(q, null, { money: perms.has('money'), internal: perms.has('edit') || perms.has('ops') });
-    }
-    else {
-        items = await loadItems(q, 'where installer_id = $1', [me]);
-        const pids = [...new Set(items.map(i => i.projectId))];
-        projects = await loadProjects(q, pids, { money: false });
-    }
+    let { items, projects } = itemsProjects;
     if (!perms.has('money'))
         items = items.map((i) => ({ ...i, value: null }));
-    const tasks = perms.has('tasksAll') ? await loadTasks(q, '', []) : await loadTasks(q, 'where assignee_id = $1 or assigner_id = $1', [me]);
-    const audit = perms.has('admin') ? (await many(q, 'select actor_id, text, created_at from audit_log order by id desc limit 100')).map(a => ({ t: ms(a.created_at), by: a.actor_id, text: a.text })) : [];
-    const crm = perms.has('crm') ? {
-        leads: await loadLeads(q),
-        partners: await (async () => {
-            const st = new Map((await partnerStats(q)).map(s => [s.id, s]));
-            const coms = group(await many(q, 'select * from commissions order by created_at'), 'partner_id');
-            return (await many(q, 'select * from partners order by name')).map(x => {
+    const audit = auditRows.map(a => ({ t: ms(a.created_at), by: a.actor_id, text: a.text }));
+    let crm = { leads: [], partners: [], autos: [] };
+    if (crmPart) {
+        const [leads, stats, comRows, partnerRows, autoRows, ok] = crmPart;
+        const st = new Map(stats.map(s => [s.id, s])), coms = group(comRows, 'partner_id');
+        crm = {
+            leads,
+            partners: partnerRows.map(x => {
                 const s = st.get(x.id) || {};
                 return {
                     id: x.id, name: x.name, firm: x.firm, type: x.type, tier: x.tier, rate: x.rate, owner: x.owner_id ? users.find(u => u.id === x.owner_id)?.name : '', ownerId: x.owner_id,
@@ -175,23 +193,15 @@ export async function staffState(p, q = db) {
                     stats: { leads: s.leads || 0, open: s.open || 0, pipeline: Number(s.pipeline || 0), won: s.won || 0, wonValue: Number(s.won_value || 0), projectValue: Number(s.project_value || 0), commission: Number(s.commission || 0), commissionPaid: Number(s.commission_paid || 0), lastLead: ms(s.last_lead) },
                     commissions: perms.has('money') ? (coms.get(x.id) || []).map(c => ({ id: c.id, leadId: c.lead_id, amount: c.amount, status: c.status, at: ms(c.created_at) })) : []
                 };
-            });
-        })(),
-        autos: await (async () => {
-            const ok = new Map();
-            for (const t of new Set(AUTOMATIONS.map(a => a.tpl).filter(Boolean)))
-                ok.set(t, await templateApproved(t, q));
-            return (await many(q, 'select * from automations order by length(id), id')).map(a => {
+            }),
+            autos: autoRows.map(a => {
                 const d = AUTOMATIONS.find(x => x.id === a.id);
                 const approved = d?.tpl ? ok.get(d.tpl) ?? null : true;
                 return { id: a.id, fam: a.fam, name: a.name, when: a.when_text, then: a.then_text, on: a.enabled && d?.built !== false && approved !== false, runs: a.runs, tpl: d?.tpl || null, to: d?.to || null, built: d?.built !== false, approved };
-            });
-        })()
-    } : { leads: [], partners: [], autos: [] };
-    const wa = await one(q, `select count(*) filter (where status = 'simulated') sim, count(*) filter (where status in ('sent','delivered','read')) sent, count(*) filter (where status = 'failed') failed from wa_messages where created_at > now() - interval '30 days'`);
-    const tickets = await loadTickets(q, p);
-    const settings = { stageTargets: await stageTargets(q), taskTemplates: await taskTemplates(q) };
-    const drafts = await loadDrafts(q, p);
+            })
+        };
+    }
+    const settings = { stageTargets: stageT, taskTemplates: taskT };
     return { erp: { me, projects, items, tasks, users, roles, audit, accessRequests, tickets, settings, drafts }, crm, server: { wa } };
 }
 /** What a customer sees: only their own projects, in customer-friendly terms. */

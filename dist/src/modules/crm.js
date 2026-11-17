@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { db, many, one, tx } from '../core/db.js';
 import { parse } from '../core/http.js';
-import { addDays, bad, first, fmtDate, forbidden, inr, normPhone, notFound, prettyPhone, todayStr } from '../core/util.js';
+import { addDays, bad, first, fmtDate, forbidden, HttpError, inr, normPhone, notFound, prettyPhone, todayStr } from '../core/util.js';
 import { AUTOMATIONS, leadStageName, LEAD_STAGES, LEAD_STAGE_IDS, LOST_REASONS, SOURCES, SOURCE_IDS, sourceOf, WA_TEMPLATES, renderTemplate } from '../domain.js';
 import { automationOn, sendTemplate, sendText, windowOpen } from '../integrations/whatsapp.js';
 import { audit, staff, userOf } from './auth.js';
@@ -289,7 +289,17 @@ export function crmRoutes(r) {
     const done = async (ctx, extra = {}) => ({ ok: true, ...extra, state: await staffState(userOf(ctx)) });
     r.post('/api/v1/leads', staff('crm'), async (ctx) => {
         const b = parse(LeadZ, ctx.body);
-        const out = await tx(q => createLead(q, userOf(ctx), b));
+        const out = await tx(async (q) => {
+            // two saves of the same client at once (double tap, two salespeople) can't both slip past the duplicate check
+            const phone = normPhone(b.phone);
+            if (phone) {
+                await q.query('select pg_advisory_xact_lock(hashtext($1))', ['lead:' + phone]);
+                const recent = await one(q, `select id, name from leads where phone = $1 and lower(trim(name)) = lower(trim($2)) and created_at > now() - interval '2 minutes' order by created_at desc limit 1`, [phone, b.name]);
+                if (recent)
+                    throw new HttpError(409, `${recent.name} with this number was added a moment ago.`, 'duplicate_recent', { leadId: recent.id });
+            }
+            return createLead(q, userOf(ctx), b);
+        });
         return done(ctx, out);
     });
     r.post('/api/v1/leads/import', staff('crm'), async (ctx) => {

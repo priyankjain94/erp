@@ -230,6 +230,13 @@ export function authRoutes(r) {
             if (!s || s.revoked_at || new Date(s.expires_at) < new Date() || s.subject_type !== type)
                 throw new HttpError(401, 'Please log in again.', 'unauthenticated');
             if (!safeEqual(s.refresh_hash, sha256(secret))) {
+                // the token replaced moments ago by a parallel renewal (two tabs, two requests): give a new access token, keep the newer refresh cookie
+                const grace = s.prev_refresh_hash && s.rotated_at && Date.now() - new Date(s.rotated_at).getTime() < 60_000 && safeEqual(s.prev_refresh_hash, sha256(secret));
+                if (grace) {
+                    if (type === 'user' && !(await one(q, 'select active from users where id = $1', [s.subject_id]))?.active)
+                        throw new HttpError(401, 'Please log in again.', 'unauthenticated');
+                    return { accessToken: signJwt({ sub: s.subject_id, typ: type, sid }, config.JWT_SECRET, config.ACCESS_TTL_MIN * 60), expiresIn: config.ACCESS_TTL_MIN * 60 };
+                }
                 await q.query('update sessions set revoked_at = now() where id = $1', [sid]); // token reuse: kill the session
                 throw new HttpError(401, 'Please log in again.', 'unauthenticated');
             }
@@ -239,7 +246,7 @@ export function authRoutes(r) {
                     throw new HttpError(401, 'Please log in again.', 'unauthenticated');
             }
             const refresh = randomId(32);
-            await q.query('update sessions set refresh_hash = $2 where id = $1', [sid, sha256(refresh)]);
+            await q.query('update sessions set prev_refresh_hash = refresh_hash, rotated_at = now(), refresh_hash = $2 where id = $1', [sid, sha256(refresh)]);
             return issue(ctx, type, s.subject_id, sid, refresh);
         });
     });

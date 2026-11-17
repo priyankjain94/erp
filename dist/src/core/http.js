@@ -1,6 +1,8 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
+import { createHash } from 'node:crypto';
 import { ZodError } from 'zod';
 import { config } from './config.js';
 import { HttpError, log } from './util.js';
@@ -43,8 +45,11 @@ export function rateLimit(key, max, windowMs) {
         return;
     }
     b.n++;
-    if (b.n > max)
-        throw new HttpError(429, 'Too many requests. Please wait a little and try again.', 'rate_limited');
+    if (b.n > max) {
+        const mins = Math.max(1, Math.ceil((b.reset - now) / 60000));
+        const at = new Date(b.reset).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
+        throw new HttpError(429, mins <= 2 ? 'Too many tries. Please wait a minute and try again.' : `Too many tries. Please try again after ${at} (in ${mins} minutes).`, 'rate_limited', { retryAt: b.reset });
+    }
 }
 setInterval(() => { const now = Date.now(); for (const [k, b] of buckets)
     if (b.reset < now)
@@ -77,16 +82,65 @@ function cors(ctx) {
         ctx.res.setHeader('Access-Control-Allow-Origin', origin);
         ctx.res.setHeader('Access-Control-Allow-Credentials', 'true');
         ctx.res.setHeader('Vary', 'Origin');
-        ctx.res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        ctx.res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-State-Have');
         ctx.res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     }
 }
-export function send(res, status, body, headers = {}) {
+const gzipOk = (req) => !!req && /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+export function send(res, status, body, headers = {}, req) {
     if (res.headersSent)
         return;
     const isStr = typeof body === 'string';
-    res.writeHead(status, { 'Content-Type': isStr ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
-    res.end(isStr ? body : JSON.stringify(body));
+    const text = isStr ? body : JSON.stringify(body);
+    const h = { 'Content-Type': isStr ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8', 'Cache-Control': 'no-store', Vary: 'Accept-Encoding', ...headers };
+    if (text.length > 1024 && gzipOk(req)) {
+        res.writeHead(status, { ...h, 'Content-Encoding': 'gzip' });
+        res.end(zlib.gzipSync(text, { level: 6 }));
+        return;
+    }
+    res.writeHead(status, h);
+    res.end(text);
+}
+/**
+ * The app's data comes in sections (erp.projects, crm.leads, ...). The browser sends the fingerprints of the sections it
+ * already has (X-State-Have); unchanged sections are left out of the reply, so a save sends back only what changed.
+ */
+const fp = (v) => createHash('sha1').update(JSON.stringify(v) ?? '').digest('base64url').slice(0, 12);
+function compactState(st, req) {
+    if (!st || typeof st !== 'object' || !st.erp || !st.crm)
+        return st;
+    let have = {};
+    try {
+        have = JSON.parse(String(req.headers['x-state-have'] || '{}')) || {};
+    }
+    catch {
+        have = {};
+    }
+    const out = { __h: {} };
+    for (const top of Object.keys(st)) {
+        const sec = st[top];
+        if (!sec || typeof sec !== 'object' || Array.isArray(sec)) {
+            out[top] = sec;
+            continue;
+        }
+        out[top] = {};
+        for (const k of Object.keys(sec)) {
+            const key = top + '.' + k, h = fp(sec[k]);
+            out.__h[key] = h;
+            if (have[key] !== h)
+                out[top][k] = sec[k];
+        }
+    }
+    return out;
+}
+function withCompactState(out, req) {
+    if (!req.headers['x-state-have'] || !out || typeof out !== 'object')
+        return out;
+    if (out.erp && out.crm)
+        return compactState(out, req);
+    if (out.state && out.state.erp && out.state.crm)
+        return { ...out, state: compactState(out.state, req) };
+    return out;
 }
 async function readBody(req, limit) {
     const chunks = [];
@@ -114,10 +168,30 @@ function serveStatic(ctx, webDir) {
         return false;
     const ext = path.extname(file);
     securityHeaders(ctx.res, ext === '.html');
-    ctx.res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': ext === '.html' || rel === '/sw.js' ? 'no-cache' : 'public, max-age=3600' });
+    const head = { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': ext === '.html' || rel === '/sw.js' ? 'no-cache' : 'public, max-age=3600', Vary: 'Accept-Encoding' };
+    if (COMPRESSIBLE.has(ext) && gzipOk(ctx.req)) {
+        const st = fs.statSync(file), key = file + ':' + st.mtimeMs;
+        let z = gzCache.get(key);
+        if (!z) {
+            z = zlib.gzipSync(fs.readFileSync(file), { level: 9 });
+            gzCache.set(key, z);
+        }
+        const etag = '"' + key.length.toString(36) + '-' + Math.round(st.mtimeMs).toString(36) + '-' + st.size.toString(36) + '"';
+        if (ctx.req.headers['if-none-match'] === etag) {
+            ctx.res.writeHead(304, { ...head, ETag: etag });
+            ctx.res.end();
+            return true;
+        }
+        ctx.res.writeHead(200, { ...head, 'Content-Encoding': 'gzip', 'Content-Length': String(z.length), ETag: etag });
+        ctx.res.end(ctx.method === 'HEAD' ? undefined : z);
+        return true;
+    }
+    ctx.res.writeHead(200, head);
     fs.createReadStream(file).pipe(ctx.res);
     return true;
 }
+const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.svg', '.json', '.webmanifest', '.txt']);
+const gzCache = new Map();
 export function createServer(router) {
     const webDir = path.resolve(process.cwd(), config.WEB_DIR);
     return http.createServer(async (req, res) => {
@@ -160,18 +234,18 @@ export function createServer(router) {
                     break;
             }
             if (!res.headersSent)
-                send(res, out === undefined ? 204 : 200, out === undefined ? '' : out);
+                send(res, out === undefined ? 204 : 200, out === undefined ? '' : withCompactState(out, req), {}, req);
         }
         catch (e) {
             if (e instanceof HttpError)
-                send(res, e.status, { error: e.code, message: e.message, details: e.details });
+                send(res, e.status, { error: e.code, message: e.message, details: e.details }, {}, req);
             else if (e instanceof ZodError)
-                send(res, 400, { error: 'validation', message: 'Invalid input', details: e.flatten() });
+                send(res, 400, { error: 'validation', message: 'Invalid input', details: e.flatten() }, {}, req);
             else if (e && e.code === '23505')
-                send(res, 409, { error: 'duplicate', message: 'That already exists.', details: e.detail });
+                send(res, 409, { error: 'duplicate', message: 'That already exists.', details: e.detail }, {}, req);
             else {
                 log.error(ctx.method, ctx.path, e?.stack || e);
-                send(res, 500, { error: 'server_error', message: 'Something went wrong on our side. Please try again.' });
+                send(res, 500, { error: 'server_error', message: 'Something went wrong on our side. Please try again.' }, {}, req);
             }
         }
         finally {
