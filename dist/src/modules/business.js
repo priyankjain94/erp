@@ -3,12 +3,13 @@
 import { z } from 'zod';
 import { db, many, one, tx } from '../core/db.js';
 import { parse, send } from '../core/http.js';
-import { bad, forbidden, normPhone, notFound, todayStr } from '../core/util.js';
+import { bad, first, forbidden, normPhone, notFound, prettyPhone, todayStr } from '../core/util.js';
 import { COMPANY_DEFAULT, fyLabel, PAY_MODES, PRODUCTION_STEPS, quoteTotals, SNAG_PAYERS } from '../domain.js';
 import { audit, can, customerOrPreview, staff, userOf } from './auth.js';
 import { act } from './ops.js';
 import { customerState, staffState } from './state.js';
-import { signedFileUrl } from '../integrations/storage.js';
+import { readUpload, signedFileUrl } from '../integrations/storage.js';
+import { automationOn, sendTemplate, templateApproved, uploadWaMedia } from '../integrations/whatsapp.js';
 const done = async (ctx, extra = {}) => ({ ok: true, ...extra, state: await staffState(userOf(ctx)) });
 const rupees = (n) => '₹' + Math.round(Number(n) || 0).toLocaleString('en-IN');
 const DateZ = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -38,6 +39,12 @@ export async function createPartner(q, by, b) {
     const id = 'p' + (await one(q, `select nextval('partner_seq') n`)).n;
     await q.query(`insert into partners(id, name, firm, type, tier, rate, owner_id, phone, email, city, notes, active) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [id, b.name, b.firm, b.type, b.tier, b.rate, b.owner, phone, b.email, b.city, b.notes, b.active]);
     await audit(q, by, 'partner.create', `Added partner ${b.name}${b.firm ? ' (' + b.firm + ')' : ''}`, 'partner', id);
+    if (phone && b.active && await automationOn(q, 'a16')) {
+        const rm = b.owner ? await one(q, 'select name, phone from users where id = $1', [b.owner]) : null;
+        const co = await company(q);
+        await sendTemplate(phone, 'partner_welcome', [first(b.name), rm?.name || co.name + ' team', rm?.phone ? prettyPhone(rm.phone) : co.phone], { q, related: { type: 'partner', id } });
+        await q.query('update automations set runs = runs + 1 where id = $1', ['a16']);
+    }
     return id;
 }
 /* ---------- payments: a milestone is received once receipts cover it ---------- */
@@ -94,6 +101,44 @@ export function businessRoutes(r) {
         await audit(db, userOf(ctx), 'company', 'Company profile updated', 'settings', 'company');
         return { ok: true, company: await company() };
     });
+    /* partners: monthly launch update (PDF or video) to every active partner on WhatsApp */
+    r.post('/api/v1/partners/broadcast', staff('crm'), async (ctx) => {
+        const b = parse(z.object({
+            ref: z.string().regex(/^upload:[A-Za-z0-9_-]+\.(pdf|mp4)$/, 'Upload a PDF or an MP4 video'),
+            filename: z.string().trim().max(80).default(''),
+            note: z.string().trim().min(3, 'Write one line on what is new').max(200),
+            types: z.array(z.enum(['architect', 'contractor', 'agent'])).min(1).default(['architect', 'contractor', 'agent']),
+            dryRun: z.boolean().default(false)
+        }), ctx.body);
+        const video = b.ref.endsWith('.mp4');
+        const tpl = video ? 'partner_launch_video' : 'partner_launch_document';
+        const to = await many(db, `select id, name, phone from partners where active and phone is not null and type = any($1) order by name`, [b.types]);
+        const approved = await templateApproved(tpl);
+        if (b.dryRun)
+            return { recipients: to.length, template: tpl, approved };
+        if (approved === false)
+            throw bad('This message template is still waiting for Meta approval. You can send once it is approved (see Automations).');
+        if (!to.length)
+            throw bad('No active partner with a WhatsApp number in the chosen groups.');
+        const file = await readUpload(b.ref);
+        if (video && file.data.length > 16 * 1024 * 1024)
+            throw bad('WhatsApp videos must be 16 MB or smaller. Please compress the video and upload again.');
+        const filename = (b.filename || 'Make My Space - new launches').replace(/[^\w .()&-]/g, '').slice(0, 70) + (video ? '' : '.pdf');
+        const mediaId = await uploadWaMedia(file.data, file.contentType, video ? 'launch.mp4' : filename);
+        const u = userOf(ctx);
+        const id = await tx(async (q) => {
+            for (const p of to)
+                await sendTemplate(p.phone, tpl, [first(p.name), b.note], { q, related: { type: 'partner', id: p.id }, header: video ? { type: 'video', id: mediaId } : { type: 'document', id: mediaId, filename } });
+            const row = await one(q, `insert into partner_broadcasts(kind, file_ref, filename, note, template, recipients, partner_types, by_user) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id`, [video ? 'video' : 'document', b.ref, filename, b.note, tpl, to.length, b.types, u.user.id]);
+            await audit(q, u, 'partner.broadcast', `Sent the monthly update (${video ? 'video' : 'PDF'}) to ${to.length} partners: ${b.note}`, 'partner_broadcast', String(row.id));
+            return row.id;
+        });
+        return { ok: true, id, recipients: to.length };
+    });
+    r.get('/api/v1/partners/broadcasts', staff('crm'), async () => ({
+        items: (await many(db, `select b.*, u.name by_name, (select count(*) from wa_messages m where m.template = b.template and m.created_at between b.created_at - interval '1 minute' and b.created_at + interval '1 minute' and m.status in ('sent','delivered','read')) delivered
+      from partner_broadcasts b left join users u on u.id = b.by_user order by b.created_at desc limit 24`)).map(x => ({ id: x.id, kind: x.kind, filename: x.filename, note: x.note, recipients: x.recipients, delivered: Number(x.delivered), by: x.by_name || '', at: new Date(x.created_at).getTime(), url: signedFileUrl(x.file_ref) }))
+    }));
     /* partners */
     r.post('/api/v1/partners', staff('crm'), async (ctx) => {
         const b = parse(PartnerZ, ctx.body);

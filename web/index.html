@@ -1376,10 +1376,9 @@ const DOC_CATEGORIES = [
   {id:'pi', name:'Factory PI', customer:false}, {id:'po', name:'Hardware PO', customer:false},
   {id:'handover', name:'Handover: warranty card, care guide, photos', customer:true}, {id:'other', name:'Other', customer:false}];
 const docCat = id => DOC_CATEGORIES.find(c => c.id === id) || {name:id};
-async function uploadFile(file){
-  const ok = ['application/pdf','image/jpeg','image/png','image/webp'];
-  if (!ok.includes(file.type)) throw new Error('Use a PDF, JPG or PNG file.');
-  if (file.size > 25 * 1024 * 1024) throw new Error('That file is larger than 25 MB.');
+async function uploadFile(file, {types = ['application/pdf','image/jpeg','image/png','image/webp'], maxMb = 25, what = 'a PDF, JPG or PNG file'} = {}){
+  if (!types.includes(file.type)) throw new Error('Use ' + what + '.');
+  if (file.size > maxMb * 1024 * 1024) throw new Error(`That file is larger than ${maxMb} MB.`);
   const slot = await API.call('POST', '/uploads', {contentType:file.type, size:file.size});
   const r = await fetch(slot.uploadUrl, {method:'PUT', body:file, headers:{'Content-Type':file.type}});
   if (!r.ok) throw new Error('Upload failed. Check the internet and try again.');
@@ -3782,7 +3781,7 @@ function PartnerForm({init, erp, close, save}){
   </div>`;
 }
 function Partners({leads, open, call, erp}){
-  const [exp, setExp] = useState(null), [type, setType] = useState('all'), [form, setForm] = useState(null), [showInactive, setShowInactive] = useState(false);
+  const [exp, setExp] = useState(null), [type, setType] = useState('all'), [form, setForm] = useState(null), [showInactive, setShowInactive] = useState(false), [sending, setSending] = useState(false);
   const money = can(erp, 'money');
   const rows = PARTNERS.filter(p => showInactive || p.active !== false).map(p => {
     const ls = leads.filter(l => l.ref === p.id), st = p.stats || {};
@@ -3798,6 +3797,7 @@ function Partners({leads, open, call, erp}){
       <label className="chip" style=${{cursor:'pointer'}}><input type="checkbox" checked=${showInactive} onChange=${e => setShowInactive(e.target.checked)} style=${{margin:0}}/> Show inactive</label>
       <span style=${{marginLeft:'auto'}}></span>
       <button className="btn small" onClick=${() => downloadCsv('partners')}>Export CSV</button>
+      <button className="btn small" onClick=${() => setSending(true)}>Send monthly update</button>
       <button className="btn small primary" onClick=${() => setForm({})}><${Icon} n="plus" s=${14}/>Add partner</button>
     </div>
     <div className="kpis" style=${{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:12,marginBottom:16}}>
@@ -3827,7 +3827,58 @@ function Partners({leads, open, call, erp}){
       <//>`)}</tbody>
     </table></div>
     ${form && html`<${PartnerForm} init=${form.id ? form : null} erp=${erp} close=${() => setForm(null)} save=${b => save(b, form.id)}/>`}
+    ${sending && html`<${PartnerBroadcast} call=${call} close=${() => setSending(false)}/>`}
   </section>`;
+}
+
+/* Monthly product-launch update: one PDF or video to every active partner on WhatsApp (approved template only). */
+function PartnerBroadcast({call, close}){
+  const [file, setFile] = useState(null), [up, setUp] = useState(false), [note, setNote] = useState(''), [types, setTypes] = useState(['architect','contractor','agent']);
+  const [filename, setFilename] = useState(''), [check, setCheck] = useState(null), [busy, setBusy] = useState(false), [err, setErr] = useState(''), [past, setPast] = useState(null), [tried, setTried] = useState(false);
+  const month = new Date().toLocaleString('en-IN', {month:'long', year:'numeric'});
+  const video = file && file.ref.endsWith('.mp4');
+  useEffect(() => { API.call('GET', '/partners/broadcasts').then(r => setPast(r.items)).catch(() => setPast([])); }, []);
+  useEffect(() => { let live = true; API.call('POST', '/partners/broadcast', {ref: file ? file.ref : 'upload:x.pdf', note: note.trim().length >= 3 ? note.trim() : 'preview', types, dryRun:true})
+    .then(r => live && setCheck(r)).catch(() => live && setCheck(null)); return () => { live = false; }; }, [types.join(','), !!video]);
+  const pick = async f => { setErr(''); setUp(true);
+    try { const slot = await uploadFile(f, {types:['application/pdf','video/mp4'], maxMb: f.type === 'video/mp4' ? 16 : 25, what:'a PDF, or an MP4 video of 16 MB or less'}); setFile({ref:slot.ref, name:f.name, size:f.size, type:f.type}); if (!filename) setFilename(f.name.replace(/\.[^.]+$/, '').slice(0, 70)); }
+    catch(e){ setErr(e.message); } setUp(false); };
+  const toggleType = t => setTypes(x => x.includes(t) ? (x.length > 1 ? x.filter(y => y !== t) : x) : [...x, t]);
+  const errs = {file:!file, note:note.trim().length < 3};
+  const blocked = check && check.approved === false;
+  const send = async e => { e.preventDefault(); setTried(true); if (errs.file || errs.note || blocked) return; setBusy(true);
+    const r = await call('POST', '/partners/broadcast', {ref:file.ref, filename, note:note.trim(), types}, r => `Monthly update sent to ${r.recipients} partner${r.recipients > 1 ? 's' : ''} on WhatsApp.`);
+    setBusy(false); if (r) close(); };
+  const preview = `Hello [partner], here is what is new at Make My Space this month: ${note.trim() || '…'}. ${video ? 'Watch the short video above.' : 'The details are in the attached file.'} Reply to this message to book a showroom walk-through for you or your clients.`;
+  return html`<div className="modal" role="dialog" aria-modal="true" aria-label="Send monthly update to partners">
+    <div className="scrim" onClick=${close}></div>
+    <form className="sheet" onSubmit=${send} noValidate>
+      <header><h2>Send monthly update · ${month}</h2><p>Share this month's new launches with your partners on WhatsApp: one PDF catalogue or one short video, with a line on what is new.</p></header>
+      <div className="form">
+        <div className="full" style=${{display:'grid',gap:6}}>
+          <span style=${{fontSize:12,fontWeight:500,color:'var(--ink-2)'}}>PDF or video <span className="req">*</span></span>
+          <div style=${{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+            <label className="btn small" style=${{position:'relative',overflow:'hidden'}} aria-busy=${up ? 'true' : 'false'}>${up ? 'Uploading…' : file ? 'Change file' : 'Choose PDF or MP4'}<input type="file" accept="application/pdf,video/mp4" disabled=${up} style=${{position:'absolute',inset:0,opacity:0,cursor:'pointer'}} onChange=${e => { const f = e.target.files[0]; e.target.value = ''; if (f) pick(f); }}/></label>
+            ${file && html`<span className="sub"><b>${file.name}</b> · ${(file.size / 1048576).toFixed(1)} MB · ${video ? 'video' : 'PDF'}</span>`}
+          </div>
+          <span className="hint">PDF up to 25 MB. Video: MP4, 16 MB or less (WhatsApp's limit).</span>
+          ${err && html`<span className="err">${err}</span>`}${tried && errs.file && !err && html`<span className="err">Choose the PDF or video to send.</span>`}
+        </div>
+        ${file && !video && html`<label className="full">File name partners see<input value=${filename} maxLength="70" onInput=${e => setFilename(e.target.value)} placeholder="Make My Space - new launches"/></label>`}
+        <label className="full">What is new this month <span className="req">*</span><textarea rows="2" maxLength="200" value=${note} onInput=${e => setNote(e.target.value)} placeholder="e.g. the new fluted-glass wardrobe range and 3 new kitchen finishes"></textarea><span className="hint">${note.length}/200 · goes into the sentence below</span>${tried && errs.note && html`<span className="err">Write one line on what is new.</span>`}</label>
+        <div className="full" style=${{display:'grid',gap:6}}>
+          <span style=${{fontSize:12,fontWeight:500,color:'var(--ink-2)'}}>Send to</span>
+          <div className="chips" role="group" aria-label="Partner groups">${[['architect','Architects'],['contractor','Contractors'],['agent','Agents']].map(([id, n]) => html`<button type="button" key=${id} className="chip" aria-pressed=${types.includes(id)} onClick=${() => toggleType(id)}>${n}</button>`)}</div>
+          <span className="hint">${check ? `${check.recipients} active partner${check.recipients === 1 ? '' : 's'} with a WhatsApp number.` : 'Counting partners…'}</span>
+        </div>
+        <div className="full panel" style=${{padding:'10px 12px',background:'var(--paper-2, #f6f6f4)'}}><div className="sub" style=${{fontSize:11,letterSpacing:'.08em',textTransform:'uppercase',color:'var(--muted)',marginBottom:4}}>WhatsApp preview ${video ? '· video on top' : '· PDF attached'}</div><div style=${{fontSize:13,lineHeight:1.5}}>${preview}</div></div>
+        ${blocked && html`<div className="warnbox full">The ${video ? 'video' : 'PDF'} template is still waiting for Meta's approval, so this can't be sent yet. Meta usually decides within a day; the Automations tab shows the status.</div>`}
+        ${past && past.length > 0 && html`<div className="full"><div className="sub" style=${{fontSize:11,letterSpacing:'.08em',textTransform:'uppercase',color:'var(--muted)',margin:'6px 0'}}>Sent before</div>
+          ${past.slice(0, 6).map(b => html`<div key=${b.id} style=${{display:'flex',gap:10,fontSize:13,padding:'4px 0',borderTop:'1px solid var(--line)'}}><span className="num" style=${{minWidth:84,color:'var(--muted)'}}>${new Date(b.at).toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'2-digit'})}</span><span style=${{flex:1}}>${b.kind === 'video' ? 'Video' : 'PDF'} · ${b.note}</span><span className="num">${b.recipients} sent</span>${b.url && html`<a className="linkbtn" style=${{marginTop:0}} href=${b.url} target="_blank" rel="noopener">Open</a>`}</div>`)}</div>`}
+        <div className="form-foot"><button type="button" className="btn ghost" onClick=${close}>Cancel</button><button type="submit" className="btn primary" disabled=${busy || up || blocked || (check && !check.recipients)}>${busy ? 'Sending…' : `Send to ${check ? check.recipients : ''} partner${check && check.recipients === 1 ? '' : 's'}`}</button></div>
+      </div>
+    </form>
+  </div>`;
 }
 
 /* ---------- Automations ---------- */
@@ -3847,22 +3898,29 @@ function Automations({autos, toggle, erp}){
       : st ? html`<span className="pill warn" title=${row.body}>${name} · ${st.toLowerCase().replace(/_/g, ' ')}</span>`
       : html`<span className="pill crit" title=${row.body}>${name} · not on Meta</span>`;
   };
-  const built = autos.filter(a => a.built !== false), on = built.filter(a => a.on).length;
-  const unapproved = admin && tpls && tpls.checked ? built.filter(a => a.on && a.tpl && (tpls.rows[a.tpl]?.found[0] || {}).status !== 'APPROVED') : [];
+  // Only automations that are built and whose WhatsApp template Meta has approved are shown; the rest wait below for admins.
+  const tplOk = a => { if (!a.tpl) return true; if (tpls && tpls.checked) return (tpls.rows[a.tpl]?.found || []).some(x => x.status === 'APPROVED'); return a.approved !== false; };
+  const live = autos.filter(a => a.built !== false && tplOk(a)), waiting = autos.filter(a => a.built !== false && !tplOk(a)), planned = autos.filter(a => a.built === false);
+  const built = live, on = live.filter(a => a.on).length;
   return html`<section className="view">
     <p style=${{margin:'0 0 10px',color:'var(--muted)'}}>${on} of ${built.length} automations are on. Each one reads as When this happens, Then do this; every action is logged on the lead's timeline.</p>
     ${admin && html`<div style=${{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap',margin:'0 0 14px'}}>
       <button className="btn small" disabled=${checking} onClick=${() => load(true)}>${checking ? 'Checking with Meta…' : 'Check templates with Meta'}</button>
       <span className="hint">${tpls && tpls.checked ? 'Template status is from your WhatsApp Business account.' : 'Press the button to see whether each template is approved.'}</span>
       ${err && html`<span className="err">${err}</span>`}</div>`}
-    ${unapproved.length > 0 && html`<div className="warnbox" style=${{margin:'0 0 14px'}}>${unapproved.length} running automation${unapproved.length > 1 ? 's use templates' : ' uses a template'} that Meta has not approved: ${unapproved.map(a => a.name).join(', ')}. Those WhatsApp messages will fail until the template is approved (the rest of the automation still runs).</div>`}
-    <div className="autos">${autos.map(a => html`<article key=${a.id} className=${'auto' + (a.on ? '' : ' off')}>
+    <div className="autos">${live.map(a => html`<article key=${a.id} className=${'auto' + (a.on ? '' : ' off')}>
       <div className="auto-top"><div><span className="fam">${a.fam}</span><b>${a.name}</b></div>
         ${a.built === false ? html`<span className="pill">Not built yet</span>` : html`<button className="switch" role="switch" aria-checked=${a.on} aria-label=${'Turn ' + a.name + (a.on ? ' off' : ' on')} onClick=${() => toggle(a.id)}></button>`}</div>
       <dl className="rule"><dt>When</dt><dd>${a.when}</dd><dt>Then</dt><dd>${a.then}</dd>${a.to && html`<dt>To</dt><dd>${a.to}</dd>`}</dl>
       ${a.tpl && a.built !== false && html`<div style=${{margin:'0 0 8px'}}>${status(a)}</div>`}
       <div className="auto-foot"><span>${a.built === false ? 'Planned' : a.on ? 'Running' : 'Paused'}</span><span className="num">${a.runs} runs</span></div>
     </article>`)}</div>
+    ${admin && waiting.length > 0 && html`<details style=${{marginTop:18}}><summary style=${{cursor:'pointer',fontWeight:500}}>Waiting for Meta approval (${waiting.length})</summary>
+      <p className="hint" style=${{margin:'6px 0 10px'}}>These templates have been sent to Meta. Each automation appears above and starts running by itself once Meta approves its template (checked every hour).</p>
+      <div className="autos">${waiting.map(a => html`<article key=${a.id} className="auto off"><div className="auto-top"><div><span className="fam">${a.fam}</span><b>${a.name}</b></div></div>
+        <dl className="rule"><dt>When</dt><dd>${a.when}</dd><dt>Then</dt><dd>${a.then}</dd></dl><div style=${{margin:'0 0 8px'}}>${status(a)}</div></article>`)}</div></details>`}
+    ${admin && planned.length > 0 && html`<details style=${{marginTop:12}}><summary style=${{cursor:'pointer',fontWeight:500}}>Planned, not built yet (${planned.length})</summary>
+      <ul style=${{margin:'8px 0 0',paddingLeft:18,color:'var(--muted)',fontSize:13}}>${planned.map(a => html`<li key=${a.id}><b style=${{color:'var(--ink)'}}>${a.name}</b>: ${a.when.toLowerCase()} → ${a.then.toLowerCase()}</li>`)}</ul></details>`}
   </section>`;
 }
 
