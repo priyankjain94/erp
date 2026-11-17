@@ -3,6 +3,7 @@ import { prettyPhone } from '../core/util.js';
 import { AUTOMATIONS, CUSTOMER_STAGE, DEFAULT_ROLES, PERMS } from '../domain.js';
 import type { Principal } from './auth.js';
 import { signedFileUrl } from '../integrations/storage.js';
+import { templateApproved } from '../integrations/whatsapp.js';
 import { stageTargets, taskTemplates } from './tasks.js';
 import { loadDrafts } from './workflow.js';
 import { partnerStats } from './business.js';
@@ -167,7 +168,12 @@ export async function staffState(p: Extract<Principal, { type: 'user' }>, q: Q =
         commissions: perms.has('money') ? (coms.get(x.id) || []).map(c => ({ id: c.id, leadId: c.lead_id, amount: c.amount, status: c.status, at: ms(c.created_at) })) : []
       }; });
     })(),
-    autos: (await many(q, 'select * from automations order by length(id), id')).map(a => { const d = AUTOMATIONS.find(x => x.id === a.id); return { id: a.id, fam: a.fam, name: a.name, when: a.when_text, then: a.then_text, on: a.enabled && d?.built !== false, runs: a.runs, tpl: d?.tpl || null, to: d?.to || null, built: d?.built !== false }; })
+    autos: await (async () => {
+      const ok = new Map<string, boolean | null>();
+      for (const t of new Set(AUTOMATIONS.map(a => a.tpl).filter(Boolean) as string[])) ok.set(t, await templateApproved(t, q));
+      return (await many(q, 'select * from automations order by length(id), id')).map(a => { const d = AUTOMATIONS.find(x => x.id === a.id); const approved = d?.tpl ? ok.get(d.tpl) ?? null : true;
+        return { id: a.id, fam: a.fam, name: a.name, when: a.when_text, then: a.then_text, on: a.enabled && d?.built !== false && approved !== false, runs: a.runs, tpl: d?.tpl || null, to: d?.to || null, built: d?.built !== false, approved }; });
+    })()
   } : { leads: [], partners: [], autos: [] };
   const wa = await one(q, `select count(*) filter (where status = 'simulated') sim, count(*) filter (where status in ('sent','delivered','read')) sent, count(*) filter (where status = 'failed') failed from wa_messages where created_at > now() - interval '30 days'`);
   const tickets = await loadTickets(q, p);

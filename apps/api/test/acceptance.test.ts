@@ -10,7 +10,7 @@ const SECRET = 'test-app-secret';
 const graphCalls: { path: string; body: any; method?: string; sig?: string }[] = [];
 const mockGraph = http.createServer((req, res) => {
   let raw = ''; req.on('data', c => raw += c); req.on('end', () => {
-    const url = new URL(req.url!, 'http://x'); const body = raw ? JSON.parse(raw) : null;
+    const url = new URL(req.url!, 'http://x'); let body: any = null; try { body = raw ? JSON.parse(raw) : null; } catch { body = { raw: raw.length }; }
     graphCalls.push({ path: url.pathname, body, method: req.method, sig: req.headers['x-hub-signature-256'] as string });
     res.setHeader('content-type', 'application/json');
     if (url.pathname === '/forward') return res.end('{}');
@@ -24,6 +24,9 @@ const mockGraph = http.createServer((req, res) => {
       { name: 'mms_quotation_request', language: 'en_US', status: 'APPROVED', category: 'MARKETING', components: [{ type: 'BODY', text: 'Hi {{1}}, thanks for your interest.' }] },
       { name: 'mms_followup_day3', language: 'en_US', status: 'APPROVED', category: 'MARKETING', components: [{ type: 'BODY', text: 'Hi {{1}}, following up.' }, { type: 'BUTTONS', buttons: [{ type: 'URL', text: 'Visit' }] }] },
       { name: 'mms_task_assigned', language: 'en', status: 'APPROVED', category: 'UTILITY', components: [{ type: 'BODY', text: '{{1}} {{2}} {{3}} {{4}}' }, { type: 'BUTTONS', buttons: [{ type: 'QUICK_REPLY', text: 'Start' }, { type: 'QUICK_REPLY', text: 'Done' }] }] }] }));
+    if (url.pathname.endsWith('/media')) return res.end(JSON.stringify({ id: 'media-' + graphCalls.length }));
+    if (url.pathname.endsWith('/uploads')) return res.end(JSON.stringify({ id: 'upload:sess' + graphCalls.length }));
+    if (url.pathname.includes('upload:sess')) return res.end(JSON.stringify({ h: '4::handle' }));
     if (url.pathname.endsWith('/message_templates')) return res.end(JSON.stringify({ id: 't' + graphCalls.length, status: 'PENDING', category: body?.category }));
     if (url.pathname.endsWith('/messages')) return res.end(JSON.stringify({ messages: [{ id: 'wamid.' + crypto.randomUUID() }] }));
     if (url.pathname.endsWith('/leadgen_forms')) return res.end(JSON.stringify({ data: [{ id: 'form1', name: 'Kitchen leads' }] }));
@@ -45,7 +48,7 @@ before(async () => {
     META_GRAPH_BASE: `http://127.0.0.1:${(mockGraph.address() as AddressInfo).port}`, META_APP_SECRET: SECRET,
     GOOGLE_TOKENINFO_URL: `http://127.0.0.1:${(mockGraph.address() as AddressInfo).port}/tokeninfo`,
     WHATSAPP_ACCESS_TOKEN: 'test-token', WHATSAPP_PHONE_NUMBER_ID: '1111', WHATSAPP_WABA_ID: '2222', WHATSAPP_VERIFY_TOKEN: 'wa-verify', WHATSAPP_FORWARD_URL: '', GOOGLE_CLIENT_ID: 'test-client.apps.googleusercontent.com',
-    META_PAGE_ID: 'page1', META_PAGE_ACCESS_TOKEN: 'page-token', META_LEADS_VERIFY_TOKEN: 'leads-verify'
+    META_APP_ID: 'app1', META_PAGE_ID: 'page1', META_PAGE_ACCESS_TOKEN: 'page-token', META_LEADS_VERIFY_TOKEN: 'leads-verify'
   });
   const { migrate } = await import('../src/core/migrate.js');
   const { tx } = await import('../src/core/db.js');
@@ -925,4 +928,56 @@ test('21. customer support: complaint number on WhatsApp, assign team, visit, cl
   const final = await api('GET', '/api/v1/state', undefined, T.owner);
   assert.equal(final.erp.tickets.find((t: any) => t.id === t2.id).closedVia, 'override');
   assert.ok(final.erp.audit.some((a: any) => /without happy code/.test(a.text)));
+});
+
+test('28. partners: WhatsApp welcome, monthly PDF / video update, templates with file headers, only approved templates run', async () => {
+  const db = M.db.pool;
+  const setMeta = (list: [string, string][]) => db.query(`insert into settings(key, value) values ('wa_templates_meta', $1) on conflict (key) do update set value = excluded.value`,
+    [JSON.stringify(list.map(([name, status]) => ({ name, status, language: 'en', category: 'UTILITY', params: 3, quickReplies: 0 })))]);
+  const rm = await q1(`select id, name from users where role = 'admin' and active order by created_at limit 1`); const meera = rm.id;
+  // template known but still pending at Meta: the welcome automation is held back and hidden
+  await setMeta([['mms_partner_welcome', 'PENDING'], ['mms_partner_launch_document', 'PENDING']]);
+  graphCalls.length = 0;
+  let r = await api('POST', '/api/v1/partners', { name: 'Ar. Kavya Rao', type: 'architect', phone: '9876500011', owner: meera }, T.owner);
+  assert.ok(r.id, JSON.stringify(r)); await drain();
+  assert.ok(!graphCalls.some(c => c.body?.template?.name === 'mms_partner_welcome'), 'no welcome while the template is pending');
+  const a16 = r.state.crm.autos.find((a: any) => a.id === 'a16');
+  assert.equal(a16.approved, false); assert.equal(a16.on, false);
+  // approved: new partners get the welcome with their relationship manager's name and number
+  await setMeta([['mms_partner_welcome', 'APPROVED'], ['mms_partner_launch_document', 'PENDING'], ['mms_partner_launch_video', 'APPROVED']]);
+  r = await api('POST', '/api/v1/partners', { name: 'Er. Sameer Jain', type: 'contractor', phone: '9876500012', owner: meera }, T.owner);
+  await drain();
+  const w = graphCalls.find(c => c.body?.template?.name === 'mms_partner_welcome');
+  assert.ok(w, 'welcome sent');
+  assert.deepEqual(w!.body.template.components[0].parameters.map((p: any) => p.text).slice(0, 2), ['Sameer', rm.name]);
+  assert.equal(r.state.crm.autos.find((a: any) => a.id === 'a16').on, true);
+  // monthly update: preview count, pending template blocks a PDF, video goes out with the file as header
+  const dry = await api('POST', '/api/v1/partners/broadcast', { ref: 'upload:x.pdf', note: 'preview', types: ['architect', 'contractor'], dryRun: true }, T.owner);
+  assert.equal(dry.approved, false); assert.ok(dry.recipients >= 2);
+  const pdf = await upload(T.owner);
+  assert.equal((await api('POST', '/api/v1/partners/broadcast', { ref: pdf, note: 'New fluted glass wardrobes' }, T.owner)).status, 400, 'PDF template not approved yet');
+  assert.ok([401, 403].includes((await api('POST', '/api/v1/partners/broadcast', { ref: pdf, note: 'New fluted glass wardrobes' }, T.ravi)).status));
+  const vid = await upload(T.owner, 'video/mp4');
+  assert.match(vid, /\.mp4$/);
+  graphCalls.length = 0;
+  const sent = await api('POST', '/api/v1/partners/broadcast', { ref: vid, note: 'New fluted glass wardrobes', types: ['architect', 'contractor'] }, T.owner);
+  assert.ok(sent.ok, JSON.stringify(sent)); assert.equal(sent.recipients, dry.recipients);
+  await drain();
+  assert.ok(graphCalls.some(c => c.path.endsWith('/1111/media')), 'video uploaded to WhatsApp once');
+  const msgs = graphCalls.filter(c => c.body?.template?.name === 'mms_partner_launch_video');
+  assert.equal(msgs.length, sent.recipients);
+  assert.equal(msgs[0].body.template.components[0].type, 'header');
+  assert.match(msgs[0].body.template.components[0].parameters[0].video.id, /^media-/);
+  assert.equal(msgs[0].body.template.components[1].parameters[1].text, 'New fluted glass wardrobes');
+  const hist = await api('GET', '/api/v1/partners/broadcasts', undefined, T.owner);
+  assert.equal(hist.items[0].kind, 'video'); assert.equal(hist.items[0].recipients, sent.recipients);
+  // missing templates with a PDF / video header are created on Meta with an example file
+  graphCalls.length = 0;
+  await api('POST', '/api/v1/admin/whatsapp/sync-templates', { create: true }, T.owner);
+  const vt = graphCalls.find(c => c.path.endsWith('/message_templates') && c.method === 'POST' && c.body.name === 'mms_partner_launch_video');
+  assert.ok(vt, 'video template submitted');
+  assert.deepEqual(vt!.body.components[0], { type: 'HEADER', format: 'VIDEO', example: { header_handle: ['4::handle'] } });
+  assert.equal(vt!.body.category, 'MARKETING');
+  assert.ok(graphCalls.some(c => c.path.endsWith('/app1/uploads')), 'example file uploaded through the resumable upload API');
+  await db.query(`delete from settings where key = 'wa_templates_meta'`);
 });

@@ -3,7 +3,8 @@ import { config, whatsappLive } from '../core/config.js';
 import { db, one, type Q } from '../core/db.js';
 import { enqueue, registerJob } from '../core/jobs.js';
 import { log, normPhone, safeEqual, waNumber } from '../core/util.js';
-import { renderTemplate, WA_TEMPLATES } from '../domain.js';
+import { AUTOMATIONS, renderTemplate, WA_TEMPLATES } from '../domain.js';
+import { SAMPLE_MP4, SAMPLE_PDF } from './samples.js';
 
 export interface SendOpts { q?: Q; related?: { type: string; id: string }; buttons?: string[] /* quick-reply payloads, in button order */ }
 const graph = (p: string) => `${config.META_GRAPH_BASE}/${config.META_GRAPH_VERSION}/${p}`;
@@ -57,8 +58,47 @@ export async function fetchMetaTemplates(): Promise<MetaTpl[]> {
   return out;
 }
 
+/** Is this system template approved on Meta? null = not checked yet (no template list cached). */
+export async function templateApproved(internal: string, q: Q = db): Promise<boolean | null> {
+  const meta = await metaTemplates(q); if (!meta.length) return null;
+  const name = (await templateMap(q))[internal]?.name || 'mms_' + internal;
+  return meta.some(m => m.name === name && m.status === 'APPROVED');
+}
+
+/** An automation runs only when it is switched on, built, and (once the template list is known) its WhatsApp template is approved on Meta. */
+export async function automationOn(q: Q, id: string) {
+  if (!(await one(q, 'select enabled from automations where id = $1', [id]))?.enabled) return false;
+  const d = AUTOMATIONS.find(x => x.id === id);
+  if (!d || !d.built) return false;
+  if (d.tpl && (await templateApproved(d.tpl, q)) === false) return false;
+  return true;
+}
+
+/** Upload a file to WhatsApp so a template can carry it as a PDF / video header. Returns the media id (valid 30 days). */
+export async function uploadWaMedia(data: Buffer, mime: string, filename: string): Promise<string> {
+  if (!whatsappLive()) return 'simulated-media';
+  const fd = new FormData();
+  fd.append('messaging_product', 'whatsapp'); fd.append('type', mime);
+  fd.append('file', new Blob([new Uint8Array(data)], { type: mime }), filename);
+  const res = await fetch(graph(`${config.WHATSAPP_PHONE_NUMBER_ID}/media`), { method: 'POST', headers: { Authorization: `Bearer ${config.WHATSAPP_ACCESS_TOKEN}` }, body: fd });
+  const body: any = await res.json().catch(() => ({}));
+  if (!res.ok || !body.id) throw new Error(`WhatsApp did not accept the file: ${body?.error?.message || res.status}`);
+  return body.id;
+}
+
+/** Meta's example header for a template submission (resumable upload API → handle). */
+async function sampleHandle(kind: 'DOCUMENT' | 'VIDEO') {
+  const data = kind === 'VIDEO' ? SAMPLE_MP4 : SAMPLE_PDF, mime = kind === 'VIDEO' ? 'video/mp4' : 'application/pdf', name = kind === 'VIDEO' ? 'sample.mp4' : 'sample.pdf';
+  if (!config.META_APP_ID) throw new Error('META_APP_ID is needed to submit templates with a file header');
+  const s1 = await fetch(graph(`${config.META_APP_ID}/uploads?file_name=${name}&file_length=${data.length}&file_type=${encodeURIComponent(mime)}`), { method: 'POST', headers: { Authorization: `Bearer ${config.WHATSAPP_ACCESS_TOKEN}` } });
+  const b1: any = await s1.json().catch(() => ({})); if (!s1.ok || !b1.id) throw new Error(`upload session: ${b1?.error?.message || s1.status}`);
+  const s2 = await fetch(graph(b1.id), { method: 'POST', headers: { Authorization: `OAuth ${config.WHATSAPP_ACCESS_TOKEN}`, file_offset: '0' }, body: new Uint8Array(data) });
+  const b2: any = await s2.json().catch(() => ({})); if (!s2.ok || !b2.h) throw new Error(`upload: ${b2?.error?.message || s2.status}`);
+  return b2.h as string;
+}
+
 /** Queue a template message. Runs after the surrounding transaction commits. */
-export async function sendTemplate(phone: string, name: string, params: string[], opts: SendOpts = {}) {
+export async function sendTemplate(phone: string, name: string, params: string[], opts: SendOpts & { header?: { type: 'document' | 'video'; id: string; filename?: string } } = {}) {
   const to = normPhone(phone); if (!to) return;
   const q = opts.q || db;
   const opted = await one(q, 'select opted_out_at from wa_contacts where phone = $1', [to]);
@@ -66,7 +106,7 @@ export async function sendTemplate(phone: string, name: string, params: string[]
   const row = await one<{ id: number }>(q,
     `insert into wa_messages(direction, phone, kind, template, body, payload, status, related_type, related_id)
      values ('out', $1, 'template', $2, $3, $4, 'queued', $5, $6) returning id`,
-    [to, name, WA_TEMPLATES[name]?.category === 'AUTHENTICATION' ? renderTemplate(name, ['••••']) : renderTemplate(name, params), { params, buttons: opts.buttons || [] }, opts.related?.type || null, opts.related?.id || null]);
+    [to, name, WA_TEMPLATES[name]?.category === 'AUTHENTICATION' ? renderTemplate(name, ['••••']) : renderTemplate(name, params), { params, buttons: opts.buttons || [], ...(opts.header ? { header: opts.header } : {}) }, opts.related?.type || null, opts.related?.id || null]);
   await enqueue('wa.send', { id: row!.id }, { q });
   return row!.id;
 }
@@ -97,6 +137,8 @@ async function buildPayload(m: any) {
   let params: string[] = map.params ? map.params.map(p => typeof p === 'number' ? String(raw[p] ?? '') : String(p)) : raw;
   if (meta) { params = params.slice(0, meta.params); while (params.length < meta.params) params.push('-'); }
   const components: any[] = [];
+  const h = m.payload?.header;
+  if (h?.id) components.push({ type: 'header', parameters: [h.type === 'video' ? { type: 'video', video: { id: h.id } } : { type: 'document', document: { id: h.id, filename: h.filename || 'Make My Space.pdf' } }] });
   if (params.length) components.push({ type: 'body', parameters: params.map(text => ({ type: 'text', text: String(text || '-').replace(/\s*\n\s*/g, ' ').slice(0, 1000) })) });
   if (t?.category === 'AUTHENTICATION') {
     // Copy-code OTP templates need the code twice: in the body and in the button.
@@ -227,6 +269,10 @@ export async function syncTemplates(opts: { create?: boolean } = { create: true 
       components.push({ type: 'body', add_security_recommendation: true }, { type: 'footer', code_expiration_minutes: config.OTP_TTL_MIN }, { type: 'buttons', buttons: [{ type: 'otp', otp_type: 'copy_code', text: 'Copy code' }] });
     } else {
       const n = (t.body.match(/\{\{\d+\}\}/g) || []).length;
+      if (t.header) {
+        try { components.push({ type: 'HEADER', format: t.header, example: { header_handle: [await sampleHandle(t.header)] } }); }
+        catch (e: any) { results.push({ internal, name, status: `error: ${e.message}` }); continue; }
+      }
       components.push({ type: 'BODY', text: t.body, ...(n ? { example: { body_text: [Array.from({ length: n }, (_, i) => 'sample' + (i + 1))] } } : {}) });
       if (t.buttons?.length) components.push({ type: 'BUTTONS', buttons: t.buttons.map(text => ({ type: 'QUICK_REPLY', text })) });
     }

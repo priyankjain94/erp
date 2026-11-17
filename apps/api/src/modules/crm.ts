@@ -3,7 +3,7 @@ import { db, many, one, tx, type Q } from '../core/db.js';
 import { parse, type Ctx, type Router } from '../core/http.js';
 import { addDays, bad, first, fmtDate, forbidden, inr, normPhone, notFound, prettyPhone, todayStr } from '../core/util.js';
 import { AUTOMATIONS, leadStageName, LEAD_STAGES, LEAD_STAGE_IDS, LOST_REASONS, SOURCES, SOURCE_IDS, sourceOf, WA_TEMPLATES, renderTemplate } from '../domain.js';
-import { sendTemplate, sendText, windowOpen } from '../integrations/whatsapp.js';
+import { automationOn, sendTemplate, sendText, windowOpen } from '../integrations/whatsapp.js';
 import { audit, staff, userOf, type Principal } from './auth.js';
 import { createProject, ScopeLineZ } from './ops.js';
 import { staffState } from './state.js';
@@ -11,7 +11,7 @@ import { pushTask } from './tasks.js';
 
 type U = Extract<Principal, { type: 'user' }>;
 const tl = (q: Q, leadId: string, text: string, auto = false) => q.query('insert into lead_timeline(lead_id, text, auto) values ($1,$2,$3)', [leadId, text, auto]);
-const autoOn = async (q: Q, id: string) => !!(await one(q, 'select enabled from automations where id = $1', [id]))?.enabled;
+const autoOn = automationOn;
 const bump = (q: Q, id: string) => q.query('update automations set runs = runs + 1 where id = $1', [id]);
 async function ownerIdByName(q: Q, nameOrId: string) {
   const u = await one(q, `select id from users where (id = $1 or lower(name) = lower($1)) and active limit 1`, [nameOrId]);
@@ -310,6 +310,12 @@ export async function crmTick() {
   if (await autoOn(db, 'a15')) for (const pt of await many(db, `select p.id, p.name, p.owner_id from partners p where p.active and p.owner_id is not null and p.created_at < now() - interval '60 days'
       and not exists (select 1 from leads l where l.ref_partner_id = p.id and l.created_at > now() - interval '60 days')`))
     if (await once(db, `a15:${pt.id}:${today.slice(0, 7)}`)) await tx(async q => { await pushTask(q, { title: `Partner gone quiet: visit or call ${pt.name} (no lead in 60 days)`, assignee: pt.owner_id, assigner: pt.owner_id, deadline: addDays(3) }); await bump(q, 'a15'); });
+  // a17: on the 1st of the month, remind the admin to send this month's launches to partners
+  if (today.slice(8) === '01' && await autoOn(db, 'a17') && await once(db, `a17:${today.slice(0, 7)}`)) {
+    const admin = await one(db, `select id from users where role = 'admin' and active order by created_at limit 1`);
+    const n = Number((await one(db, `select count(*) n from partners where active and phone is not null`))!.n);
+    if (admin && n) await tx(async q => { await pushTask(q, { title: `Send this month's new launches to ${n} partner${n > 1 ? 's' : ''} (Partners → Send monthly update)`, assignee: admin.id, assigner: admin.id, deadline: addDays(3) }); await bump(q, 'a17'); });
+  }
   if (await autoOn(db, 'a9')) for (const l of await many(db, `select * from leads where stage in ('new','contacted','qualified','visit','proposal','negotiation') and stage_changed_at < now() - interval '7 days'`))
     if (l.owner_id && await once(db, `a9:${l.id}:${Math.floor(Date.now() / (7 * 864e5))}`)) await tx(async q => { await pushTask(q, { title: `Stale lead: ${l.name} idle 7+ days in ${leadStageName(l.stage)}`, assignee: l.owner_id, assigner: l.owner_id, deadline: today }); await bump(q, 'a9'); });
 }

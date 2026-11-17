@@ -11,7 +11,7 @@ import { authenticate } from '../modules/auth.js';
 /* Files (photos, drawings) are private. The API hands out short-lived signed URLs.
    STORAGE_DRIVER=local keeps files on disk (single server); db keeps them inside PostgreSQL (hosts with a temporary disk, e.g. Render free);
    s3 works with AWS S3, Cloudflare R2, MinIO, Hostinger object storage. */
-const ALLOWED = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+const ALLOWED = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'video/mp4'];
 const sign = (s: string) => crypto.createHmac('sha256', config.JWT_SECRET).update(s).digest('base64url').slice(0, 32);
 
 export function signedFileUrl(ref: string | null | undefined, ttlSec = 3600 * 24) {
@@ -37,13 +37,31 @@ export function s3Presign(method: 'GET' | 'PUT', key: string, expires = 900, con
   return `https://${host}${pathPart}?${canonQs}&X-Amz-Signature=${sig}`;
 }
 
+/** The bytes of an uploaded file (for sending it on, e.g. to WhatsApp). */
+export async function readUpload(ref: string): Promise<{ data: Buffer; contentType: string; id: string }> {
+  const id = ref.replace(/^upload:/, '');
+  const u = await one(db, 'select * from uploads where id = $1', [id]); if (!u) throw notFound('File not found');
+  let data: Buffer;
+  if (config.STORAGE_DRIVER === 'db') {
+    const blob = await one(db, `select encode(data, 'base64') b64 from upload_blobs where id = $1`, [id]); if (!blob) throw bad('The file did not finish uploading. Please upload it again.');
+    data = Buffer.from(String(blob.b64).replace(/\s/g, ''), 'base64');
+  } else if (config.STORAGE_DRIVER === 's3') {
+    const res = await fetch(s3Presign('GET', u.path, 300)); if (!res.ok) throw bad('Could not read the file from storage.');
+    data = Buffer.from(await res.arrayBuffer());
+  } else {
+    const file = path.resolve(config.STORAGE_LOCAL_DIR, u.path); if (!fs.existsSync(file)) throw bad('The file did not finish uploading. Please upload it again.');
+    data = fs.readFileSync(file);
+  }
+  return { data, contentType: u.content_type, id };
+}
+
 export function storageRoutes(r: Router) {
   /** Step 1: ask for an upload slot. Step 2: PUT the bytes to uploadUrl. Step 3: save `ref` on the record. */
   r.post('/api/v1/uploads', async ctx => {
     const p = ctx.auth || await authenticate(ctx);
     if (!p) throw new HttpError(401, 'Please log in again.', 'unauthenticated');
     const b = parse(z.object({ contentType: z.enum(ALLOWED as [string, ...string[]]), size: z.number().int().positive().max(config.MAX_UPLOAD_MB * 1024 * 1024) }), ctx.body);
-    const id = randomId(12) + (b.contentType === 'application/pdf' ? '.pdf' : b.contentType === 'image/png' ? '.png' : b.contentType === 'image/webp' ? '.webp' : '.jpg');
+    const id = randomId(12) + (b.contentType === 'application/pdf' ? '.pdf' : b.contentType === 'video/mp4' ? '.mp4' : b.contentType === 'image/png' ? '.png' : b.contentType === 'image/webp' ? '.webp' : '.jpg');
     const owner = p.type === 'user' ? p.user.id : String(p.customer.id);
     const key = `uploads/${new Date().toISOString().slice(0, 7)}/${id}`;
     await db.query('insert into uploads(id, owner_type, owner_id, content_type, size, path) values ($1,$2,$3,$4,$5,$6)', [id, p.type, owner, b.contentType, b.size, key]);
