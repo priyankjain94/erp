@@ -1,0 +1,17 @@
+{
+  "name": "mms-erp",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "dist/src/server.js",
+  "scripts": {
+    "build": "echo prebuilt",
+    "start": "node dist/src/server.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.1",
+    "zod": "^3.25.76"
+  }
+}

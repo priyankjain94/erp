@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "in.makemyspace.erp",
+        "sha256_cert_fingerprints": ["4C:32:B7:C7:C1:45:89:E9:FD:08:53:AA:BB:2A:D4:A1:55:8E:F6:98:DF:3E:81:AB:16:9F:6E:1F:01:54:91:85"]
+      }
+    }]
