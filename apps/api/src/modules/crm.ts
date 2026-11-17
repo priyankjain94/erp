@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { db, many, one, tx, type Q } from '../core/db.js';
 import { parse, type Ctx, type Router } from '../core/http.js';
 import { addDays, bad, first, fmtDate, forbidden, inr, normPhone, notFound, prettyPhone, todayStr } from '../core/util.js';
-import { leadStageName, LEAD_STAGE_IDS, LOST_REASONS, SOURCE_IDS, sourceOf, WA_TEMPLATES, renderTemplate } from '../domain.js';
+import { leadStageName, LEAD_STAGES, LEAD_STAGE_IDS, LOST_REASONS, SOURCES, SOURCE_IDS, sourceOf, WA_TEMPLATES, renderTemplate } from '../domain.js';
 import { sendTemplate, sendText, windowOpen } from '../integrations/whatsapp.js';
 import { audit, staff, userOf, type Principal } from './auth.js';
 import { createProject, ScopeLineZ } from './ops.js';
@@ -25,7 +25,7 @@ async function refName(q: Q, lead: any) {
 
 export interface NewLead { name: string; phone: string; source: string; sub?: string; ref?: string | null; showroom?: string; interest?: string; value?: number; area?: string; owner?: string; meta?: { leadgenId: string; formId?: string; adName?: string; campaignName?: string } }
 /** Create a lead and run the "new lead" automations. Returns the lead id. */
-export async function createLead(q: Q, by: U | null, f: NewLead) {
+export async function createLead(q: Q, by: U | null, f: NewLead, opts: { welcome?: boolean; task?: boolean; audit?: boolean } = {}) {
   const phone = normPhone(f.phone); if (!phone) throw bad('Enter a 10-digit mobile number.');
   const src = sourceOf(f.source); if (!src) throw bad('Pick where this client came from.');
   let partnerId: string | null = null, refLeadId: string | null = null, ownerId: string | null = null;
@@ -50,7 +50,7 @@ export async function createLead(q: Q, by: U | null, f: NewLead) {
   const by_ = partnerId || refLeadId ? await refName(q, { ref_partner_id: partnerId, ref_lead_id: refLeadId }) : '';
   await tl(q, id, `Lead created · ${src.name}${f.sub ? ' · ' + f.sub : ''}${by_ ? ' · referred by ' + by_ : ''}${f.source === 'walkin' && f.showroom ? ' · ' + f.showroom + ' showroom' : ''}${f.meta?.campaignName ? ' · campaign ' + f.meta.campaignName : ''}`);
   const ownerName = ownerId ? (await one(q, 'select name from users where id = $1', [ownerId]))!.name : 'our team';
-  if (await autoOn(q, 'a1')) {
+  if (opts.welcome !== false && await autoOn(q, 'a1')) {
     const params = [first(f.name), ownerName];
     const mid = await one(q, `insert into lead_messages(lead_id, from_kind, text, tpl, status) values ($1, 'auto', $2, 'welcome_catalogue', 'queued') returning id`, [id, renderTemplate('welcome_catalogue', params)]);
     await sendTemplate(phone, 'welcome_catalogue', params, { q, related: { type: 'lead_message', id: String(mid!.id) } });
@@ -59,9 +59,9 @@ export async function createLead(q: Q, by: U | null, f: NewLead) {
   if (partnerId && await autoOn(q, 'a11')) { await tl(q, id, `${by_} thanked on WhatsApp`, true); await bump(q, 'a11'); }
   if (refLeadId && await autoOn(q, 'a14')) { await tl(q, id, `${by_} thanked for the referral`, true); await bump(q, 'a14'); }
   if (dup) await tl(q, id, 'Duplicate number: flagged for manager review');
-  if (ownerId) await pushTask(q, { title: `Call new lead · ${f.name.trim()}`, assignee: ownerId, assigner: by?.user.id || ownerId, deadline: todayStr(), priority: 'urgent', notify: true });
-  if (by) await audit(q, by, 'lead.create', `Added lead ${f.name.trim()} (${src.name})`, 'lead', id);
-  return { id, dup: !!dup, ownerName };
+  if (ownerId && opts.task !== false) await pushTask(q, { title: `Call new lead · ${f.name.trim()}`, assignee: ownerId, assigner: by?.user.id || ownerId, deadline: todayStr(), priority: 'urgent', notify: true });
+  if (by && opts.audit !== false) await audit(q, by, 'lead.create', `Added lead ${f.name.trim()} (${src.name})`, 'lead', id);
+  return { id, dup: !!dup, ownerName, ownerId };
 }
 
 export async function moveLead(q: Q, by: U, id: string, stage: string, reason = '') {
@@ -93,12 +93,105 @@ export async function moveLead(q: Q, by: U, id: string, stage: string, reason = 
 const LeadZ = z.object({ name: z.string().trim().min(2).max(120), phone: z.string(), source: z.enum(SOURCE_IDS), sub: z.string().max(60).default(''), ref: z.string().optional().nullable(), showroom: z.string().max(60).default(''),
   interest: z.string().max(200).default(''), value: z.coerce.number().min(0).max(1e9).default(0), area: z.string().max(120).default(''), owner: z.string().optional() });
 
+/* ---------- bulk import ---------- */
+const ImportRowZ = z.object({ name: z.string().default(''), phone: z.string().default(''), source: z.string().default(''), sub: z.string().default(''), partner: z.string().default(''),
+  showroom: z.string().default(''), interest: z.string().default(''), value: z.union([z.string(), z.number()]).default(''), area: z.string().default(''), owner: z.string().default(''),
+  stage: z.string().default(''), notes: z.string().default('') }).partial().passthrough();
+const ImportZ = z.object({ rows: z.array(ImportRowZ).min(1).max(2000), source: z.enum(SOURCE_IDS).default('online'), owner: z.string().default(''),
+  welcome: z.boolean().default(false), dupes: z.enum(['skip', 'flag']).default('skip'), dryRun: z.boolean().default(false), file: z.string().max(120).default('') });
+const IMPORT_STAGES = LEAD_STAGES.filter(s => s.id !== 'won' && s.id !== 'lost');
+const SRC_WORDS: [RegExp, string][] = [[/walk|showroom|store/, 'walkin'], [/field|cold|site visit|exhibition/, 'field'], [/architect|interior|designer|planner/, 'architect'],
+  [/contractor|engineer|civil|builder/, 'contractor'], [/agent|broker|real ?estate|property/, 'agent'], [/referr|reference|friend|existing client/, 'referral'],
+  [/online|facebook|insta|meta|google|web|site|justdial|indiamart|ads?\b|whatsapp|youtube|lead form/, 'online']];
+const s_ = (v: unknown) => String(v ?? '').trim();
+/** "3.5 lakh", "35k", "1.2 cr", "₹ 3,50,000" → rupees */
+export function parseMoney(v: unknown) {
+  const t = s_(v).toLowerCase().replace(/[₹,\s]|rs\.?|inr/g, ''); if (!t) return 0;
+  const m = t.match(/^(\d+(?:\.\d+)?)(l|lac|lakh|lakhs|k|cr|crore|crores)?$/); if (!m) return NaN;
+  const n = Number(m[1]), u = m[2] || '';
+  return Math.round(n * (u.startsWith('l') ? 1e5 : u === 'k' ? 1e3 : u.startsWith('c') ? 1e7 : 1));
+}
+function sourceFromText(t: string, def: string): { id: string; sub: string } {
+  const x = t.toLowerCase().trim(); if (!x) return { id: def, sub: '' };
+  const exact = SOURCES.find(s => s.id === x || s.name.toLowerCase() === x); if (exact) return { id: exact.id, sub: '' };
+  for (const [re, id] of SRC_WORDS) if (re.test(x)) return { id, sub: id === 'online' || id === 'field' ? t.trim().slice(0, 60) : '' };
+  return { id: def, sub: t.trim().slice(0, 60) };
+}
+type ImportResult = { row: number; status: 'ok' | 'duplicate' | 'error'; name: string; phone: string; message: string; owner?: string; source?: string; id?: string };
+async function importLeads(q: Q, p: U, b: z.infer<typeof ImportZ>) {
+  const existing = new Map((await many(q, 'select phone, name from leads')).map(l => [l.phone, l.name]));
+  const partners = await many(q, 'select id, name, type, owner_id from partners');
+  const won = await many(q, `select id, name, phone from leads where stage = 'won'`);
+  const users = await many(q, 'select id, name from users where active');
+  const defOwner = b.owner ? await ownerIdByName(q, b.owner) : null;
+  const seen = new Set<string>(); const out: ImportResult[] = []; const perOwner = new Map<string, number>();
+  for (let i = 0; i < b.rows.length; i++) {
+    const r = b.rows[i]; const name = s_(r.name), rawPhone = s_(r.phone);
+    const res: ImportResult = { row: i + 1, status: 'ok', name, phone: rawPhone, message: '' }; out.push(res);
+    if (!name && !rawPhone) { res.status = 'error'; res.message = 'Empty row'; continue; }
+    if (name.length < 2) { res.status = 'error'; res.message = 'Name missing'; continue; }
+    const phone = normPhone(rawPhone); if (!phone) { res.status = 'error'; res.message = 'Not a valid 10-digit mobile number'; continue; }
+    res.phone = prettyPhone(phone);
+    if (seen.has(phone)) { res.status = 'duplicate'; res.message = 'Same number appears earlier in this file'; continue; }
+    seen.add(phone);
+    const dupName = existing.get(phone);
+    if (dupName && b.dupes === 'skip') { res.status = 'duplicate'; res.message = `Already a lead: ${dupName}`; continue; }
+    const src = sourceFromText(s_(r.source), b.source); const fam = sourceOf(src.id).family;
+    let ref: string | null = null;
+    const notes: string[] = [];
+    if (fam === 'partner') {
+      const pn = s_(r.partner).toLowerCase();
+      const pt = pn ? partners.find(x => x.type === src.id && x.name.toLowerCase() === pn) || partners.find(x => x.name.toLowerCase() === pn) : null;
+      if (!pt) { res.status = 'error'; res.message = pn ? `Partner "${s_(r.partner)}" not found. Add them in Partners first.` : `${sourceOf(src.id).name} needs a partner name`; continue; }
+      if (pt.type !== src.id) src.id = pt.type;
+      ref = pt.id;
+    } else if (fam === 'referral') {
+      const rn = s_(r.partner).toLowerCase(), rp = normPhone(s_(r.partner));
+      const c = rn ? won.find(x => x.name.toLowerCase() === rn || (rp && x.phone === rp)) : null;
+      if (!c) { res.status = 'error'; res.message = rn ? `Referring client "${s_(r.partner)}" not found among won clients` : 'Client referral needs the referring client\'s name'; continue; }
+      ref = c.id;
+    }
+    const value = parseMoney(r.value);
+    if (Number.isNaN(value)) { notes.push(`budget "${s_(r.value)}" not read`); }
+    const stageTxt = s_(r.stage).toLowerCase();
+    const stage = stageTxt ? IMPORT_STAGES.find(s => s.id === stageTxt || s.name.toLowerCase() === stageTxt || s.name.toLowerCase().startsWith(stageTxt)) : IMPORT_STAGES[0];
+    if (stageTxt && !stage) notes.push(`stage "${s_(r.stage)}" unknown, put in New`);
+    let ownerId: string | null = null;
+    if (s_(r.owner)) { ownerId = users.find(u => u.name.toLowerCase() === s_(r.owner).toLowerCase() || u.id === s_(r.owner))?.id || null; if (!ownerId) notes.push(`owner "${s_(r.owner)}" not found, auto-assigned`); }
+    if (!ownerId) ownerId = defOwner;
+    if (dupName) notes.push(`number already a lead (${dupName}), flagged`);
+    res.source = sourceOf(src.id).name + (s_(r.sub) || src.sub ? ' · ' + (s_(r.sub) || src.sub) : '');
+    res.message = notes.join('; ');
+    if (b.dryRun) { res.owner = ownerId ? users.find(u => u.id === ownerId)?.name : 'Auto (round-robin)'; continue; }
+    const owner = ownerId ? users.find(u => u.id === ownerId)!.name : undefined;
+    const c = await createLead(q, p, { name, phone, source: src.id, sub: (s_(r.sub) || src.sub).slice(0, 60), ref, showroom: src.id === 'walkin' ? s_(r.showroom).slice(0, 60) : '',
+      interest: s_(r.interest).slice(0, 200), value: Number.isNaN(value) ? 0 : value, area: s_(r.area).slice(0, 120), owner }, { welcome: b.welcome, task: false, audit: false });
+    res.id = c.id; res.owner = c.ownerName;
+    await tl(q, c.id, `Imported${b.file ? ' from ' + b.file : ''} by ${p.user.name}`);
+    if (stage && stage.id !== 'new') { await q.query('update leads set stage = $2 where id = $1', [c.id, stage.id]); await tl(q, c.id, `Imported at stage ${stage.name}`); }
+    if (s_(r.notes)) await tl(q, c.id, `Note: ${s_(r.notes).slice(0, 500)}`);
+    if (c.ownerId) perOwner.set(c.ownerId, (perOwner.get(c.ownerId) || 0) + 1);
+  }
+  if (!b.dryRun) {
+    for (const [oid, n] of perOwner) await pushTask(q, { title: `Call ${n} imported lead${n > 1 ? 's' : ''}${b.file ? ' · ' + b.file : ''}`, assignee: oid, assigner: p.user.id, deadline: todayStr(), priority: 'urgent', notify: true });
+    const n = out.filter(x => x.status === 'ok').length;
+    await audit(q, p, 'lead.import', `Imported ${n} lead${n === 1 ? '' : 's'}${b.file ? ' from ' + b.file : ''} (${out.length - n} skipped)`, 'lead', '');
+  }
+  const count = (s: string) => out.filter(x => x.status === s).length;
+  return { results: out, counts: { ok: count('ok'), duplicate: count('duplicate'), error: count('error') } };
+}
+
 export function crmRoutes(r: Router) {
   const done = async (ctx: Ctx, extra: Record<string, unknown> = {}) => ({ ok: true, ...extra, state: await staffState(userOf(ctx)) });
   r.post('/api/v1/leads', staff('crm'), async ctx => {
     const b = parse(LeadZ, ctx.body);
     const out = await tx(q => createLead(q, userOf(ctx), b));
     return done(ctx, out);
+  });
+  r.post('/api/v1/leads/import', staff('crm'), async ctx => {
+    const b = parse(ImportZ, ctx.body); const p = userOf(ctx);
+    const out = await tx(q => importLeads(q, p, b));
+    return b.dryRun ? { ok: true, ...out } : done(ctx, out);
   });
   r.post('/api/v1/leads/:id/stage', staff('crm'), async ctx => {
     const b = parse(z.object({ stage: z.enum(LEAD_STAGE_IDS), reason: z.string().max(60).default('') }), ctx.body);

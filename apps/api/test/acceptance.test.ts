@@ -233,6 +233,34 @@ test('24. scope of work: sales builds it before the survey, surveyor cannot chan
   assert.equal((await api('DELETE', `/api/v1/projects/${T.pid}/scope/${line.id}`, { reason: 'changed mind' }, T.vikram)).status, 400, 'items in production need a change order');
 });
 
+test('27. bulk lead import: preview, duplicates, errors, stage/budget parsing, one task per owner, no welcome spam', async () => {
+  const ankit = await login(P.ankit);
+  const rows = [
+    { name: 'Import One', phone: '98111 22001', source: 'Instagram ad', interest: 'Kitchen', value: '3.5 lakh', stage: 'Contacted', notes: 'Call after 6 pm', owner: 'Priya' },
+    { name: 'Import Two', phone: '+91 9811122002', source: '', value: '45k' },
+    { name: 'Bad Phone', phone: '12345' },
+    { name: 'Kavya Again', phone: '9907051833' },
+    { name: 'Import One Copy', phone: '9811122001' },
+    { name: 'Partner Ghost', phone: '9811122003', source: 'Architect', partner: 'Nobody Known' },
+    { name: '', phone: '' }
+  ];
+  const pre = await api('POST', '/api/v1/leads/import', { rows, source: 'field', dryRun: true, file: 'test.xlsx' }, ankit);
+  assert.deepEqual(pre.counts, { ok: 2, duplicate: 2, error: 3 }, JSON.stringify(pre.results));
+  let st = await api('GET', '/api/v1/state', undefined, ankit);
+  assert.ok(!st.crm.leads.some((l: any) => l.name === 'Import One'), 'dry run saves nothing');
+  const waBefore = (await q1(`select count(*)::int n from wa_messages where template like '%welcome_catalogue'`)).n;
+  const res = await api('POST', '/api/v1/leads/import', { rows, source: 'field', file: 'test.xlsx' }, ankit);
+  assert.equal(res.ok, true, JSON.stringify(res)); assert.equal(res.counts.ok, 2);
+  st = res.state;
+  const one = st.crm.leads.find((l: any) => l.name === 'Import One'), two = st.crm.leads.find((l: any) => l.name === 'Import Two');
+  assert.equal(one.stage, 'contacted'); assert.equal(one.value, 350000); assert.equal(one.source, 'online'); assert.equal(one.owner, 'Priya');
+  assert.equal(two.source, 'field'); assert.equal(two.value, 45000);
+  assert.equal((await q1(`select count(*)::int n from wa_messages where template like '%welcome_catalogue'`)).n, waBefore, 'no welcome WhatsApp unless asked');
+  const tasks = (await api('GET', '/api/v1/state', undefined, T.owner)).erp.tasks.filter((t: any) => /imported lead/.test(t.title));
+  assert.ok(tasks.length >= 1 && tasks.length <= 2, 'one task per owner, not per lead');
+  assert.equal((await api('POST', '/api/v1/leads/import', { rows: [{ name: 'X', phone: '9811122009' }] }, T.sana)).status, 403, 'needs CRM access');
+});
+
 test('26. survey without scope: surveyor asks the PM (task + WhatsApp), adding scope closes the ask and tells the surveyor', async () => {
   const ankit = await login(P.ankit);
   const np = await api('POST', '/api/v1/projects', { customer: 'No Scope Test', phone: '9811100033', address: 'Shankar Nagar, Raipur', value: 300000, pm: 'vikram', target: '2099-06-01', surveyDate: '2099-05-02', scope: [{ room: 'Kitchen', type: 'KT' }] }, T.owner);

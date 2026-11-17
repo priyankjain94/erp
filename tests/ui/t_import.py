@@ -1,0 +1,36 @@
+import asyncio
+from h2 import *
+async def main():
+    async with async_playwright() as pw:
+        b = await launch(pw); errs=[]
+        ctx = await b.new_context(viewport={'width':1280,'height':860})
+        m = await ctx.new_page(); m.on('pageerror', lambda e: errs.append('PAGEERR '+str(e))); m.on('console', lambda x: errs.append(x.text) if x.type=='error' else None); await m.route('**/*', route)
+        await m.goto(BASE + '/'); await m.wait_for_timeout(1200)
+        await m.get_by_placeholder('10-digit mobile').fill('9000000004'); await m.get_by_role('button', name='Send OTP on WhatsApp').click(); await m.wait_for_timeout(600)
+        c = re.search(r'(\d{4})', await m.locator('.banner.warn').inner_text()).group(1)
+        await m.locator('input[maxlength="8"]').fill(c); await m.get_by_role('button', name='Log in').click(); await m.wait_for_timeout(1800)
+        await m.goto(BASE + '/#pipeline'); await m.wait_for_timeout(1000)
+        await m.get_by_role('button', name='Import').click(); await m.wait_for_timeout(400)
+        await m.screenshot(path='/tmp/imp1.png')
+        await m.locator('.sheet input[type=file]').set_input_files('/tmp/leads.csv'); await m.wait_for_timeout(800)
+        print('map header:', await m.locator('.sheet header p').inner_text())
+        sels = await m.locator('.sheet table select').evaluate_all('els => els.map(e => e.value)')
+        print('mapping:', sels)
+        await m.screenshot(path='/tmp/imp2.png')
+        await m.get_by_role('button', name=re.compile('^Check')).click(); await m.wait_for_timeout(1500)
+        print('pills:', await m.locator('.sheet .pill').all_inner_texts())
+        print('rows:', [t.replace('\t',' | ') for t in (await m.locator('.sheet tbody tr').all_inner_texts())])
+        await m.screenshot(path='/tmp/imp3.png')
+        await m.get_by_role('button', name=re.compile('^Import \\d')).click(); await m.wait_for_timeout(2000)
+        print('done:', await m.locator('.sheet .warnbox').inner_text())
+        await m.screenshot(path='/tmp/imp4.png')
+        await m.get_by_role('button', name='Done').click(); await m.wait_for_timeout(500)
+        print('in pipeline:', await m.locator('text=Amit Rao').count(), await m.locator('text=Neha Jain').count())
+        # paste path
+        await m.get_by_role('button', name='Import').click(); await m.wait_for_timeout(300)
+        await m.locator('.sheet textarea').fill('Name\tPhone\nPaste Person\t9811144001\n')
+        await m.get_by_role('button', name='Use pasted rows').click(); await m.wait_for_timeout(400)
+        print('paste map:', await m.locator('.sheet table select').evaluate_all('els => els.map(e => e.value)'))
+        print('errors:', [e[:160] for e in errs])
+        await b.close()
+asyncio.run(main())
