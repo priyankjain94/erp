@@ -19,7 +19,12 @@ import { workflowRoutes } from './modules/workflow.js';
 
 export function buildApp() {
   const r = new Router();
-  r.get('/api/health', async () => { await db.query('select 1'); return { ok: true, time: new Date().toISOString(), version: '1.17.0' }; });
+  r.get('/api/health', async () => {
+    // dbMs = one round trip to the database; it should be under 10 ms when the app and database are in the same region
+    const t = [] as number[];
+    for (let i = 0; i < 3; i++) { const s = performance.now(); await db.query('select 1'); t.push(Math.round(performance.now() - s)); }
+    return { ok: true, time: new Date().toISOString(), version: '1.17.0', dbMs: Math.min(...t), dbMsFirst: t[0] };
+  });
 
   // Meta webhooks: GET handshake + signed POSTs. Always answer 200 quickly; processing happens in jobs.
   r.get('/api/v1/webhooks/whatsapp', ctx => {
