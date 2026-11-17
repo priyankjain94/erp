@@ -3327,7 +3327,7 @@ function App(){
   const [view, setView] = useState(viewFromHash);
   const [openId, setOpenId] = useState(null);
   const [openTab, setOpenTab] = useState('chat');
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState(false), [importing, setImporting] = useState(false);
   const [lostFor, setLostFor] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [erp, setErp] = useState(EMPTY);
@@ -3428,6 +3428,7 @@ function App(){
       <header className="topbar">
         <h1><span className="eyebrow">${meta.g === 'ops' ? 'MAKE MY SPACE OPERATIONS' : meta.g === 'admin' ? 'MAKE MY SPACE ADMIN' : 'MAKE MY SPACE CRM'}</span>${meta.title || (meta.name === 'Leads' ? 'Lead pipeline' : meta.name)}</h1>
         ${SERVER.demoMode && html`<span className="sample hide-sm">Demo mode</span>`}
+        ${!meta.g && allowed && can(erp, 'crm') && html`<button className="btn" onClick=${() => setImporting(true)}><${Icon} n="folder" s=${16}/><span className="hide-sm">Import</span></button>`}
         ${!meta.g && allowed && html`<button className="btn primary" onClick=${() => setAdding(true)}><${Icon} n="plus" s=${16}/>Add lead</button>`}
         ${view === 'projects' && can(erp, 'assign') && html`<button className="btn primary" onClick=${() => setNewProj(true)}><${Icon} n="plus" s=${16}/>New project</button>`}
         ${(view === 'tasks' || view === 'ops') && html`<button className="btn primary" onClick=${() => setNewTask(true)}><${Icon} n="plus" s=${16}/>New task</button>`}
@@ -3457,6 +3458,7 @@ function App(){
 
     ${current && html`<${Drawer} lead=${current} leads=${leads} call=${call} money=${can(erp, 'money')} tab=${openTab} setTab=${setOpenTab} close=${() => setOpenId(null)} move=${moveLead} send=${send} follow=${setFollow} extra=${current.stage === 'won' && (can(erp, 'edit') || can(erp, 'crm')) ? html`<${ConvertBox} key=${current.id} lead=${current} erp=${erp} ops=${ops} ui=${ui}/>` : null} setOwner=${o => call('PATCH', `/leads/${current.id}`, {owner:o}, `${current.name} reassigned to ${o}.`)}/>`}
     ${adding && html`<${AddLead} leads=${leads} close=${() => setAdding(false)} add=${addLead} call=${call} erp=${erp}/>`}
+    ${importing && html`<${LeadImport} close=${() => setImporting(false)} call=${call} toast=${toast}/>`}
     ${pOpen && erp.projects.some(p => p.id === pOpen) && html`<${ProjectDrawer} key=${pOpen} p=${erp.projects.find(p => p.id === pOpen)} erp=${erp} ui=${ui} ops=${ops} leads=${leads} tab=${pTab} setTab=${setPTab} item=${iOpen && erp.items.find(i => i.id === iOpen && i.projectId === pOpen)} closeItem=${() => setIOpen(null)} close=${() => { setIOpen(null); setPOpen(null); }}/>`}
     ${tOpen && html`<${TaskDrawer} key=${tOpen} t=${erp.tasks.find(t => t.id === tOpen)} erp=${erp} ops=${ops} close=${() => setTOpen(null)}/>`}
     ${iOpen && erp.items.find(i => i.id === iOpen) && !(pOpen && erp.items.find(i => i.id === iOpen).projectId === pOpen) && html`<${ItemModal} key=${iOpen} it=${erp.items.find(i => i.id === iOpen)} erp=${erp} ops=${ops} ui=${ui} close=${() => setIOpen(null)}/>`}
@@ -3882,6 +3884,156 @@ function AddLead({leads, close, add, call, erp}){
       </div>
     </form>
     ${newPartner && html`<${PartnerForm} init=${null} erp=${erp} close=${() => setNewPartner(false)} save=${async b => { const r = await call('POST', '/partners', {...b, type:f.source}, `${b.name} added as a partner.`); if (r?.id) set('ref', r.id); return !!r; }}/>`}
+  </div>`;
+}
+
+/* ---------- Bulk lead import (Excel / CSV / paste) ---------- */
+const IMPORT_FIELDS = [
+  {id:'name', label:'Client name', req:true, re:/^(client |customer |lead |full )?name$|^name|client|customer/},
+  {id:'phone', label:'Mobile / WhatsApp', req:true, re:/phone|mobile|whatsapp|contact|cell|number/},
+  {id:'source', label:'Source', re:/source|channel|platform|medium/},
+  {id:'sub', label:'Sub-source / campaign', re:/sub|campaign|\bad\b|form/},
+  {id:'partner', label:'Partner / referred by', re:/partner|referr|reference|architect name|agent name/},
+  {id:'interest', label:'Interested in', re:/interest|requirement|product|service|looking/},
+  {id:'value', label:'Budget (₹)', re:/budget|value|amount|price|deal/},
+  {id:'area', label:'Area / location', re:/area|location|locality|city|address/},
+  {id:'showroom', label:'Showroom', re:/showroom/},
+  {id:'owner', label:'Owner (salesperson)', re:/owner|assign|sales ?person|executive|consultant/},
+  {id:'stage', label:'Stage', re:/stage|status/},
+  {id:'notes', label:'Notes', re:/note|remark|comment|message|description/}];
+function parseDelimited(text){
+  const t = text.replace(/^﻿/, ''); const first = t.split(/\r?\n/)[0] || '';
+  const d = (first.match(/\t/g) || []).length > (first.match(/,/g) || []).length ? '\t' : (first.match(/;/g) || []).length > (first.match(/,/g) || []).length ? ';' : ',';
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < t.length; i++){
+    const c = t[i];
+    if (q){ if (c === '"'){ if (t[i+1] === '"'){ cell += '"'; i++; } else q = false; } else cell += c; continue; }
+    if (c === '"' && cell === '') q = true;
+    else if (c === d){ row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r'){ if (c === '\r' && t[i+1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += c;
+  }
+  if (cell !== '' || row.length){ row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(x => String(x).trim()));
+}
+let xlsxLoading = null;
+const loadXlsx = () => window.XLSX ? Promise.resolve(window.XLSX) : (xlsxLoading = xlsxLoading || new Promise((ok, no) => {
+  const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+  sc.onload = () => ok(window.XLSX); sc.onerror = () => { xlsxLoading = null; no(new Error('Could not load the Excel reader. Check the internet, or save the sheet as CSV.')); };
+  document.head.appendChild(sc); }));
+function guessMapping(head, rows){
+  const used = new Set(), map = head.map(() => '');
+  head.forEach((h, i) => { const x = String(h || '').toLowerCase().trim(); if (!x) return;
+    const f = [IMPORT_FIELDS[1], ...IMPORT_FIELDS.filter(f => f.id !== 'phone')].find(f => !used.has(f.id) && f.re.test(x)); if (f){ map[i] = f.id; used.add(f.id); } });
+  if (!used.has('phone')){ const i = head.findIndex((_, i) => !map[i] && rows.slice(0, 20).filter(r => /^\D*(91)?\d{10}\D*$/.test(String(r[i] || '').replace(/[\s-]/g, ''))).length >= Math.min(3, rows.length)); if (i >= 0){ map[i] = 'phone'; used.add('phone'); } }
+  if (!used.has('name')){ const i = head.findIndex((_, i) => !map[i] && rows.slice(0, 20).some(r => /[a-z]{2}/i.test(String(r[i] || '')))); if (i >= 0) map[i] = 'name'; }
+  return map;
+}
+const csvCell = v => /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
+const saveCsv = (name, rows) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + rows.map(r => r.map(csvCell).join(',')).join('\n')], {type:'text/csv'})); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); };
+const IMPORT_TEMPLATE = [['Name','Mobile','Source','Sub-source','Partner / Referred by','Interested in','Budget','Area','Owner','Stage','Notes'],
+  ['Rohan Agrawal','9876501234','Online','Instagram ad','','Modular kitchen','3.5 lakh','Shankar Nagar','','New','Wants a site visit next week'],
+  ['Sneha Patel','98930 77451','Architect','','Ar. Neha Agrawal','Full home interiors','12 lakh','VIP Road','','Contacted','']];
+
+function LeadImport({close, call, toast}){
+  const [step, setStep] = useState('pick'), [busy, setBusy] = useState(false), [err, setErr] = useState('');
+  const [file, setFile] = useState(''), [paste, setPaste] = useState('');
+  const [head, setHead] = useState([]), [rows, setRows] = useState([]), [map, setMap] = useState([]), [hasHead, setHasHead] = useState(true);
+  const [opt, setOpt] = useState({source:'online', owner:'', welcome:false, dupes:'skip'});
+  const [prev, setPrev] = useState(null), [done, setDone] = useState(null);
+  const load = (grid, name) => {
+    if (!grid.length){ setErr('No rows found in that file.'); return; }
+    const width = Math.max(...grid.map(r => r.length));
+    const g = grid.map(r => Array.from({length:width}, (_, i) => String(r[i] ?? '').trim()));
+    const looksHead = g[0].some(h => IMPORT_FIELDS.some(f => f.re.test(h.toLowerCase()))) && !g[0].some(h => /^\D*(91)?\d{10}\D*$/.test(h.replace(/[\s-]/g, '')));
+    const hd = looksHead ? g[0] : g[0].map((_, i) => 'Column ' + (i + 1)), body = looksHead ? g.slice(1) : g;
+    if (body.length > 2000){ setErr(`This file has ${body.length} rows. Import up to 2000 at a time; split the sheet and import in parts.`); return; }
+    setHasHead(looksHead); setHead(hd); setRows(body); setMap(guessMapping(hd, body)); setFile(name); setErr(''); setStep('map');
+  };
+  const onFile = async e => {
+    const f = e.target.files && e.target.files[0]; e.target.value = ''; if (!f) return;
+    setBusy(true); setErr('');
+    try {
+      if (/\.(xlsx|xls|ods)$/i.test(f.name)){
+        const X = await loadXlsx(); const wb = X.read(await f.arrayBuffer(), {type:'array'});
+        const ws = wb.Sheets[wb.SheetNames[0]]; load(X.utils.sheet_to_json(ws, {header:1, raw:false, defval:''}), f.name);
+      } else load(parseDelimited(await f.text()), f.name);
+    } catch(x){ setErr(x.message || 'Could not read that file.'); }
+    setBusy(false);
+  };
+  const missing = IMPORT_FIELDS.filter(f => f.req && !map.includes(f.id));
+  const payloadRows = () => rows.map(r => { const o = {}; map.forEach((f, i) => { if (f) o[f] = o[f] ? o[f] + ' ' + r[i] : r[i]; }); return o; });
+  const body = dryRun => ({rows:payloadRows(), source:opt.source, owner:opt.owner, welcome:opt.welcome, dupes:opt.dupes, dryRun, file:file.slice(0, 120)});
+  const preview = async () => { setBusy(true); try { const r = await API.call('POST', '/leads/import', body(true)); setPrev(r); setStep('preview'); } catch(x){ setErr(x.message); } setBusy(false); };
+  const run = async () => { setBusy(true); const r = await call('POST', '/leads/import', body(false)); setBusy(false); if (r){ setDone(r); setStep('done'); toast(`${r.counts.ok} lead${r.counts.ok === 1 ? '' : 's'} imported.`); } };
+  const skipped = res => res.results.filter(x => x.status !== 'ok' || x.message);
+  const exportSkipped = res => saveCsv('leads-not-imported.csv', [[...head, 'Result', 'Reason'], ...res.results.filter(x => x.status !== 'ok').map(x => [...rows[x.row - 1], x.status === 'duplicate' ? 'Duplicate' : 'Error', x.message])]);
+  const chip = st => st === 'ok' ? html`<span className="pill good">Ready</span>` : st === 'duplicate' ? html`<span className="pill warn">Duplicate</span>` : html`<span className="pill crit">Error</span>`;
+  const direct = SOURCES.filter(x => srcById[x.id].family === 'direct');
+  return html`<div className="modal" role="dialog" aria-modal="true" aria-label="Import leads">
+    <div className="scrim" onClick=${() => !busy && close()}></div>
+    <div className="sheet" style=${{width:'min(880px,100%)'}}>
+      <header><h2>Import leads</h2><p>${step === 'pick' ? 'Upload an Excel or CSV file, or paste rows copied from a sheet. You will see a preview before anything is saved.'
+        : step === 'map' ? `${rows.length} row${rows.length === 1 ? '' : 's'} found in ${file}. Check which column is which.`
+        : step === 'preview' ? 'Nothing is saved yet. Check the result, then import.' : 'Import finished.'}</p></header>
+      <div className="form" style=${{gridTemplateColumns:'1fr'}}>
+      ${err && html`<div className="warnbox">${err}</div>`}
+
+      ${step === 'pick' && html`<${React.Fragment}>
+        <label className="full" style=${{border:'1.5px dashed var(--line-2)',padding:'26px 16px',textAlign:'center',cursor:'pointer',display:'grid',gap:6,justifyItems:'center'}}>
+          <${Icon} n="folder" s=${26}/><b style=${{fontSize:15}}>${busy ? 'Reading the file…' : 'Choose an Excel or CSV file'}</b>
+          <span className="hint">.xlsx, .xls or .csv · up to 2000 leads · first sheet is used</span>
+          <input type="file" accept=".xlsx,.xls,.ods,.csv,.txt,text/csv" onChange=${onFile} style=${{display:'none'}} disabled=${busy}/>
+        </label>
+        <label className="full">Or paste rows from Excel / Google Sheets (include the header row)
+          <textarea rows="5" value=${paste} onInput=${e => setPaste(e.target.value)} placeholder=${'Name\tMobile\tSource\nRohan Agrawal\t9876501234\tInstagram'}></textarea></label>
+        <div className="form-foot" style=${{justifyContent:'space-between'}}>
+          <button type="button" className="btn ghost" onClick=${() => saveCsv('lead-import-template.csv', IMPORT_TEMPLATE)}>Download template</button>
+          <span style=${{display:'flex',gap:8}}><button type="button" className="btn ghost" onClick=${close}>Cancel</button>
+          <button type="button" className="btn primary" disabled=${!paste.trim()} onClick=${() => load(parseDelimited(paste), 'pasted rows')}>Use pasted rows</button></span>
+        </div>
+      <//>`}
+
+      ${step === 'map' && html`<${React.Fragment}>
+        <div style=${{overflowX:'auto'}}><table style=${{minWidth:0,fontSize:13}}>
+          <thead><tr><th style=${{textAlign:'left'}}>${hasHead ? 'Column in your file' : 'Column'}</th><th style=${{textAlign:'left'}}>Example</th><th style=${{textAlign:'left'}}>Import as</th></tr></thead>
+          <tbody>${head.map((h, i) => html`<tr key=${i}><td><b>${h || 'Column ' + (i + 1)}</b></td>
+            <td className="hint" style=${{maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${rows.slice(0, 3).map(r => r[i]).filter(Boolean).join(' · ')}</td>
+            <td><select value=${map[i]} onChange=${e => setMap(m => m.map((x, k) => k === i ? e.target.value : x === e.target.value && e.target.value ? '' : x))}>
+              <option value="">Don't import</option>${IMPORT_FIELDS.map(f => html`<option key=${f.id} value=${f.id}>${f.label}${f.req ? ' *' : ''}</option>`)}</select></td></tr>`)}</tbody></table></div>
+        ${missing.length > 0 && html`<div className="warnbox">Choose the column for: ${missing.map(f => f.label).join(', ')}.</div>`}
+        <div style=${{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:12}}>
+          <label>Source when the file has none<select value=${opt.source} onChange=${e => setOpt(o => ({...o, source:e.target.value}))}>${direct.map(x => html`<option key=${x.id} value=${x.id}>${x.name}</option>`)}</select></label>
+          <label>Owner when the file has none<select value=${opt.owner} onChange=${e => setOpt(o => ({...o, owner:e.target.value}))}><option value="">Share among sales team</option>${OWNERS.map(o => html`<option key=${o}>${o}</option>`)}</select></label>
+          <label>Numbers already in the CRM<select value=${opt.dupes} onChange=${e => setOpt(o => ({...o, dupes:e.target.value}))}><option value="skip">Skip them</option><option value="flag">Add anyway, flagged as duplicate</option></select></label>
+        </div>
+        <label style=${{display:'flex',gap:8,alignItems:'flex-start',fontWeight:400,textTransform:'none',letterSpacing:0,fontSize:13.5,color:'var(--ink)'}}><input type="checkbox" checked=${opt.welcome} onChange=${e => setOpt(o => ({...o, welcome:e.target.checked}))} style=${{width:'auto',marginTop:3}}/>
+          <span>Send each new lead the welcome WhatsApp<br/><span className="hint">Off by default: every template message is charged by Meta. Owners get one task to call their imported leads instead.</span></span></label>
+        <div className="form-foot"><button type="button" className="btn ghost" onClick=${() => { setStep('pick'); setErr(''); }}>Back</button>
+          <button type="button" className="btn primary" disabled=${busy || missing.length > 0} onClick=${preview}>${busy ? 'Checking…' : `Check ${rows.length} row${rows.length === 1 ? '' : 's'}`}</button></div>
+      <//>`}
+
+      ${step === 'preview' && prev && html`<${React.Fragment}>
+        <div style=${{display:'flex',gap:8,flexWrap:'wrap'}}><span className="pill good">${prev.counts.ok} ready</span>${prev.counts.duplicate > 0 && html`<span className="pill warn">${prev.counts.duplicate} duplicate</span>`}${prev.counts.error > 0 && html`<span className="pill crit">${prev.counts.error} with errors</span>`}</div>
+        <div style=${{overflow:'auto',maxHeight:340}}><table style=${{minWidth:0,fontSize:12.5}}>
+          <thead><tr><th>Row</th><th style=${{textAlign:'left'}}>Name</th><th style=${{textAlign:'left'}}>Mobile</th><th style=${{textAlign:'left'}}>Source</th><th style=${{textAlign:'left'}}>Owner</th><th></th><th style=${{textAlign:'left'}}>Note</th></tr></thead>
+          <tbody>${[...prev.results].sort((a, b) => (a.status === 'ok') - (b.status === 'ok')).slice(0, 300).map(x => html`<tr key=${x.row}><td>${x.row + (hasHead ? 1 : 0)}</td><td>${x.name}</td><td style=${{whiteSpace:'nowrap'}}>${x.phone}</td><td>${x.source || ''}</td><td>${x.owner || ''}</td><td>${chip(x.status)}</td><td className="hint">${x.message}</td></tr>`)}</tbody></table></div>
+        ${prev.results.length > 300 && html`<span className="hint">Showing 300 of ${prev.results.length} rows; problem rows first.</span>`}
+        <div className="form-foot" style=${{justifyContent:'space-between'}}>
+          <button type="button" className="btn ghost" disabled=${!skipped(prev).length} onClick=${() => exportSkipped(prev)}>Download rows that won't import</button>
+          <span style=${{display:'flex',gap:8}}><button type="button" className="btn ghost" onClick=${() => setStep('map')}>Back</button>
+          <button type="button" className="btn primary" disabled=${busy || !prev.counts.ok} onClick=${run}>${busy ? 'Importing…' : `Import ${prev.counts.ok} lead${prev.counts.ok === 1 ? '' : 's'}`}</button></span>
+        </div>
+      <//>`}
+
+      ${step === 'done' && done && html`<${React.Fragment}>
+        <div className="warnbox" style=${{borderLeftColor:'var(--ink)'}}><b>${done.counts.ok} lead${done.counts.ok === 1 ? '' : 's'} added to the pipeline.</b>${done.counts.duplicate + done.counts.error > 0 ? ` ${done.counts.duplicate + done.counts.error} skipped.` : ''} Each owner has a task to call their new leads${opt.welcome ? ', and the welcome WhatsApp is on its way' : ''}.</div>
+        <div className="form-foot" style=${{justifyContent:'space-between'}}>
+          <button type="button" className="btn ghost" disabled=${!(done.counts.duplicate + done.counts.error)} onClick=${() => exportSkipped(done)}>Download skipped rows</button>
+          <button type="button" className="btn primary" onClick=${close}>Done</button></div>
+      <//>`}
+      </div>
+    </div>
   </div>`;
 }
 
