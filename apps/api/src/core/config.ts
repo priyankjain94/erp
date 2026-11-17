@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import { z } from 'zod';
 
 const bool = z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true' || v === '1');
@@ -47,7 +48,7 @@ const Env = z.object({
   META_LEADS_VERIFY_TOKEN: z.string().default(''),
   SCHEDULER_ENABLED: bool.default(true),
   WORKER_ENABLED: bool.default(true),
-  WEB_DIR: z.string().default('../web/public'),
+  WEB_DIR: z.string().default(fs.existsSync('./web/index.html') ? './web' : '../web/public'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info')
 });
 

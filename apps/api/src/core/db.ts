@@ -9,7 +9,7 @@ pg.types.setTypeParser(20, v => Number(v));
 export const pool = new pg.Pool({
   connectionString: config.DATABASE_URL,
   max: 10,
-  ssl: config.DATABASE_SSL ? { rejectUnauthorized: false } : undefined
+  ssl: config.DATABASE_SSL || /sslmode=(require|verify)/.test(config.DATABASE_URL) ? { rejectUnauthorized: false } : undefined
 });
 pool.on('error', err => console.error('[db] idle client error', err.message));
 
