@@ -122,23 +122,26 @@ export const SOURCE_IDS = SOURCES.map(s => s.id) as unknown as [string, ...strin
 export const sourceOf = (id: string) => SOURCES.find(s => s.id === id)!;
 export const LOST_REASONS = ['Budget', 'Timing', 'Bought elsewhere', 'Not reachable', 'Not interested'];
 
-export const AUTOMATIONS = [
-  ['a1', 'Every lead', 'Instant welcome', 'New lead from any source', 'Send welcome template with catalogue, assign by source rule', true],
-  ['a2', 'Every lead', 'Missed-response alert', 'Client message unanswered 15 min in working hours', 'Notify owner and manager', true],
-  ['a3', 'Every lead', 'Follow-up nudge', 'No reply from lead for 2 days', 'Send follow_up_gentle; after 5 more days move to Nurture', true],
-  ['a4', 'Every lead', 'Visit reminder', '1 day and 2 hours before visit date', 'Send visit_reminder with location pin', true],
-  ['a5', 'Every lead', 'Post-visit feedback', 'Stage moved to Visit / Meeting done', 'After 3 hours, send feedback buttons that move the stage', true],
-  ['a6', 'Every lead', 'Quote follow-up', 'Stage moved to Proposal sent', 'After 2 days, create a call task for the owner', true],
-  ['a7', 'Every lead', 'Won welcome', 'Stage moved to Won', 'Thank-you template, tag Customer, onboarding task', true],
-  ['a8', 'Every lead', 'Lost win-back', '60 days after Lost for Budget or Timing', 'Re-engagement template, opted-in contacts only', false],
-  ['a9', 'Every lead', 'Stale lead alert', 'Lead idle in an open stage for 7 days', 'Notify the lead owner', true],
-  ['a10', 'Every lead', 'Greetings', 'Birthday or anniversary date reached', 'Greeting template, opted-in contacts only', false],
-  ['a11', 'Partners', 'Partner lead received', 'New lead with a partner source', 'Thank the partner and name the consultant', true],
-  ['a12', 'Partners', 'Partner progress updates', 'Partner lead reaches Visit, Proposal sent or Won', 'Utility template to the partner with the new status', true],
-  ['a13', 'Partners', 'Commission on Won', 'Partner lead moves to Won', 'Create commission entry from partner rule, ask manager to approve', true],
-  ['a14', 'Referrals', 'Referral thank-you', 'Referral lead created, and again on Won', 'Thank the referring client, create reward on Won', true],
-  ['a15', 'Partners', 'Dormant partner nudge', 'Partner has sent no lead in 60 days', 'Task for the relationship owner to visit or call', true]
-] as const;
+/** CRM automations. `tpl` = WhatsApp template it sends (checked against Meta approval on the Automations screen);
+ *  `to` = who receives it; `built: false` = described for the roadmap but not running yet (toggle disabled). */
+export interface Automation { id: string; fam: string; name: string; when: string; then: string; on: boolean; tpl?: string; to?: string; built: boolean }
+export const AUTOMATIONS: Automation[] = [
+  { id: 'a1', fam: 'Every lead', name: 'Instant welcome', when: 'A new lead is added by hand or arrives from a Meta lead form', then: 'Send the welcome template to the client. Owner: the partner\'s relationship owner, else the person chosen, else the salesperson with the fewest leads this month. The owner gets an urgent "Call new lead" task.', on: true, tpl: 'welcome_catalogue', to: 'Client', built: true },
+  { id: 'a2', fam: 'Every lead', name: 'Missed-response alert', when: 'A client\'s WhatsApp message has no reply for 15 minutes', then: 'Urgent task for the lead owner to reply (with a WhatsApp alert to the owner)', on: true, tpl: 'task_assigned', to: 'Lead owner', built: true },
+  { id: 'a3', fam: 'Every lead', name: 'Follow-up nudge', when: 'An open lead has not replied for 2 days', then: 'Send the follow-up template (at most once a week). If they still don\'t reply 5 days after the nudge, move the lead to Nurture.', on: true, tpl: 'follow_up_gentle', to: 'Client', built: true },
+  { id: 'a4', fam: 'Every lead', name: 'Visit reminder', when: '1 day and 2 hours before a showroom or site visit', then: 'Send the visit reminder template. Needs a visit date on the lead first.', on: false, tpl: 'visit_reminder', to: 'Client', built: false },
+  { id: 'a5', fam: 'Every lead', name: 'Post-visit feedback', when: 'Lead moved to Visit / Meeting', then: 'After 3 hours, ask the client how the visit went', on: false, to: 'Client', built: false },
+  { id: 'a6', fam: 'Every lead', name: 'Quote follow-up', when: 'Lead moved to Proposal sent', then: 'Task for the owner to call the client in 2 days', on: true, to: 'Lead owner', built: true },
+  { id: 'a7', fam: 'Every lead', name: 'Won: start the project', when: 'Lead moved to Won', then: 'Task for the owner to convert the lead into a project the next day. The client gets the project welcome template when the project is created.', on: true, tpl: 'project_welcome', to: 'Client', built: true },
+  { id: 'a8', fam: 'Every lead', name: 'Lost win-back', when: '60 days after Lost for Budget or Timing', then: 'Re-engagement (marketing) template, for opted-in contacts only', on: false, tpl: 'festive_offer', to: 'Client', built: false },
+  { id: 'a9', fam: 'Every lead', name: 'Stale lead alert', when: 'A lead stays in the same open stage for 7 days', then: 'Task for the lead owner, once a week', on: true, to: 'Lead owner', built: true },
+  { id: 'a10', fam: 'Every lead', name: 'Greetings', when: 'Birthday or anniversary', then: 'Greeting template for opted-in contacts. Needs dates on the lead first.', on: false, to: 'Client', built: false },
+  { id: 'a11', fam: 'Partners', name: 'Partner lead received', when: 'A new lead comes from an architect, contractor or agent', then: 'Tell the partner the lead was received and which consultant will call', on: true, tpl: 'partner_update', to: 'Partner', built: true },
+  { id: 'a12', fam: 'Partners', name: 'Partner progress updates', when: 'A partner\'s lead reaches Visit, Proposal sent or Won', then: 'Send the partner the new status', on: true, tpl: 'partner_update', to: 'Partner', built: true },
+  { id: 'a13', fam: 'Partners', name: 'Commission on Won', when: 'A partner\'s lead moves to Won', then: 'Create a commission entry from the partner\'s rate, for the manager to approve', on: true, built: true },
+  { id: 'a14', fam: 'Referrals', name: 'Referral reward', when: 'A client-referral lead is created, and again when it is Won', then: 'Note the referral on the timeline; on Won, a task for the owner to give the referring client their reward', on: true, to: 'Lead owner', built: true },
+  { id: 'a15', fam: 'Partners', name: 'Dormant partner nudge', when: 'A partner has sent no lead for 60 days', then: 'Task for the partner\'s relationship owner to visit or call (once a month)', on: true, to: 'Relationship owner', built: true }
+];
 
 /* WhatsApp templates the system uses (name -> category + body with {{n}} params + optional quick-reply buttons) */
 export const WA_TEMPLATES: Record<string, { category: 'UTILITY' | 'MARKETING' | 'AUTHENTICATION'; body: string; buttons?: string[] }> = {

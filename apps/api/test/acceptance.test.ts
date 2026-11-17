@@ -135,7 +135,12 @@ test('4. CRM: new lead automations, duplicate flag, won lead converts to a proje
   const a = await api('POST', '/api/v1/leads', { name: 'Neha Kapoor', phone: '9812345678', source: 'architect', ref: 'p1', interest: 'Kitchen', value: 500000 }, T.owner);
   assert.equal(a.ok, true, JSON.stringify(a)); assert.equal(a.ownerName, 'Priya', 'partner leads go to the partner owner');
   const lead = a.state.crm.leads.find((l: any) => l.id === a.id);
-  assert.ok(lead.timeline.some((t: any) => /thanked on WhatsApp/.test(t.text)) && lead.msgs.some((m: any) => m.tpl === 'welcome_catalogue'));
+  assert.ok(lead.timeline.some((t: any) => /told on WhatsApp that the lead was received|has no WhatsApp number/.test(t.text)) && lead.msgs.some((m: any) => m.tpl === 'welcome_catalogue'));
+  if (lead.timeline.some((t: any) => /told on WhatsApp/.test(t.text))) assert.equal((await q1(`select count(*)::int n from wa_messages where template like '%partner_update' and related_id = $1`, [a.id])).n, 1, 'partner really messaged');
+  const autos = a.state.crm.autos;
+  assert.equal(autos.find((x: any) => x.id === 'a4').built, false); assert.equal(autos.find((x: any) => x.id === 'a4').on, false);
+  assert.equal(autos.find((x: any) => x.id === 'a1').tpl, 'welcome_catalogue');
+  assert.equal((await api('PATCH', '/api/v1/automations/a4', { on: true }, T.owner)).status, 400, 'unbuilt automations stay off');
   const d = await api('POST', '/api/v1/leads', { name: 'Neha again', phone: '98123 45678', source: 'online', sub: 'Website' }, T.owner);
   assert.equal(d.dup, true);
   assert.equal((await api('POST', '/api/v1/leads', { name: 'No partner', phone: '9812345600', source: 'architect' }, T.owner)).status, 400);

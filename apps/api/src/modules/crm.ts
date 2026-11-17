@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { db, many, one, tx, type Q } from '../core/db.js';
 import { parse, type Ctx, type Router } from '../core/http.js';
 import { addDays, bad, first, fmtDate, forbidden, inr, normPhone, notFound, prettyPhone, todayStr } from '../core/util.js';
-import { leadStageName, LEAD_STAGES, LEAD_STAGE_IDS, LOST_REASONS, SOURCES, SOURCE_IDS, sourceOf, WA_TEMPLATES, renderTemplate } from '../domain.js';
+import { AUTOMATIONS, leadStageName, LEAD_STAGES, LEAD_STAGE_IDS, LOST_REASONS, SOURCES, SOURCE_IDS, sourceOf, WA_TEMPLATES, renderTemplate } from '../domain.js';
 import { sendTemplate, sendText, windowOpen } from '../integrations/whatsapp.js';
 import { audit, staff, userOf, type Principal } from './auth.js';
 import { createProject, ScopeLineZ } from './ops.js';
@@ -56,8 +56,13 @@ export async function createLead(q: Q, by: U | null, f: NewLead, opts: { welcome
     await sendTemplate(phone, 'welcome_catalogue', params, { q, related: { type: 'lead_message', id: String(mid!.id) } });
     await tl(q, id, 'Welcome template sent', true); await bump(q, 'a1');
   }
-  if (partnerId && await autoOn(q, 'a11')) { await tl(q, id, `${by_} thanked on WhatsApp`, true); await bump(q, 'a11'); }
-  if (refLeadId && await autoOn(q, 'a14')) { await tl(q, id, `${by_} thanked for the referral`, true); await bump(q, 'a14'); }
+  if (partnerId && await autoOn(q, 'a11')) {
+    const pt = await one(q, 'select name, phone from partners where id = $1', [partnerId]);
+    if (pt?.phone) { await sendTemplate(pt.phone, 'partner_update', [first(pt.name), f.name.trim(), `received, ${ownerName} will call them today`], { q, related: { type: 'lead', id } }); await tl(q, id, `${by_} told on WhatsApp that the lead was received`, true); }
+    else await tl(q, id, `${by_} has no WhatsApp number, so was not told`, true);
+    await bump(q, 'a11');
+  }
+  if (refLeadId && await autoOn(q, 'a14')) { await tl(q, id, `Referred by ${by_}`, true); await tl(q, refLeadId, `Referred a new lead: ${f.name.trim()}`, true); await bump(q, 'a14'); }
   if (dup) await tl(q, id, 'Duplicate number: flagged for manager review');
   if (ownerId && opts.task !== false) await pushTask(q, { title: `Call new lead · ${f.name.trim()}`, assignee: ownerId, assigner: by?.user.id || ownerId, deadline: todayStr(), priority: 'urgent', notify: true });
   if (by && opts.audit !== false) await audit(q, by, 'lead.create', `Added lead ${f.name.trim()} (${src.name})`, 'lead', id);
@@ -84,7 +89,11 @@ export async function moveLead(q: Q, by: U, id: string, stage: string, reason = 
     await tl(q, id, `Commission entry created: ${inr(amt)} (${p.rate}%) for ${p.name}, awaiting approval`, true); await bump(q, 'a13');
     notes.push(`Commission of ${inr(amt)} queued for approval.`);
   }
-  if (stage === 'won' && l.source === 'referral' && await autoOn(q, 'a14')) { await tl(q, id, `Referral reward created for ${await refName(q, l)}`, true); await bump(q, 'a14'); }
+  if (stage === 'won' && l.source === 'referral' && await autoOn(q, 'a14')) {
+    const who = await refName(q, l);
+    if (l.owner_id) await pushTask(q, { title: `Give ${who} the referral reward for ${l.name}`, assignee: l.owner_id, assigner: by.user.id, deadline: addDays(3) });
+    await tl(q, id, `Referral reward task created for ${who}`, true); await bump(q, 'a14');
+  }
   if (stage === 'proposal' && await autoOn(q, 'a6') && l.owner_id) { await pushTask(q, { title: `Quote follow-up call · ${l.name}`, assignee: l.owner_id, assigner: by.user.id, deadline: addDays(2) }); await bump(q, 'a6'); }
   if (stage === 'won' && await autoOn(q, 'a7') && l.owner_id) { await pushTask(q, { title: `Convert ${l.name} to a project`, assignee: l.owner_id, assigner: by.user.id, deadline: addDays(1) }); await bump(q, 'a7'); }
   return { notes };
@@ -229,6 +238,7 @@ export function crmRoutes(r: Router) {
   });
   r.patch('/api/v1/automations/:id', staff('crm'), async ctx => {
     const b = parse(z.object({ on: z.boolean() }), ctx.body);
+    if (b.on && AUTOMATIONS.find(a => a.id === ctx.params.id)?.built === false) throw bad('This automation is not built yet, so it can\'t be turned on.');
     await tx(async q => { const a = await one(q, 'update automations set enabled = $2 where id = $1 returning name', [ctx.params.id, b.on]); if (!a) throw notFound(); await audit(q, userOf(ctx), 'automation', `${a.name} turned ${b.on ? 'on' : 'off'}`, 'automation', ctx.params.id); });
     return done(ctx);
   });
@@ -289,6 +299,17 @@ export async function crmTick() {
       await sendTemplate(l.phone, 'follow_up_gentle', params, { q, related: { type: 'lead_message', id: String(mid!.id) } });
       await tl(q, l.id, 'Follow-up nudge sent (no reply for 2 days)', true); await bump(q, 'a3');
     });
+  // a3 second half: still silent 5 days after the nudge -> Nurture
+  if (await autoOn(db, 'a3')) for (const l of await many(db, `select l.id, l.name, l.stage from leads l where l.stage in ('new','contacted','qualified','visit','proposal','negotiation')
+      and exists (select 1 from lead_timeline t where t.lead_id = l.id and t.auto and t.text like 'Follow-up nudge sent%' and t.created_at < now() - interval '5 days'
+                  and t.created_at > coalesce(l.last_inbound_at, 'epoch'::timestamptz) and t.created_at > l.stage_changed_at)`))
+    await tx(async q => {
+      await q.query(`update leads set stage = 'nurture', stage_changed_at = now() where id = $1 and stage = $2`, [l.id, l.stage]);
+      await tl(q, l.id, `Moved to Nurture: no reply 5 days after the follow-up nudge (automatic)`, true); await bump(q, 'a3');
+    });
+  if (await autoOn(db, 'a15')) for (const pt of await many(db, `select p.id, p.name, p.owner_id from partners p where p.active and p.owner_id is not null and p.created_at < now() - interval '60 days'
+      and not exists (select 1 from leads l where l.ref_partner_id = p.id and l.created_at > now() - interval '60 days')`))
+    if (await once(db, `a15:${pt.id}:${today.slice(0, 7)}`)) await tx(async q => { await pushTask(q, { title: `Partner gone quiet: visit or call ${pt.name} (no lead in 60 days)`, assignee: pt.owner_id, assigner: pt.owner_id, deadline: addDays(3) }); await bump(q, 'a15'); });
   if (await autoOn(db, 'a9')) for (const l of await many(db, `select * from leads where stage in ('new','contacted','qualified','visit','proposal','negotiation') and stage_changed_at < now() - interval '7 days'`))
     if (l.owner_id && await once(db, `a9:${l.id}:${Math.floor(Date.now() / (7 * 864e5))}`)) await tx(async q => { await pushTask(q, { title: `Stale lead: ${l.name} idle 7+ days in ${leadStageName(l.stage)}`, assignee: l.owner_id, assigner: l.owner_id, deadline: today }); await bump(q, 'a9'); });
 }
