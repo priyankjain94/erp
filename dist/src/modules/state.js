@@ -1,6 +1,6 @@
 import { db, many, one } from '../core/db.js';
 import { prettyPhone } from '../core/util.js';
-import { CUSTOMER_STAGE, DEFAULT_ROLES, PERMS } from '../domain.js';
+import { AUTOMATIONS, CUSTOMER_STAGE, DEFAULT_ROLES, PERMS } from '../domain.js';
 import { signedFileUrl } from '../integrations/storage.js';
 import { stageTargets, taskTemplates } from './tasks.js';
 import { loadDrafts } from './workflow.js';
@@ -176,7 +176,7 @@ export async function staffState(p, q = db) {
                 };
             });
         })(),
-        autos: (await many(q, 'select * from automations order by length(id), id')).map(a => ({ id: a.id, fam: a.fam, name: a.name, when: a.when_text, then: a.then_text, on: a.enabled, runs: a.runs }))
+        autos: (await many(q, 'select * from automations order by length(id), id')).map(a => { const d = AUTOMATIONS.find(x => x.id === a.id); return { id: a.id, fam: a.fam, name: a.name, when: a.when_text, then: a.then_text, on: a.enabled && d?.built !== false, runs: a.runs, tpl: d?.tpl || null, to: d?.to || null, built: d?.built !== false }; })
     } : { leads: [], partners: [], autos: [] };
     const wa = await one(q, `select count(*) filter (where status = 'simulated') sim, count(*) filter (where status in ('sent','delivered','read')) sent, count(*) filter (where status = 'failed') failed from wa_messages where created_at > now() - interval '30 days'`);
     const tickets = await loadTickets(q, p);

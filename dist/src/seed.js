@@ -9,8 +9,11 @@ import { seedRolePermissions } from './modules/auth.js';
 /** Always safe to run: roles, automations, settings, and the first admin (from ADMIN_PHONE). */
 export async function bootstrap(q) {
     await seedRolePermissions(q);
-    for (const [id, fam, name, when, then, on] of AUTOMATIONS)
-        await q.query('insert into automations(id, fam, name, when_text, then_text, enabled) values ($1,$2,$3,$4,$5,$6) on conflict do nothing', [id, fam, name, when, then, on]);
+    // descriptions always follow the code; the on/off switch is the admin's choice (and stays off for ones not built yet)
+    for (const a of AUTOMATIONS)
+        await q.query(`insert into automations(id, fam, name, when_text, then_text, enabled) values ($1,$2,$3,$4,$5,$6)
+                   on conflict (id) do update set fam = excluded.fam, name = excluded.name, when_text = excluded.when_text, then_text = excluded.then_text,
+                   enabled = automations.enabled and $7`, [a.id, a.fam, a.name, a.when, a.then, a.on && a.built, a.built]);
     await q.query(`insert into settings(key, value) values ('holidays', '[]') on conflict do nothing`);
     await ensureSuperAdmin(q);
 }

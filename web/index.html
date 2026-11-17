@@ -3428,8 +3428,8 @@ function App(){
       <header className="topbar">
         <h1><span className="eyebrow">${meta.g === 'ops' ? 'MAKE MY SPACE OPERATIONS' : meta.g === 'admin' ? 'MAKE MY SPACE ADMIN' : 'MAKE MY SPACE CRM'}</span>${meta.title || (meta.name === 'Leads' ? 'Lead pipeline' : meta.name)}</h1>
         ${SERVER.demoMode && html`<span className="sample hide-sm">Demo mode</span>`}
-        ${!meta.g && allowed && can(erp, 'crm') && html`<button className="btn" onClick=${() => setImporting(true)}><${Icon} n="folder" s=${16}/><span className="hide-sm">Import</span></button>`}
-        ${!meta.g && allowed && html`<button className="btn primary" onClick=${() => setAdding(true)}><${Icon} n="plus" s=${16}/>Add lead</button>`}
+        ${['dashboard','pipeline','inbox'].includes(view) && allowed && can(erp, 'crm') && html`<button className="btn" onClick=${() => setImporting(true)}><${Icon} n="folder" s=${16}/><span className="hide-sm">Import</span></button>`}
+        ${['dashboard','pipeline','inbox'].includes(view) && allowed && html`<button className="btn primary" onClick=${() => setAdding(true)}><${Icon} n="plus" s=${16}/>Add lead</button>`}
         ${view === 'projects' && can(erp, 'assign') && html`<button className="btn primary" onClick=${() => setNewProj(true)}><${Icon} n="plus" s=${16}/>New project</button>`}
         ${(view === 'tasks' || view === 'ops') && html`<button className="btn primary" onClick=${() => setNewTask(true)}><${Icon} n="plus" s=${16}/>New task</button>`}
       </header>
@@ -3438,7 +3438,7 @@ function App(){
       ${view === 'pipeline' && html`<${Pipeline} leads=${leads} open=${open} move=${moveLead}/>`}
       ${view === 'inbox' && html`<${Inbox} leads=${leads} open=${open} send=${send}/>`}
       ${view === 'partners' && html`<${Partners} leads=${leads} open=${open} call=${call} erp=${erp}/>`}
-      ${view === 'automations' && html`<${Automations} autos=${autos} toggle=${toggleAuto}/>`}
+      ${view === 'automations' && html`<${Automations} autos=${autos} toggle=${toggleAuto} erp=${erp}/>`}
       ${view === 'ops' && html`<${ControlRoom} erp=${erp} ui=${ui} ops=${ops}/>`}
       ${view === 'projects' && html`<${Projects} erp=${erp} ui=${ui} ops=${ops}/>`}
       ${userById[erp.me]?.role === 'guest' && html`<div className="panel" style=${{margin:'16px 16px 0',borderLeft:'4px solid var(--accent)'}}><h3>Welcome to Make My Space</h3><p className="hint">Your account is active, but you don't have a role yet. ${SERVER.signup === 'open' ? 'An admin has been told you joined' : 'An admin will set it shortly'}; once they do, the screens for your work appear here. Until then you only see tasks given to you.</p></div>`}
@@ -3831,14 +3831,37 @@ function Partners({leads, open, call, erp}){
 }
 
 /* ---------- Automations ---------- */
-function Automations({autos, toggle}){
-  const on = autos.filter(a => a.on).length;
+function Automations({autos, toggle, erp}){
+  const admin = can(erp, 'admin');
+  const [tpls, setTpls] = useState(null), [checking, setChecking] = useState(false), [err, setErr] = useState('');
+  const load = async refresh => { setChecking(!!refresh); setErr(''); try { const r = await API.call('GET', '/admin/whatsapp/templates' + (refresh ? '?refresh=1' : '')); setTpls({rows:Object.fromEntries(r.rows.map(x => [x.internal, x])), checked:r.meta.length > 0}); } catch(e){ setErr(e.message); } setChecking(false); };
+  useEffect(() => { if (admin) load(false); }, [admin]);
+  const status = a => {
+    if (!a.tpl) return null;
+    const row = tpls && tpls.rows[a.tpl], name = row ? row.map.name : a.tpl;
+    if (!admin || !tpls) return html`<span className="pill">WhatsApp: ${name}</span>`;
+    if (!tpls.checked) return html`<span className="pill">WhatsApp: ${name} · not checked</span>`;
+    const st = (row.found[0] || {}).status;
+    const bad = row.found[0] && (row.found[0].params < row.values && !(row.map.params));
+    return st === 'APPROVED' ? html`<span className="pill good" title=${row.body}>✓ ${name} · approved${bad ? ' · check fields' : ''}</span>`
+      : st ? html`<span className="pill warn" title=${row.body}>${name} · ${st.toLowerCase().replace(/_/g, ' ')}</span>`
+      : html`<span className="pill crit" title=${row.body}>${name} · not on Meta</span>`;
+  };
+  const built = autos.filter(a => a.built !== false), on = built.filter(a => a.on).length;
+  const unapproved = admin && tpls && tpls.checked ? built.filter(a => a.on && a.tpl && (tpls.rows[a.tpl]?.found[0] || {}).status !== 'APPROVED') : [];
   return html`<section className="view">
-    <p style=${{margin:'0 0 14px',color:'var(--muted)'}}>${on} of ${autos.length} automations are on. Each one reads as When this happens, Then do this; every action is logged on the lead's timeline.</p>
+    <p style=${{margin:'0 0 10px',color:'var(--muted)'}}>${on} of ${built.length} automations are on. Each one reads as When this happens, Then do this; every action is logged on the lead's timeline.</p>
+    ${admin && html`<div style=${{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap',margin:'0 0 14px'}}>
+      <button className="btn small" disabled=${checking} onClick=${() => load(true)}>${checking ? 'Checking with Meta…' : 'Check templates with Meta'}</button>
+      <span className="hint">${tpls && tpls.checked ? 'Template status is from your WhatsApp Business account.' : 'Press the button to see whether each template is approved.'}</span>
+      ${err && html`<span className="err">${err}</span>`}</div>`}
+    ${unapproved.length > 0 && html`<div className="warnbox" style=${{margin:'0 0 14px'}}>${unapproved.length} running automation${unapproved.length > 1 ? 's use templates' : ' uses a template'} that Meta has not approved: ${unapproved.map(a => a.name).join(', ')}. Those WhatsApp messages will fail until the template is approved (the rest of the automation still runs).</div>`}
     <div className="autos">${autos.map(a => html`<article key=${a.id} className=${'auto' + (a.on ? '' : ' off')}>
-      <div className="auto-top"><div><span className="fam">${a.fam}</span><b>${a.name}</b></div><button className="switch" role="switch" aria-checked=${a.on} aria-label=${'Turn ' + a.name + (a.on ? ' off' : ' on')} onClick=${() => toggle(a.id)}></button></div>
-      <dl className="rule"><dt>When</dt><dd>${a.when}</dd><dt>Then</dt><dd>${a.then}</dd></dl>
-      <div className="auto-foot"><span>${a.on ? 'Running' : 'Paused'}</span><span className="num">${a.runs} runs this month</span></div>
+      <div className="auto-top"><div><span className="fam">${a.fam}</span><b>${a.name}</b></div>
+        ${a.built === false ? html`<span className="pill">Not built yet</span>` : html`<button className="switch" role="switch" aria-checked=${a.on} aria-label=${'Turn ' + a.name + (a.on ? ' off' : ' on')} onClick=${() => toggle(a.id)}></button>`}</div>
+      <dl className="rule"><dt>When</dt><dd>${a.when}</dd><dt>Then</dt><dd>${a.then}</dd>${a.to && html`<dt>To</dt><dd>${a.to}</dd>`}</dl>
+      ${a.tpl && a.built !== false && html`<div style=${{margin:'0 0 8px'}}>${status(a)}</div>`}
+      <div className="auto-foot"><span>${a.built === false ? 'Planned' : a.on ? 'Running' : 'Paused'}</span><span className="num">${a.runs} runs</span></div>
     </article>`)}</div>
   </section>`;
 }
